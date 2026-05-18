@@ -13,7 +13,13 @@ from modules.page_builders import (
     build_full_presentation,
     build_preview_presentation,
 )
-from modules.content_parser import parse_document_from_bytes
+from modules.content_parser import (
+    parse_document_from_bytes,
+    extract_toc_map,
+    extract_section_labels,
+    split_into_5_sections,
+    remap_pages_for_5sections,
+)
 
 # ─────────────────────────────────────────────
 # [페이지 기본 설정]
@@ -810,14 +816,36 @@ def show_step4():
     if st.button("📄 완성 PPT 생성하기", type="primary", use_container_width=False):
         try:
             with st.spinner("PPT를 생성하는 중입니다... 잠시만 기다려주세요."):
+                # ── 4/5형식 분기: 5형식이면 자동 분할 후 pages·toc_map 재구성 ──
+                toc_choice = st.session_state.toc_count
+                if pages and toc_choice == 5:
+                    try:
+                        _toc4   = extract_toc_map(pages)
+                        _lbl4   = extract_section_labels(pages)
+                        _toc5, _lbl5, _split = split_into_5_sections(_toc4, _lbl4)
+                        _pages5 = remap_pages_for_5sections(pages, _split, _lbl5)
+                        final_pages     = _pages5
+                        final_toc_map   = _toc5
+                        final_toc_count = 5
+                    except Exception as _e:
+                        st.warning(f"⚠️ 5섹션 자동 분할 실패({_e}). 4섹션으로 생성합니다.")
+                        final_pages     = pages
+                        final_toc_map   = None
+                        final_toc_count = 4
+                else:
+                    final_pages     = pages
+                    final_toc_map   = None   # build_full_presentation 내부에서 자동 추출
+                    final_toc_count = toc_choice
+
                 ppt_bytes = build_full_presentation(
                     business_name=st.session_state.business_name,
                     year=st.session_state.year,
                     month_en=st.session_state.month_en,
-                    pages=pages,
+                    pages=final_pages,
                     cover_image_bytes=st.session_state.cover_image_bytes,
                     section_image_bytes_list=st.session_state.section_img_bytes_list,
-                    toc_count=st.session_state.toc_count,
+                    toc_count=final_toc_count,
+                    toc_map=final_toc_map,
                     toc_image_bytes_list=[st.session_state.toc_img_bytes],
                 )
 

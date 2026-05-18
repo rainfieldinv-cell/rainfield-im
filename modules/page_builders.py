@@ -1199,6 +1199,7 @@ def build_full_presentation(
     section_image_bytes_list: list = None,
     toc_count: int = None,
     toc_image_bytes_list: list = None,
+    toc_map: dict = None,
 ) -> bytes:
     """
     content_parser 결과를 받아 완성된 PPT를 bytes로 반환합니다.
@@ -1208,14 +1209,18 @@ def build_full_presentation(
     business_name              : 사업명 (표지·하단 푸터 텍스트)
     year                       : 연도 문자열 (예: "2026")
     month_en                   : 영문 월 (예: "May")
-    pages                      : content_parser.parse_document() 반환값
+    pages                      : content_parser.parse_document() 반환값.
+                                 5형식의 경우 remap_pages_for_5sections() 결과를 전달.
     cover_image_bytes          : 표지 메인 이미지 bytes (None이면 회색 박스)
     executive_summary_sections : Executive Summary 섹션 목록 (최대 3개)
                                  None이면 ES 슬라이드 생략
     section_image_bytes_list   : [bytes|None, bytes|None, bytes|None]
-                                 섹션 divider 원형 슬롯 3개 이미지 (4개 섹션 공통)
+                                 섹션 divider 원형 슬롯 3개 이미지 (모든 섹션 공통)
     toc_count                  : 목차 항목 수 강제 지정 (4 또는 5).
                                  None이면 pages에서 자동 감지.
+    toc_map                    : {"01": ["1.1 ...", ...], ...} — 섹션별 소제목 목록.
+                                 None이면 pages에서 자동 추출 (_build_toc_map).
+                                 split_into_5_sections() 결과를 그대로 전달하면 됩니다.
 
     Returns
     -------
@@ -1234,17 +1239,18 @@ def build_full_presentation(
 
     # ── 3. 목차 ────────────────────────────────────────────
     unique_sections = _count_unique_sections(pages)
-    toc_map = _build_toc_map(pages)
+    # toc_map이 외부에서 주어지면 그대로 사용; 없으면 pages에서 자동 추출
+    computed_toc_map = toc_map if toc_map is not None else _build_toc_map(pages)
     num_toc = toc_count if toc_count in (4, 5) else len(unique_sections)
     if unique_sections:
         num_toc = min(num_toc, len(unique_sections))  # 더미 섹션 방지
-    build_toc_slide(prs, num_sections=num_toc, toc_map=toc_map,
+    build_toc_slide(prs, num_sections=num_toc, toc_map=computed_toc_map,
                     toc_image_bytes_list=toc_image_bytes_list)
 
     # ── 4. 섹션 구분 + 내용 슬라이드 ─────────────────────
     _build_content_block(prs, pages, business_name=business_name,
                           section_image_bytes_list=section_image_bytes_list,
-                          toc_map=toc_map)
+                          toc_map=computed_toc_map)
 
     # ── 5. 연락처 슬라이드 ────────────────────────────────
     build_contact_slide(prs)
