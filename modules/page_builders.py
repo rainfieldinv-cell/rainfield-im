@@ -972,15 +972,17 @@ def build_content_slide(prs, title: str, subtitle: str, body_text: str = "",
 # (f) 섹션 구분 슬라이드 생성 함수
 # ─────────────────────────────────────────────
 def build_section_divider_slide(prs, section_number: str = "", section_title: str = "",
-                                 business_name: str = ""):
+                                 business_name: str = "",
+                                 section_image_bytes: bytes = None):
     """
     섹션 구분 슬라이드를 만들어 prs에 추가합니다.
 
     Parameters
     ----------
-    prs            : create_presentation_from_template()으로 만든 Presentation 객체
-    section_number : 섹션 번호 문자열 (예: "01", "02", "03", "04")
-    section_title  : 섹션 제목 문자열 (예: "사모사채 개요", "금융개요")
+    prs                  : create_presentation_from_template()으로 만든 Presentation 객체
+    section_number       : 섹션 번호 문자열 (예: "01", "02", "03", "04")
+    section_title        : 섹션 제목 문자열 (예: "사모사채 개요", "금융개요")
+    section_image_bytes  : 원형 이미지로 표시할 이미지 bytes (None이면 기본 동그라미 유지)
 
     Returns
     -------
@@ -993,7 +995,6 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
 
     # 섹션 번호+제목 텍스트박스 교체
     # layout_data.json 기준: left=3.2474cm, top=8.2049cm
-    # 원본 텍스트 형식: "01  사모사채 개요"
     TARGET_LEFT = 3.2474
     TARGET_TOP  = 8.2049
     TOLERANCE   = _Cm(0.8)
@@ -1007,6 +1008,17 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
                 abs(shape.top  - _Cm(TARGET_TOP))  < TOLERANCE):
             _replace_text_frame_content(shape.text_frame, new_text)
             break
+
+    # 원형 이미지 — 템플릿 내 타원 15 위치: left=14.1443, top=6.6548, w≈5.76, h≈5.79
+    if section_image_bytes:
+        try:
+            add_oval_with_image(
+                slide, section_image_bytes,
+                left_cm=14.1443, top_cm=6.6548,
+                diameter_cm=5.76,
+            )
+        except Exception as exc:
+            print(f"[경고] 섹션 원형 이미지 삽입 실패: {exc}")
 
     _replace_footer_business_name(slide, business_name)
     return slide
@@ -1060,6 +1072,7 @@ def build_full_presentation(
     pages: list,
     cover_image_bytes: bytes = None,
     executive_summary_sections: list = None,
+    section_images: dict = None,
 ) -> bytes:
     """
     content_parser 결과를 받아 완성된 PPT를 bytes로 반환합니다.
@@ -1070,11 +1083,11 @@ def build_full_presentation(
     year                       : 연도 문자열 (예: "2026")
     month_en                   : 영문 월 (예: "May")
     pages                      : content_parser.parse_document() 반환값
-                                 [{"section_title":..., "subtitle":..., "body_text":...}, ...]
     cover_image_bytes          : 표지 메인 이미지 bytes (None이면 회색 박스)
     executive_summary_sections : Executive Summary 섹션 목록 (최대 3개)
-                                 [{"title":..., "subtitle":..., "content":...}, ...]
                                  None이면 ES 슬라이드 생략
+    section_images             : {"01": bytes, "02": bytes, "03": bytes, "04": bytes}
+                                 섹션 구분 슬라이드의 원형 이미지 (None이면 기본 동그라미)
 
     Returns
     -------
@@ -1097,7 +1110,8 @@ def build_full_presentation(
     build_toc_slide(prs, num_sections=len(unique_sections), toc_map=toc_map)
 
     # ── 4. 섹션 구분 + 내용 슬라이드 ─────────────────────
-    _build_content_block(prs, pages, business_name=business_name)
+    _build_content_block(prs, pages, business_name=business_name,
+                          section_images=section_images)
 
     # ── 5. 연락처 슬라이드 ────────────────────────────────
     build_contact_slide(prs)
@@ -1144,7 +1158,8 @@ def _build_toc_map(pages: list) -> dict:
     return toc
 
 
-def _build_content_block(prs, pages: list, business_name: str = ""):
+def _build_content_block(prs, pages: list, business_name: str = "",
+                          section_images: dict = None):
     """
     pages 목록을 순회하며 섹션 구분 슬라이드 + 내용 슬라이드를 삽입합니다.
 
@@ -1157,29 +1172,42 @@ def _build_content_block(prs, pages: list, business_name: str = ""):
       - 섹션 구분자가 방금 생성됐고 본문·부제목이 모두 비어있으면 스킵
         (PDF 섹션 헤더 페이지 → divider가 대신함)
       - 그 외에는 PDF 1페이지 = PPT content 1장
+
+    Parameters
+    ----------
+    section_images : {"01": bytes, "02": bytes, ...} 섹션별 원형 이미지 (없으면 None)
     """
     current_sec_num = ""   # 현재 섹션 번호 ("01", "02" …)
     section_num = 0
+    _imgs = section_images or {}
 
     for page in pages:
         section_title = page.get("section_title", "").strip()
         subtitle      = page.get("subtitle", "").strip()
         body_text     = page.get("body_text", "").strip()
 
-        # section_title에서 "0N" 번호 추출
-        m = _SEC_NUM_EXTRACT.match(section_title)
-        this_sec_num = m.group(1) if m else ""
+        # section_num: content_parser가 자동 분류한 값 우선
+        # 없으면 section_title 앞 부분 "0N" 패턴으로 fallback
+        this_sec_num = page.get("section_num", "")
+        if not this_sec_num:
+            m = _SEC_NUM_EXTRACT.match(section_title)
+            this_sec_num = m.group(1) if m else ""
 
-        # 새 섹션 판단: 번호가 있고 이전과 다를 때만
+        # 새 섹션 판단
         is_new_section = bool(this_sec_num and this_sec_num != current_sec_num)
 
         if is_new_section:
             section_num += 1
             num_str = f"{section_num:02d}"
-            build_section_divider_slide(prs, num_str, section_title,
-                                        business_name=business_name)
+            # divider 제목: section_label 우선, 없으면 section_title
+            divider_title = page.get("section_label") or section_title or ""
+            # 섹션 이미지: 분류된 섹션 번호("01"~"04")로 조회
+            sec_img = _imgs.get(this_sec_num)
+            build_section_divider_slide(prs, num_str, divider_title,
+                                        business_name=business_name,
+                                        section_image_bytes=sec_img)
             current_sec_num = this_sec_num
-            # 섹션 헤더 페이지(본문·부제목 없음)는 content slide 스킵
+            # 섹션 첫 페이지에 본문·부제목 없으면 content slide 스킵
             if not body_text and not subtitle:
                 continue
         else:
@@ -1188,10 +1216,10 @@ def _build_content_block(prs, pages: list, business_name: str = ""):
         # 표시할 제목: 현재 섹션 번호 + section_title
         display_title = f"{num_str}  {section_title}" if num_str and section_title else section_title
 
-        # 표가 있는 페이지: text_without_tables 사용 (표 셀 텍스트 제거된 본문)
+        # 표가 있는 페이지: text_without_tables 사용
         # 표가 없는 페이지: 기존 body_text 그대로
-        tables_data   = page.get("tables") or []
-        body_to_use   = (page.get("text_without_tables") or body_text) if tables_data else body_text
+        tables_data = page.get("tables") or []
+        body_to_use = (page.get("text_without_tables") or body_text) if tables_data else body_text
 
         build_content_slide(
             prs,

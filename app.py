@@ -72,6 +72,13 @@ if "cover_image_bytes" not in st.session_state:
 if "parsed_pages" not in st.session_state:
     st.session_state.parsed_pages = []         # content_parser 결과
 
+# 섹션 이미지 관련 세션 상태 (01~04 각 섹션 divider에 쓰일 원형 이미지)
+for _sec in ["01", "02", "03", "04"]:
+    if f"sec_img_bytes_{_sec}" not in st.session_state:
+        st.session_state[f"sec_img_bytes_{_sec}"] = None
+    if f"sec_img_index_{_sec}" not in st.session_state:
+        st.session_state[f"sec_img_index_{_sec}"] = 0
+
 # ─────────────────────────────────────────────
 # [로그인 화면 함수]
 # ─────────────────────────────────────────────
@@ -431,7 +438,59 @@ def show_step3():
     st.markdown("---")
 
     # ────────────────────────────────────────
-    # (D) 표지 미리 생성 버튼
+    # (D) 섹션 이미지 선택 (선택 사항)
+    # ────────────────────────────────────────
+    st.markdown("### 📌 섹션 이미지 선택 (선택 사항)")
+    st.caption("각 섹션 구분 페이지에 원형으로 표시할 이미지를 선택하세요. 선택하지 않으면 기본 디자인이 유지됩니다.")
+
+    _SEC_LABELS = {
+        "01": "01  사모사채 개요",
+        "02": "02  금융개요",
+        "03": "03  본건 사업 개요",
+        "04": "04  Appendix",
+    }
+
+    if not images:
+        st.info("추출된 이미지가 없어 섹션 이미지를 선택할 수 없습니다.")
+    else:
+        import io as _io
+        for _sec, _label in _SEC_LABELS.items():
+            with st.expander(f"**{_label}** 이미지 선택"):
+                st.caption(f"총 {len(images)}개 이미지 중 선택")
+                _cols = st.columns(4)
+                for _i, _img in enumerate(images[:8]):
+                    with _cols[_i % 4]:
+                        st.image(_img["pil_image"], use_container_width=True)
+                        st.caption(f"#{_img['index']+1}")
+                if len(images) > 8:
+                    st.caption(f"... 외 {len(images)-8}개 더 있습니다.")
+
+                _prev_idx = st.session_state[f"sec_img_index_{_sec}"]
+                _sel_num = st.number_input(
+                    f"이미지 번호 (0 = 선택 안 함)",
+                    min_value=0,
+                    max_value=len(images),
+                    value=_prev_idx,
+                    step=1,
+                    key=f"sec_img_num_{_sec}",
+                    help="0을 입력하면 기본 디자인이 유지됩니다.",
+                )
+                st.session_state[f"sec_img_index_{_sec}"] = int(_sel_num)
+
+                if _sel_num > 0:
+                    _sel = images[int(_sel_num) - 1]
+                    st.markdown("**선택된 이미지:**")
+                    st.image(_sel["pil_image"], width=250)
+                    _buf = _io.BytesIO()
+                    _sel["pil_image"].save(_buf, format="PNG")
+                    st.session_state[f"sec_img_bytes_{_sec}"] = _buf.getvalue()
+                else:
+                    st.session_state[f"sec_img_bytes_{_sec}"] = None
+
+    st.markdown("---")
+
+    # ────────────────────────────────────────
+    # (E) 표지 미리 생성 버튼
     # ────────────────────────────────────────
     st.markdown("### 🚀 표지 미리 생성")
     st.caption("지금까지 설정한 내용으로 표지를 생성합니다. 확인용 다운로드이며 정식 완성본이 아닙니다.")
@@ -472,7 +531,7 @@ def show_step3():
     st.markdown("---")
 
     # ────────────────────────────────────────
-    # (E) 하단 네비게이션
+    # (F) 하단 네비게이션
     # ────────────────────────────────────────
     col_prev, col_space, col_next = st.columns([2, 4, 2])
 
@@ -555,12 +614,19 @@ def show_step4():
     if st.button("📄 완성 PPT 생성하기", type="primary", use_container_width=False):
         try:
             with st.spinner("PPT를 생성하는 중입니다... 잠시만 기다려주세요."):
+                # 섹션 이미지 dict 수집 (None인 섹션은 제외)
+                _sec_imgs = {
+                    sec: st.session_state.get(f"sec_img_bytes_{sec}")
+                    for sec in ["01", "02", "03", "04"]
+                    if st.session_state.get(f"sec_img_bytes_{sec}")
+                }
                 ppt_bytes = build_full_presentation(
                     business_name=st.session_state.business_name,
                     year=st.session_state.year,
                     month_en=st.session_state.month_en,
                     pages=pages,
                     cover_image_bytes=st.session_state.cover_image_bytes,
+                    section_images=_sec_imgs or None,
                 )
 
             filename = make_output_filename(st.session_state.business_name)

@@ -44,6 +44,52 @@ _OBVIOUS_FOOTER_RES = [
 # 목차 페이지 감지 — 이 문자열이 페이지 텍스트(소문자)에 포함되면 목차로 판단
 _TOC_MARKERS = ['목차', 'c o n t e n t s', 'contents']
 
+# ──────────────────────────────────────────────────────
+# 섹션 자동 분류 — 키워드 기반 (순서대로 매칭, 더 높은 섹션으로만 전진)
+# 우선순위 높은 것(04)부터 체크
+# ──────────────────────────────────────────────────────
+_SECTION_TRIGGERS: list = [
+    ("04", "Appendix",       ["별첨", "[별첨"]),
+    ("03", "본건 사업 개요", ["사업 개요", "■ 사업 개요", "분양 개요", "분양개요",
+                              "토지 확보", "토지 수용", "토지이용", "사업지 전경",
+                              "입지 분석", "시세비교",
+                              "차주 개요", "기업개요", "재무제표", "인근 산업단지"]),
+    ("02", "금융개요",       ["financing terms", "선행조건", "대주간",
+                              "terms & conditions"]),
+    ("01", "사모사채 개요",  ["executive summary"]),
+]
+
+# 불릿 문자로 시작하는 section_title은 헤더가 아닌 본문 첫 줄 — 분류에 사용하지 않음
+_BULLET_CHARS = ('▶', '•', '■', '▪', '◆', '→', '☞')
+
+def _classify_section(section_title: str, body_text: str):
+    """
+    페이지 섹션 번호·섹션명을 반환. 미분류면 ('', '') 반환.
+
+    section_title이 불릿 문자로 시작하거나 60자를 초과하면 헤더가 아닌
+    본문 텍스트가 잘못 추출된 것으로 간주해 건너뜁니다.
+    section_title에서 매칭 실패 시 body_text 앞 60자를 보조 검사합니다.
+    """
+    # 1차: section_title — 불릿 시작이나 너무 긴 경우 건너뜀
+    title_stripped = section_title.strip()
+    title_is_valid_header = (
+        bool(title_stripped)
+        and not title_stripped[0] in _BULLET_CHARS
+        and len(title_stripped) <= 60
+    )
+    if title_is_valid_header:
+        title_lower = title_stripped.lower()
+        for sec_num, label, keywords in _SECTION_TRIGGERS:
+            if any(kw.lower() in title_lower for kw in keywords):
+                return sec_num, label
+
+    # 2차: body_text 앞 60자
+    body_head = body_text[:60].lower()
+    for sec_num, label, keywords in _SECTION_TRIGGERS:
+        if any(kw.lower() in body_head for kw in keywords):
+            return sec_num, label
+    return "", ""
+
 
 # ──────────────────────────────────────────────────────
 # 공개 API
@@ -191,6 +237,29 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
 
     plumber_pdf.close()
     fitz_doc.close()
+
+    # ── 2차 패스: 섹션 번호 자동 분류 ─────────────────────
+    # 각 페이지에 section_num, section_label 필드 추가
+    # 단조 증가 원칙: 한번 높은 섹션으로 올라가면 내려오지 않음
+    cur_sec_num   = ""
+    cur_sec_label = ""
+    if debug:
+        print("\n[섹션 자동 분류 — 2차 패스]")
+    for idx, pd_item in enumerate(result):
+        triggered_num, triggered_label = _classify_section(
+            pd_item.get("section_title", ""),
+            pd_item.get("body_text", ""),
+        )
+        # 더 높은 섹션 번호가 감지됐을 때만 업데이트 (단조 증가)
+        if triggered_num and (not cur_sec_num or triggered_num > cur_sec_num):
+            cur_sec_num   = triggered_num
+            cur_sec_label = triggered_label
+            if debug:
+                title_preview = pd_item.get("section_title", "")[:40]
+                print(f"  slide{idx+1:02d}: → [{cur_sec_num}] {cur_sec_label!r}  "
+                      f"(trigger={triggered_num!r}, title={title_preview!r})")
+        pd_item["section_num"]   = cur_sec_num
+        pd_item["section_label"] = cur_sec_label
 
     if debug:
         print("─" * 60)
@@ -459,12 +528,12 @@ def _is_valid_table(table_data: list) -> bool:
     if cols > 12:
         return False
 
-    # 불릿 문자로 시작하는 셀 = 본문 단락 오인식
-    BULLET_CHARS = ('▶', '•', '■', '▪', '→', '·', '◆', '○', '●')
+    # 불릿 문자가 셀 어딘가에 있으면 = 본문 단락 오인식
+    BULLET_CHARS = ('▶', '•', '■', '▪', '◆')
     for row in table_data:
         for cell in row:
             cell_str = str(cell or '').strip()
-            if any(cell_str.startswith(b) for b in BULLET_CHARS):
+            if any(b in cell_str for b in BULLET_CHARS):
                 return False
 
     total_cells = sum(len(row) for row in table_data)
