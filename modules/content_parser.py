@@ -402,8 +402,24 @@ def _postprocess_table(table: list) -> list:
     # 2. 모든 셀이 빈 행 제거
     cleaned = [row for row in cleaned if any(c for c in row)]
 
+    # 2b. 빈 열 제거 — 90% 이상 비어있는 열은 phantom column으로 간주
+    if cleaned:
+        max_cols = max(len(r) for r in cleaned)
+        keep = []
+        for c in range(max_cols):
+            vals = [r[c] if c < len(r) else "" for r in cleaned]
+            non_empty = sum(1 for v in vals if v.strip())
+            keep.append(non_empty > 0)
+        cleaned = [
+            [cell for ci, cell in enumerate(row) if ci < len(keep) and keep[ci]]
+            for row in cleaned
+        ]
+
     # 3. 행이 1개 이하 → 표가 아님
     if len(cleaned) <= 1:
+        return []
+    # 열 제거 후 1열만 남아도 버림
+    if max((len(r) for r in cleaned), default=0) < 2:
         return []
 
     # 4. 반복 헤더 제거 (첫 행 = 헤더 기준)
@@ -430,6 +446,8 @@ def _is_valid_table(table_data: list) -> bool:
 
     cols = max((len(row) for row in table_data), default=0)
     if cols < 2:
+        return False
+    if cols > 12:   # 12열 초과 = 레이아웃 요소 오탐 (phantom columns)
         return False
 
     total_cells = sum(len(row) for row in table_data)

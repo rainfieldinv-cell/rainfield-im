@@ -795,19 +795,8 @@ def _add_table_to_slide(slide, table_data: list,
                          width_cm: float, height_cm: float):
     """
     2D 문자열 배열을 PPT 편집 가능한 표 객체로 삽입합니다.
-    사용자가 PPT를 열어 셀 단위로 수정할 수 있습니다.
-
-    Parameters
-    ----------
-    table_data  : List[List[str]] — 행 × 열 문자열 배열
-    left_cm     : 표 왼쪽 위치 (cm)
-    top_cm      : 표 위쪽 위치 (cm)
-    width_cm    : 표 너비 (cm)
-    height_cm   : 표 높이 (cm)
-
-    Returns
-    -------
-    GraphicFrame (python-pptx 표 컨테이너), 실패 시 None
+    헤더 행: Rainfield 초록 배경 + 흰 굵은 글씨
+    데이터 행: 흰 배경 + 짙은 회색 글씨
     """
     if not table_data:
         return None
@@ -817,6 +806,11 @@ def _add_table_to_slide(slide, table_data: list,
     if rows == 0 or cols == 0:
         return None
 
+    # Rainfield 초록 (#92D050)
+    COLOR_HEADER_BG   = RGBColor(146, 208, 80)
+    COLOR_HEADER_TEXT = 'FFFFFF'
+    COLOR_BODY_TEXT   = '333333'
+
     try:
         gf  = slide.shapes.add_table(
             rows, cols,
@@ -825,16 +819,27 @@ def _add_table_to_slide(slide, table_data: list,
         )
         tbl = gf.table
 
+        # 열 너비 균등 분배
+        col_w = int(_Cm(width_cm) / cols)
+        for c_idx in range(cols):
+            tbl.columns[c_idx].width = col_w
+
         for r, row_data in enumerate(table_data):
+            is_header = (r == 0)
             for c in range(cols):
                 cell_text = (row_data[c] if c < len(row_data) else "") or ""
                 cell_text = str(cell_text).strip()
 
-                cell  = tbl.cell(r, c)
-                tf    = cell.text_frame
+                cell = tbl.cell(r, c)
+                tf   = cell.text_frame
                 tf.word_wrap = True
 
-                # txBody를 직접 조작해 단락·런 초기화 후 텍스트 설정
+                # 헤더 행 배경색
+                if is_header:
+                    cell.fill.solid()
+                    cell.fill.fore_color.rgb = COLOR_HEADER_BG
+
+                # txBody 초기화 후 텍스트 삽입
                 txBody = tf._txBody
                 for p_elem in list(txBody.findall(_qn('a:p'))):
                     txBody.remove(p_elem)
@@ -844,9 +849,13 @@ def _add_table_to_slide(slide, table_data: list,
                     new_r = etree.SubElement(new_p, _qn('a:r'))
                     rPr   = etree.SubElement(new_r, _qn('a:rPr'))
                     rPr.set('lang', 'ko-KR')
-                    rPr.set('sz', '800')          # 8pt (100분의 1 단위)
-                    if r == 0:
-                        rPr.set('b', '1')         # 헤더 행 bold
+                    rPr.set('sz', '800')
+                    if is_header:
+                        rPr.set('b', '1')
+                    # 글자 색상
+                    sf  = etree.SubElement(rPr, _qn('a:solidFill'))
+                    clr = etree.SubElement(sf,  _qn('a:srgbClr'))
+                    clr.set('val', COLOR_HEADER_TEXT if is_header else COLOR_BODY_TEXT)
                     new_t = etree.SubElement(new_r, _qn('a:t'))
                     new_t.text = cell_text
 
@@ -912,9 +921,13 @@ def build_content_slide(prs, title: str, subtitle: str, body_text: str = "",
     if len(header_shapes) >= 2:
         _replace_text_frame_content(header_shapes[1].text_frame, subtitle)
 
-    # 본문 박스는 항상 교체 — 내용 없어도 반드시 비워서 템플릿 텍스트 제거
+    # 본문 텍스트 표시 여부 — 표가 있어도 짧은 본문(▶ 불릿 등)은 표 위에 표시
+    _BODY_WITH_TABLES_LIMIT = 300   # 이 글자 수 미만이면 표와 함께 본문 표시
+    show_body = bool(body_text and body_text.strip())
+    body_above_table = show_body and bool(tables) and len(body_text.strip()) < _BODY_WITH_TABLES_LIMIT
+
     if len(header_shapes) >= 3:
-        if body_text and not tables:
+        if show_body and (not tables or body_above_table):
             _replace_text_frame_content(header_shapes[2].text_frame, body_text)
             auto_resize_text_to_fit(header_shapes[2].text_frame, max_size=10.5, min_size=8.0)
         else:
@@ -927,7 +940,8 @@ def build_content_slide(prs, title: str, subtitle: str, body_text: str = "",
         SLIDE_H_CM      = SLIDE_HEIGHT / 360000   # 19.05
         TABLE_LEFT      = 1.09
         TABLE_WIDTH     = SLIDE_W_CM - TABLE_LEFT - 0.5   # ≈ 25.93
-        TABLE_TOP_START = 3.5    # 헤더/부제목 영역 아래
+        # 본문이 표 위에 표시될 때는 표 시작 위치를 낮춤
+        TABLE_TOP_START = 4.5 if body_above_table else 3.5
         FOOTER_RESERVE  = 1.8    # 푸터·하단 여백
         SPACING         = 0.3    # 표 간 간격
 
