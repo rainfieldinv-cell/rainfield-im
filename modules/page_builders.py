@@ -34,6 +34,7 @@ from modules.constants import (
     OUTPUT_DIR, OUTPUT_FILENAME_FORMAT, TEMPLATES_DIR,
     LAYOUT_PPTX_PATH, SLIDE_INDEX_MAP,
     DEFAULT_TOC_MAP,
+    SECTION_DIVIDER_OVALS,
 )
 
 # ─────────────────────────────────────────────
@@ -973,16 +974,17 @@ def build_content_slide(prs, title: str, subtitle: str, body_text: str = "",
 # ─────────────────────────────────────────────
 def build_section_divider_slide(prs, section_number: str = "", section_title: str = "",
                                  business_name: str = "",
-                                 section_image_bytes: bytes = None):
+                                 section_image_bytes_list: list = None):
     """
     섹션 구분 슬라이드를 만들어 prs에 추가합니다.
 
     Parameters
     ----------
-    prs                  : create_presentation_from_template()으로 만든 Presentation 객체
-    section_number       : 섹션 번호 문자열 (예: "01", "02", "03", "04")
-    section_title        : 섹션 제목 문자열 (예: "사모사채 개요", "금융개요")
-    section_image_bytes  : 원형 이미지로 표시할 이미지 bytes (None이면 기본 동그라미 유지)
+    prs                       : create_presentation_from_template()으로 만든 Presentation 객체
+    section_number            : 섹션 번호 문자열 (예: "01", "02", "03", "04")
+    section_title             : 섹션 제목 문자열 (예: "사모사채 개요", "금융개요")
+    section_image_bytes_list  : 원형 슬롯 3개에 넣을 이미지 bytes 리스트 (None 항목은 건너뜀)
+                                SECTION_DIVIDER_OVALS 순서와 1:1 대응
 
     Returns
     -------
@@ -1009,16 +1011,17 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
             _replace_text_frame_content(shape.text_frame, new_text)
             break
 
-    # 원형 이미지 — 템플릿 내 타원 15 위치: left=14.1443, top=6.6548, w≈5.76, h≈5.79
-    if section_image_bytes:
-        try:
-            add_oval_with_image(
-                slide, section_image_bytes,
-                left_cm=14.1443, top_cm=6.6548,
-                diameter_cm=5.76,
-            )
-        except Exception as exc:
-            print(f"[경고] 섹션 원형 이미지 삽입 실패: {exc}")
+    # 원형 이미지 3개 슬롯 — SECTION_DIVIDER_OVALS 위치에 순서대로 삽입
+    if section_image_bytes_list:
+        for img_bytes, (left, top, diam) in zip(section_image_bytes_list, SECTION_DIVIDER_OVALS):
+            if not img_bytes:
+                continue
+            try:
+                add_oval_with_image(slide, img_bytes,
+                                    left_cm=left, top_cm=top,
+                                    diameter_cm=diam)
+            except Exception as exc:
+                print(f"[경고] 섹션 원형 이미지 삽입 실패 ({left:.2f},{top:.2f}): {exc}")
 
     _replace_footer_business_name(slide, business_name)
     return slide
@@ -1072,7 +1075,7 @@ def build_full_presentation(
     pages: list,
     cover_image_bytes: bytes = None,
     executive_summary_sections: list = None,
-    section_images: dict = None,
+    section_image_bytes_list: list = None,
 ) -> bytes:
     """
     content_parser 결과를 받아 완성된 PPT를 bytes로 반환합니다.
@@ -1086,8 +1089,8 @@ def build_full_presentation(
     cover_image_bytes          : 표지 메인 이미지 bytes (None이면 회색 박스)
     executive_summary_sections : Executive Summary 섹션 목록 (최대 3개)
                                  None이면 ES 슬라이드 생략
-    section_images             : {"01": bytes, "02": bytes, "03": bytes, "04": bytes}
-                                 섹션 구분 슬라이드의 원형 이미지 (None이면 기본 동그라미)
+    section_image_bytes_list   : [bytes|None, bytes|None, bytes|None]
+                                 섹션 divider 원형 슬롯 3개 이미지 (4개 섹션 공통)
 
     Returns
     -------
@@ -1111,7 +1114,7 @@ def build_full_presentation(
 
     # ── 4. 섹션 구분 + 내용 슬라이드 ─────────────────────
     _build_content_block(prs, pages, business_name=business_name,
-                          section_images=section_images)
+                          section_image_bytes_list=section_image_bytes_list)
 
     # ── 5. 연락처 슬라이드 ────────────────────────────────
     build_contact_slide(prs)
@@ -1159,7 +1162,7 @@ def _build_toc_map(pages: list) -> dict:
 
 
 def _build_content_block(prs, pages: list, business_name: str = "",
-                          section_images: dict = None):
+                          section_image_bytes_list: list = None):
     """
     pages 목록을 순회하며 섹션 구분 슬라이드 + 내용 슬라이드를 삽입합니다.
 
@@ -1175,11 +1178,11 @@ def _build_content_block(prs, pages: list, business_name: str = "",
 
     Parameters
     ----------
-    section_images : {"01": bytes, "02": bytes, ...} 섹션별 원형 이미지 (없으면 None)
+    section_image_bytes_list : [bytes|None, bytes|None, bytes|None]
+                               섹션 divider 원형 슬롯 3개에 넣을 이미지 (4개 섹션 공통)
     """
     current_sec_num = ""   # 현재 섹션 번호 ("01", "02" …)
     section_num = 0
-    _imgs = section_images or {}
 
     for page in pages:
         section_title = page.get("section_title", "").strip()
@@ -1201,11 +1204,9 @@ def _build_content_block(prs, pages: list, business_name: str = "",
             num_str = f"{section_num:02d}"
             # divider 제목: section_label 우선, 없으면 section_title
             divider_title = page.get("section_label") or section_title or ""
-            # 섹션 이미지: 분류된 섹션 번호("01"~"04")로 조회
-            sec_img = _imgs.get(this_sec_num)
             build_section_divider_slide(prs, num_str, divider_title,
                                         business_name=business_name,
-                                        section_image_bytes=sec_img)
+                                        section_image_bytes_list=section_image_bytes_list)
             current_sec_num = this_sec_num
             # 섹션 첫 페이지에 본문·부제목 없으면 content slide 스킵
             if not body_text and not subtitle:
@@ -1229,3 +1230,56 @@ def _build_content_block(prs, pages: list, business_name: str = "",
             tables=tables_data,
             business_name=business_name,
         )
+
+
+# ─────────────────────────────────────────────
+# (i) 미리보기 PPT — 표지 + 섹션 divider 4장
+# ─────────────────────────────────────────────
+_PREVIEW_SECTIONS = [
+    ("01", "사모사채 개요"),
+    ("02", "금융개요"),
+    ("03", "본건 사업 개요"),
+    ("04", "Appendix"),
+]
+
+
+def build_preview_presentation(
+    business_name: str,
+    year: str,
+    month_en: str,
+    cover_image_bytes: bytes = None,
+    section_image_bytes_list: list = None,
+) -> bytes:
+    """
+    표지 1장 + 섹션 구분 슬라이드 4장 = 총 5장짜리 미리보기 PPT를 반환합니다.
+    실제 콘텐츠 슬라이드 없이 디자인 확인용으로 사용합니다.
+
+    Parameters
+    ----------
+    business_name            : 사업명
+    year / month_en          : 표지 날짜
+    cover_image_bytes        : 표지 이미지 bytes
+    section_image_bytes_list : 섹션 divider 원형 슬롯 3개 이미지 리스트
+
+    Returns
+    -------
+    완성된 PPT 파일 bytes
+    """
+    prs = create_presentation_from_template()
+    template_count = len(prs.slides)
+
+    build_cover_slide(prs, business_name, year, month_en, cover_image_bytes)
+
+    for sec_num, sec_label in _PREVIEW_SECTIONS:
+        build_section_divider_slide(
+            prs, sec_num, sec_label,
+            business_name=business_name,
+            section_image_bytes_list=section_image_bytes_list,
+        )
+
+    finalize_presentation(prs, template_count)
+
+    buf = io.BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf.read()

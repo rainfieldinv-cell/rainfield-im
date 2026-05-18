@@ -8,9 +8,9 @@ from ui_components import render_stepper, render_image_gallery, render_text_prev
 import re
 from datetime import datetime
 from modules.page_builders import (
-    build_cover_slide, make_output_filename,
+    make_output_filename,
     build_full_presentation,
-    create_presentation_from_template, finalize_presentation,
+    build_preview_presentation,
 )
 from modules.content_parser import parse_document_from_bytes
 
@@ -72,12 +72,11 @@ if "cover_image_bytes" not in st.session_state:
 if "parsed_pages" not in st.session_state:
     st.session_state.parsed_pages = []         # content_parser 결과
 
-# 섹션 이미지 관련 세션 상태 (01~04 각 섹션 divider에 쓰일 원형 이미지)
-for _sec in ["01", "02", "03", "04"]:
-    if f"sec_img_bytes_{_sec}" not in st.session_state:
-        st.session_state[f"sec_img_bytes_{_sec}"] = None
-    if f"sec_img_index_{_sec}" not in st.session_state:
-        st.session_state[f"sec_img_index_{_sec}"] = 0
+# 섹션 이미지 관련 세션 상태 — 원형 슬롯 3개 (4개 섹션 divider 공통 적용)
+if "section_img_idx_list" not in st.session_state:
+    st.session_state.section_img_idx_list = [0, 0, 0]
+if "section_img_bytes_list" not in st.session_state:
+    st.session_state.section_img_bytes_list = [None, None, None]
 
 # ─────────────────────────────────────────────
 # [로그인 화면 함수]
@@ -441,92 +440,90 @@ def show_step3():
     # (D) 섹션 이미지 선택 (선택 사항)
     # ────────────────────────────────────────
     st.markdown("### 📌 섹션 이미지 선택 (선택 사항)")
-    st.caption("각 섹션 구분 페이지에 원형으로 표시할 이미지를 선택하세요. 선택하지 않으면 기본 디자인이 유지됩니다.")
-
-    _SEC_LABELS = {
-        "01": "01  사모사채 개요",
-        "02": "02  금융개요",
-        "03": "03  본건 사업 개요",
-        "04": "04  Appendix",
-    }
+    st.caption("섹션 구분 페이지의 원형 자리(3개)에 들어갈 이미지를 선택하세요. 4개 섹션(01~04) 모두 동일하게 적용됩니다.")
 
     if not images:
         st.info("추출된 이미지가 없어 섹션 이미지를 선택할 수 없습니다.")
     else:
         import io as _io
-        for _sec, _label in _SEC_LABELS.items():
-            with st.expander(f"**{_label}** 이미지 선택"):
-                st.caption(f"총 {len(images)}개 이미지 중 선택")
-                _cols = st.columns(4)
-                for _i, _img in enumerate(images[:8]):
-                    with _cols[_i % 4]:
-                        st.image(_img["pil_image"], use_container_width=True)
-                        st.caption(f"#{_img['index']+1}")
-                if len(images) > 8:
-                    st.caption(f"... 외 {len(images)-8}개 더 있습니다.")
+        with st.expander("섹션 이미지 선택 (원형 자리 3개)"):
+            # 이미지 갤러리 — 3열 그리드
+            _gcols = st.columns(3)
+            for _i, _img in enumerate(images[:9]):
+                with _gcols[_i % 3]:
+                    st.image(_img["pil_image"], use_container_width=True)
+                    st.caption(f"#{_img['index']+1}")
+            if len(images) > 9:
+                st.caption(f"... 외 {len(images)-9}개 더 있습니다.")
 
-                _prev_idx = st.session_state[f"sec_img_index_{_sec}"]
-                _sel_num = st.number_input(
-                    f"이미지 번호 (0 = 선택 안 함)",
-                    min_value=0,
-                    max_value=len(images),
-                    value=_prev_idx,
-                    step=1,
-                    key=f"sec_img_num_{_sec}",
-                    help="0을 입력하면 기본 디자인이 유지됩니다.",
-                )
-                st.session_state[f"sec_img_index_{_sec}"] = int(_sel_num)
+            st.markdown("")
 
-                if _sel_num > 0:
-                    _sel = images[int(_sel_num) - 1]
-                    st.markdown("**선택된 이미지:**")
-                    st.image(_sel["pil_image"], width=250)
-                    _buf = _io.BytesIO()
-                    _sel["pil_image"].save(_buf, format="PNG")
-                    st.session_state[f"sec_img_bytes_{_sec}"] = _buf.getvalue()
-                else:
-                    st.session_state[f"sec_img_bytes_{_sec}"] = None
+            # 3개 슬롯 번호 입력 + 미리보기 (가로 3열)
+            _prev_list = st.session_state.section_img_idx_list
+            _new_idx_list   = []
+            _new_bytes_list = []
+
+            _scols = st.columns(3)
+            _slot_labels = ["원형 자리 1번 (우측 상단)", "원형 자리 2번 (우측 하단)", "원형 자리 3번 (중앙 좌측)"]
+            for _slot in range(3):
+                with _scols[_slot]:
+                    st.caption(_slot_labels[_slot])
+                    _prev = _prev_list[_slot] if _slot < len(_prev_list) else 0
+                    _sel_num = st.number_input(
+                        f"이미지 번호 (0 = 선택 안 함)",
+                        min_value=0,
+                        max_value=len(images),
+                        value=_prev,
+                        step=1,
+                        key=f"sec_oval_slot_{_slot}",
+                    )
+                    _new_idx_list.append(int(_sel_num))
+                    if _sel_num > 0:
+                        _sel = images[int(_sel_num) - 1]
+                        st.image(_sel["pil_image"], use_container_width=True)
+                        st.caption(f"선택됨: #{int(_sel_num)}")
+                        _buf = _io.BytesIO()
+                        _sel["pil_image"].save(_buf, format="PNG")
+                        _new_bytes_list.append(_buf.getvalue())
+                    else:
+                        st.caption("(선택 안 함)")
+                        _new_bytes_list.append(None)
+
+            st.session_state.section_img_idx_list   = _new_idx_list
+            st.session_state.section_img_bytes_list = _new_bytes_list
 
     st.markdown("---")
 
     # ────────────────────────────────────────
-    # (E) 표지 미리 생성 버튼
+    # (E) 표지 및 섹션 미리보기
     # ────────────────────────────────────────
-    st.markdown("### 🚀 표지 미리 생성")
-    st.caption("지금까지 설정한 내용으로 표지를 생성합니다. 확인용 다운로드이며 정식 완성본이 아닙니다.")
+    st.markdown("### 🚀 표지 및 섹션 미리보기")
+    st.caption("표지 1장 + 섹션 구분 페이지 4장 = 총 5장짜리 미리보기 PPT를 생성합니다. 정식 완성본이 아닙니다.")
 
-    if st.button("📄 표지 미리 생성", type="primary"):
+    if st.button("🚀 표지 및 섹션 미리 생성", type="primary"):
         try:
-            with st.spinner("표지 PPT를 생성하는 중입니다..."):
-                # 템플릿 기반 PPT 생성 (레이아웃.pptx 슬라이드를 참조해야 함)
-                prs = create_presentation_from_template()
-                n   = len(prs.slides)
-                build_cover_slide(
-                    prs,
+            with st.spinner("미리보기 PPT를 생성하는 중입니다..."):
+                import io as _io
+                preview_bytes = build_preview_presentation(
                     business_name=st.session_state.business_name,
                     year=st.session_state.year,
                     month_en=st.session_state.month_en,
-                    cover_image_bytes=cover_image_bytes if images else None,
+                    cover_image_bytes=st.session_state.cover_image_bytes,
+                    section_image_bytes_list=st.session_state.section_img_bytes_list,
                 )
-                finalize_presentation(prs, n)
-
-                # 다운로드용 bytes 생성
-                import io as _io
-                pptx_buf = _io.BytesIO()
-                prs.save(pptx_buf)
-                pptx_buf.seek(0)
-                filename = make_output_filename(st.session_state.business_name)
-
-            st.success(f"✅ 표지 미리보기가 생성되었습니다: {filename}")
+            _preview_name = (
+                f"preview_{st.session_state.business_name}"
+                f"_{datetime.now().strftime('%y%m%d')}.pptx"
+            )
+            st.success("✅ 미리보기 생성 완료 (표지 1장 + 섹션 구분 4장)")
             st.download_button(
-                label="⬇️ PPT 다운로드",
-                data=pptx_buf.getvalue(),
-                file_name=filename,
+                label="⬇️ 미리보기 PPT 다운로드",
+                data=preview_bytes,
+                file_name=_preview_name,
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
             )
-
         except Exception as e:
-            st.error(f"❌ 표지 생성 중 오류가 발생했습니다: {e}")
+            st.error(f"❌ 미리보기 생성 중 오류가 발생했습니다: {e}")
 
     st.markdown("---")
 
@@ -614,19 +611,13 @@ def show_step4():
     if st.button("📄 완성 PPT 생성하기", type="primary", use_container_width=False):
         try:
             with st.spinner("PPT를 생성하는 중입니다... 잠시만 기다려주세요."):
-                # 섹션 이미지 dict 수집 (None인 섹션은 제외)
-                _sec_imgs = {
-                    sec: st.session_state.get(f"sec_img_bytes_{sec}")
-                    for sec in ["01", "02", "03", "04"]
-                    if st.session_state.get(f"sec_img_bytes_{sec}")
-                }
                 ppt_bytes = build_full_presentation(
                     business_name=st.session_state.business_name,
                     year=st.session_state.year,
                     month_en=st.session_state.month_en,
                     pages=pages,
                     cover_image_bytes=st.session_state.cover_image_bytes,
-                    section_images=_sec_imgs or None,
+                    section_image_bytes_list=st.session_state.section_img_bytes_list,
                 )
 
             filename = make_output_filename(st.session_state.business_name)
