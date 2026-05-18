@@ -25,7 +25,7 @@ PageData = Dict[str, str]
 # True 로 바꾸면 각 페이지 파싱 결과가 콘솔에 출력됩니다.
 # 배포 시에는 False 로 유지하세요.
 # ─────────────────────────────────────────────
-DEBUG_PARSER = True
+DEBUG_PARSER = False
 
 
 # ─────────────────────────────────────────────
@@ -668,9 +668,7 @@ def extract_section_labels(pages: list) -> dict:
     return labels
 
 
-_NOISE_PREFIX = re.compile(
-    r'^[\s▶•■▪◆→☞※\[\]\d\.\s]+'   # 불릿·번호 접두사
-)
+_NOISE_PREFIX = re.compile(r'^[\s\d.▶•■▪◆→☞※\[\]]+')
 _TABLE_NOISE  = re.compile(r'\s{2,}|\s+구\s+분\s+|\s+내\s+용\s+')
 
 
