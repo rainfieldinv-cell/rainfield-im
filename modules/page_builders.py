@@ -794,24 +794,13 @@ def build_toc_slide(prs, num_sections: int = 4, toc_map: dict = None,
         subtitles = (toc_map or {}).get(sec_num) or DEFAULT_TOC_MAP.get(sec_num) or []
         _replace_text_frame_content(shape.text_frame, "\n".join(subtitles))
 
-    # TOC oval 항상 제거 (이미지 유무 무관)
-    to_remove = []
-    for shape in slide.shapes:
-        if (abs(shape.left - _Cm(_TOC_OVAL_LEFT)) < _TOC_OVAL_TOL and
-                abs(shape.top  - _Cm(_TOC_OVAL_TOP))  < _TOC_OVAL_TOL):
-            to_remove.append(shape)
-    for shape in to_remove:
-        parent = shape.element.getparent()
-        if parent is not None:
-            parent.remove(shape.element)
-
-    # 이미지가 제공된 경우 PIL 원형 사진 삽입
+    # 도형 삭제 없음 — 이미지 제공 시 oval 위에 z-order 상위로 덮어씌움
     img_bytes = (toc_image_bytes_list[0] if toc_image_bytes_list else None)
     if img_bytes:
         try:
             circ_png = make_circular_image_png(img_bytes, output_size=512,
                                                border_color_rgb=(255, 255, 255),
-                                               border_width_px=30)
+                                               border_width_px=8)
             add_image(slide, circ_png,
                       left_cm=_TOC_OVAL_LEFT, top_cm=_TOC_OVAL_TOP,
                       width_cm=_TOC_OVAL_W, height_cm=_TOC_OVAL_H)
@@ -1003,19 +992,64 @@ def build_content_slide(prs, title: str, subtitle: str, body_text: str = "",
 
 
 # ─────────────────────────────────────────────
-# (f) 섹션 구분 슬라이드 — 타원 쌍 매핑
-# 각 슬롯: (outer_left, outer_top, outer_w, outer_h, inner_left, inner_top)
-# outer = 테두리 링 / inner = 이미지 자리 → 둘 다 제거 후 PIL 원형 이미지 삽입
+# (f) 섹션 구분 슬라이드 — 안쪽 연두 원 좌표 (실측)
+# outer 파란 링(#2E75B6)은 건드리지 않음.
+# inner 연두 원(#92D050) 위치·크기에 사진을 덮어씌움.
+# 각 튜플: (inner_left_cm, inner_top_cm, inner_w_cm, inner_h_cm)
 # ─────────────────────────────────────────────
-_DIV_OVAL_PAIRS = [
-    # Slot 1 — 우측 상단  (타원 35 outer, 타원 14 inner)
-    (16.3273, 0.7346, 9.70, 9.70,   17.0734, 1.3751),
-    # Slot 2 — 우측 하단  (타원 32 outer, 타원 2  inner)
-    (17.3779, 8.2234, 8.70, 8.70,   17.9979, 8.7912),
-    # Slot 3 — 중앙 좌측  (타원 37 outer, 타원 15 inner)
-    (13.5919, 6.1749, 6.80, 6.80,   14.1443, 6.6548),
+_DIV_INNER_OVALS = [
+    # Slot 1 — 우측 상단  (타원 14, fill=#92D050)
+    (17.0734, 1.3751, 8.2217, 8.4607),
+    # Slot 2 — 우측 하단  (타원 2,  fill=#92D050)
+    (17.9979, 8.7912, 7.4462, 7.5643),
+    # Slot 3 — 중앙 좌측  (타원 15, fill=#92D050)
+    (14.1443, 6.6548, 5.7571, 5.7933),
 ]
-_OVAL_TOL = _Cm(0.3)   # 위치 매칭 허용 오차
+
+# 연두색 기준값 및 허용 오차
+_GREEN_RGB   = (0x92, 0xD0, 0x50)   # #92D050
+_GREEN_TOL   = 30                    # 각 채널 ±30
+_OVAL_TOL    = _Cm(0.3)
+
+
+def _detect_inner_green_ovals(slide) -> list:
+    """
+    슬라이드에서 연두색(#92D050 ±30) 채움 oval을 모두 찾아
+    [(left_cm, top_cm, width_cm, height_cm), ...] 를 반환합니다.
+    콘솔에 식별 결과를 출력합니다.
+    """
+    from pptx.dml.color import RGBColor
+
+    result = []
+    for shape in slide.shapes:
+        try:
+            fill = shape.fill
+            if fill.type != 1:          # solid fill 만 대상
+                continue
+            rgb = fill.fore_color.rgb   # RGBColor
+            r, g, b = int(rgb[0]), int(rgb[1]), int(rgb[2])
+            gr, gg, gb = _GREEN_RGB
+            if abs(r - gr) <= _GREEN_TOL and abs(g - gg) <= _GREEN_TOL and abs(b - gb) <= _GREEN_TOL:
+                l_cm = shape.left   / 914400 * 2.54
+                t_cm = shape.top    / 914400 * 2.54
+                w_cm = shape.width  / 914400 * 2.54
+                h_cm = shape.height / 914400 * 2.54
+                result.append((l_cm, t_cm, w_cm, h_cm))
+        except Exception:
+            pass
+
+    # _DIV_INNER_OVALS 순서(Slot1→2→3)에 맞게 재정렬 — XML 내 shape 순서와 무관하게 고정
+    if len(result) == len(_DIV_INNER_OVALS):
+        ordered = []
+        for hl, ht, _hw, _hh in _DIV_INNER_OVALS:
+            best = min(result, key=lambda r: (r[0] - hl) ** 2 + (r[1] - ht) ** 2)
+            ordered.append(best)
+        result = ordered
+
+    print(f"[_detect_inner_green_ovals] 식별된 연두 oval: {len(result)}개")
+    for i, (l, t, w, h) in enumerate(result):
+        print(f"  Slot {i+1}: L={l:.3f} T={t:.3f} W={w:.3f} H={h:.3f}")
+    return result
 
 # 템플릿의 소제목 그룹 위치 — 부정확한 템플릿 텍스트를 교체하기 위해 항상 제거
 _DIV_SUBTITLE_GROUP_LEFT = 3.5328   # cm
@@ -1084,35 +1118,29 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
                      width_cm=12.0, height_cm=sub_height,
                      font_name=FONT_BOLD, font_size_pt=16.0)
 
-    # 원형 이미지 슬롯 처리 — 이미지가 있는 슬롯만 타원 제거 후 PIL 원형 사진 삽입
+    # 원형 이미지 슬롯 처리
+    # 도형 삭제 없음 — 안쪽 연두 oval 위에 사진을 z-order 상위로 덮어씌움
     if section_image_bytes_list:
+        inner_ovals = _detect_inner_green_ovals(slide)
+
+        # 색상 감지 실패 시 하드코딩 fallback
+        if not inner_ovals:
+            print("[경고] _detect_inner_green_ovals 실패 → fallback 좌표 사용")
+            inner_ovals = _DIV_INNER_OVALS
+
         for slot_idx, img_bytes in enumerate(section_image_bytes_list):
-            if not img_bytes or slot_idx >= len(_DIV_OVAL_PAIRS):
+            if not img_bytes or slot_idx >= len(inner_ovals):
                 continue
 
-            ol, ot, ow, oh, il, it = _DIV_OVAL_PAIRS[slot_idx]
+            il, it, iw, ih = inner_ovals[slot_idx]
 
-            # 해당 슬롯의 outer+inner 타원 shapes 찾아서 제거
-            to_remove = []
-            for shape in slide.shapes:
-                sl, st = shape.left, shape.top
-                if ((abs(sl - _Cm(ol)) < _OVAL_TOL and abs(st - _Cm(ot)) < _OVAL_TOL) or
-                        (abs(sl - _Cm(il)) < _OVAL_TOL and abs(st - _Cm(it)) < _OVAL_TOL)):
-                    to_remove.append(shape)
-
-            for shape in to_remove:
-                parent = shape.element.getparent()
-                if parent is not None:
-                    parent.remove(shape.element)
-
-            # PIL 원형 이미지(테두리 포함) 생성 후 outer 타원 위치에 삽입
             try:
                 circ_png = make_circular_image_png(img_bytes, output_size=512,
                                                     border_color_rgb=(255, 255, 255),
-                                                    border_width_px=30)
+                                                    border_width_px=8)
                 add_image(slide, circ_png,
-                          left_cm=ol, top_cm=ot,
-                          width_cm=ow, height_cm=oh)
+                          left_cm=il, top_cm=it,
+                          width_cm=iw, height_cm=ih)
             except Exception as exc:
                 print(f"[경고] 섹션 원형 이미지 삽입 실패 slot={slot_idx}: {exc}")
 

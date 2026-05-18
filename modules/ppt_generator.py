@@ -352,17 +352,18 @@ def make_circular_image_png(
     image_bytes: bytes,
     output_size: int = 512,
     border_color_rgb: tuple = (255, 255, 255),
-    border_width_px: int = 30,
+    border_width_px: int = 8,
 ) -> bytes:
     """
-    이미지를 원형으로 크롭하고 컬러 테두리를 그린 PNG bytes를 반환합니다.
+    이미지를 원형으로 크롭하고 완전 불투명 흰색 테두리를 그린 PNG bytes를 반환합니다.
+    2× 오버샘플링으로 안티앨리어싱 적용.
 
     Parameters
     ----------
     image_bytes      : 원본 이미지 bytes
     output_size      : 출력 이미지 크기 (px, 정사각형)
-    border_color_rgb : 테두리 색상 (R, G, B)
-    border_width_px  : 테두리 두께 (px)
+    border_color_rgb : 테두리 색상 (R, G, B) — alpha는 항상 255
+    border_width_px  : 테두리 두께 (px) — 기본 8px = inner oval 선 6pt와 동일
     """
     img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
 
@@ -374,24 +375,23 @@ def make_circular_image_png(
         (output_size, output_size), Image.LANCZOS
     )
 
-    # 투명 캔버스에 원형 마스크로 사진 붙이기 (테두리 두께만큼 inset)
-    canvas = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 0))
-    inset  = border_width_px
-    mask   = Image.new("L", (output_size, output_size), 0)
-    ImageDraw.Draw(mask).ellipse(
-        (inset, inset, output_size - inset - 1, output_size - inset - 1),
-        fill=255,
-    )
-    canvas.paste(img, (0, 0), mask)
-
-    # 테두리 링 그리기 — 바깥에서 안쪽으로 border_width_px 픽셀
-    bd = ImageDraw.Draw(canvas)
     r, g, b = border_color_rgb
-    for i in range(border_width_px):
-        bd.ellipse(
-            (i, i, output_size - 1 - i, output_size - 1 - i),
-            outline=(r, g, b, 255),
-        )
+    aa = output_size * 2          # 2× 오버샘플링 크기
+    pi = border_width_px * 2      # 오버샘플 공간에서의 inset
+
+    # ── 1) 테두리 원 레이어: filled 원 전체 → 안티앨리어싱 후 출력 크기로 축소
+    border_aa = Image.new("RGBA", (aa, aa), (0, 0, 0, 0))
+    ImageDraw.Draw(border_aa).ellipse((0, 0, aa - 1, aa - 1), fill=(r, g, b, 255))
+    border_layer = border_aa.resize((output_size, output_size), Image.LANCZOS)
+
+    # ── 2) 사진 원형 마스크: inset 안쪽 circle → 안티앨리어싱 후 출력 크기로 축소
+    mask_aa = Image.new("L", (aa, aa), 0)
+    ImageDraw.Draw(mask_aa).ellipse((pi, pi, aa - 1 - pi, aa - 1 - pi), fill=255)
+    photo_mask = mask_aa.resize((output_size, output_size), Image.LANCZOS)
+
+    # ── 3) border_layer 위에 사진을 photo_mask 영역에 붙이기
+    canvas = border_layer.copy()
+    canvas.paste(img, (0, 0), photo_mask)
 
     buf = io.BytesIO()
     canvas.save(buf, format="PNG")
