@@ -79,11 +79,6 @@ if "section_img_idx_list" not in st.session_state:
 if "section_img_bytes_list" not in st.session_state:
     st.session_state.section_img_bytes_list = [None, None, None]
 
-# 이미지 갤러리 전체 보기 토글
-if "cover_gallery_all" not in st.session_state:
-    st.session_state.cover_gallery_all = False
-if "section_gallery_all" not in st.session_state:
-    st.session_state.section_gallery_all = False
 
 # ─────────────────────────────────────────────
 # [로그인 화면 함수]
@@ -459,20 +454,20 @@ def show_step3():
 
         st.caption(f"총 {len(images)}개 이미지 추출됨 — 가장 큰 이미지(#{default_idx})를 자동 추천합니다.")
 
-        # 이미지 미리보기 (4열 그리드)
-        _cover_all   = st.session_state.cover_gallery_all
-        _cover_show  = images if _cover_all else images[:8]
+        # 이미지 미리보기 — 처음 8장 + 나머지는 expander
         cols = st.columns(4)
-        for i, img_data in enumerate(_cover_show):
+        for i, img_data in enumerate(images[:8]):
             with cols[i % 4]:
                 st.image(img_data["pil_image"], use_container_width=True)
                 st.caption(f"#{img_data['index']+1} ({img_data['width']}×{img_data['height']})")
 
         if len(images) > 8:
-            _lbl = "접기 ▲" if _cover_all else f"전체 보기 ({len(images)-8}개 더) ▼"
-            if st.button(_lbl, key="cover_gallery_btn"):
-                st.session_state.cover_gallery_all = not _cover_all
-                st.rerun()
+            with st.expander(f"나머지 {len(images)-8}개 이미지 더 보기"):
+                _more_cols = st.columns(4)
+                for i, img_data in enumerate(images[8:]):
+                    with _more_cols[i % 4]:
+                        st.image(img_data["pil_image"], use_container_width=True)
+                        st.caption(f"#{img_data['index']+1} ({img_data['width']}×{img_data['height']})")
 
         # 이미지 번호 입력
         img_num = st.number_input(
@@ -510,19 +505,19 @@ def show_step3():
     else:
         import io as _io
         with st.expander("섹션 이미지 선택 (원형 자리 3개)"):
-            # 이미지 갤러리 — 3열 그리드
-            _sec_all  = st.session_state.section_gallery_all
-            _sec_show = images if _sec_all else images[:9]
+            # 이미지 갤러리 — 처음 9장 + 나머지는 expander
             _gcols = st.columns(3)
-            for _i, _img in enumerate(_sec_show):
+            for _i, _img in enumerate(images[:9]):
                 with _gcols[_i % 3]:
                     st.image(_img["pil_image"], use_container_width=True)
                     st.caption(f"#{_img['index']+1}")
             if len(images) > 9:
-                _slbl = "접기 ▲" if _sec_all else f"전체 보기 ({len(images)-9}개 더) ▼"
-                if st.button(_slbl, key="section_gallery_btn"):
-                    st.session_state.section_gallery_all = not _sec_all
-                    st.rerun()
+                with st.expander(f"나머지 {len(images)-9}개 이미지 더 보기"):
+                    _more_gcols = st.columns(3)
+                    for _i, _img in enumerate(images[9:]):
+                        with _more_gcols[_i % 3]:
+                            st.image(_img["pil_image"], use_container_width=True)
+                            st.caption(f"#{_img['index']+1}")
 
             st.markdown("")
 
@@ -766,8 +761,6 @@ def show_main():
             st.session_state.parsed_pages = []
             st.session_state.section_img_idx_list   = [0, 0, 0]
             st.session_state.section_img_bytes_list = [None, None, None]
-            st.session_state.cover_gallery_all   = False
-            st.session_state.section_gallery_all = False
             st.rerun()  # 로그인 화면으로 전환
 
     # ── 메인 상단 제목 ──
