@@ -5,6 +5,7 @@ from extractors import extract_from_pdf, extract_from_docx, detect_business_name
 from ui_components import render_stepper, render_image_gallery, render_text_preview
 
 # PPT 생성 모듈 불러오기
+import os
 import re
 from datetime import datetime
 from modules.page_builders import (
@@ -77,6 +78,12 @@ if "section_img_idx_list" not in st.session_state:
     st.session_state.section_img_idx_list = [0, 0, 0]
 if "section_img_bytes_list" not in st.session_state:
     st.session_state.section_img_bytes_list = [None, None, None]
+
+# 이미지 갤러리 전체 보기 토글
+if "cover_gallery_all" not in st.session_state:
+    st.session_state.cover_gallery_all = False
+if "section_gallery_all" not in st.session_state:
+    st.session_state.section_gallery_all = False
 
 # ─────────────────────────────────────────────
 # [로그인 화면 함수]
@@ -302,6 +309,58 @@ def show_step2():
 
 
 # ─────────────────────────────────────────────
+# [섹션 divider 슬롯 위치 미니어처 헬퍼]
+# ─────────────────────────────────────────────
+@st.cache_data
+def _make_divider_miniature(w_px: int = 540, h_px: int = 374) -> bytes:
+    """섹션 divider 슬라이드 레이아웃을 단순화한 PNG 미니어처를 반환합니다.
+    ①②③ 표시로 각 원형 슬롯 위치를 직관적으로 안내합니다."""
+    import io as _mio
+    from PIL import Image as _Img, ImageDraw as _Draw, ImageFont as _Font
+
+    SLIDE_W = 27.52
+    SLIDE_H = 19.05
+    sx, sy = w_px / SLIDE_W, h_px / SLIDE_H
+
+    img  = _Img.new("RGB", (w_px, h_px), (248, 248, 248))
+    draw = _Draw.Draw(img)
+    draw.rectangle([0, 0, w_px - 1, h_px - 1], outline=(200, 200, 200), width=2)
+
+    # 텍스트 영역 힌트 (섹션 번호+제목 위치)
+    draw.rectangle(
+        [int(0.5 * sx), int(7.5 * sy), int(13 * sx), int(10.5 * sy)],
+        fill=(225, 225, 225), outline=(190, 190, 190),
+    )
+
+    # 3개 원형 슬롯 (outer oval 위치 기준) — _DIV_OVAL_PAIRS와 동일 순서
+    _OVALS  = [(16.3273, 0.7346, 9.70, 9.70),
+               (17.3779, 8.2234, 8.70, 8.70),
+               (13.5919, 6.1749, 6.80, 6.80)]
+    _LABELS = ["①", "②", "③"]
+    _GREEN  = (146, 208, 80)
+
+    try:
+        _fnt_path = os.path.join(os.path.dirname(__file__), "fonts", "PEOPLEFONTB.TTF")
+        _base_fnt = _Font.truetype(_fnt_path, size=28)
+    except Exception:
+        _base_fnt = _Font.load_default()
+
+    for (ol, ot, ow, oh), label in zip(_OVALS, _LABELS):
+        cx = int((ol + ow / 2) * sx)
+        cy = int((ot + oh / 2) * sy)
+        rx = int(ow / 2 * sx)
+        ry = int(oh / 2 * sy)
+        draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry],
+                     fill=(220, 220, 220), outline=_GREEN, width=5)
+        draw.text((cx, cy), label, font=_base_fnt, fill=(50, 50, 50), anchor="mm")
+
+    buf = _mio.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.getvalue()
+
+
+# ─────────────────────────────────────────────
 # [목차 개수 자동 감지 헬퍼]
 # ─────────────────────────────────────────────
 def _detect_toc_count(full_text: str) -> int:
@@ -400,16 +459,20 @@ def show_step3():
 
         st.caption(f"총 {len(images)}개 이미지 추출됨 — 가장 큰 이미지(#{default_idx})를 자동 추천합니다.")
 
-        # 이미지 미리보기 (4열 그리드, 최대 8개까지만 표시)
-        preview_images = images[:8]
+        # 이미지 미리보기 (4열 그리드)
+        _cover_all   = st.session_state.cover_gallery_all
+        _cover_show  = images if _cover_all else images[:8]
         cols = st.columns(4)
-        for i, img_data in enumerate(preview_images):
+        for i, img_data in enumerate(_cover_show):
             with cols[i % 4]:
                 st.image(img_data["pil_image"], use_container_width=True)
                 st.caption(f"#{img_data['index']+1} ({img_data['width']}×{img_data['height']})")
 
         if len(images) > 8:
-            st.caption(f"... 외 {len(images)-8}개 더 있습니다.")
+            _lbl = "접기 ▲" if _cover_all else f"전체 보기 ({len(images)-8}개 더) ▼"
+            if st.button(_lbl, key="cover_gallery_btn"):
+                st.session_state.cover_gallery_all = not _cover_all
+                st.rerun()
 
         # 이미지 번호 입력
         img_num = st.number_input(
@@ -448,13 +511,25 @@ def show_step3():
         import io as _io
         with st.expander("섹션 이미지 선택 (원형 자리 3개)"):
             # 이미지 갤러리 — 3열 그리드
+            _sec_all  = st.session_state.section_gallery_all
+            _sec_show = images if _sec_all else images[:9]
             _gcols = st.columns(3)
-            for _i, _img in enumerate(images[:9]):
+            for _i, _img in enumerate(_sec_show):
                 with _gcols[_i % 3]:
                     st.image(_img["pil_image"], use_container_width=True)
                     st.caption(f"#{_img['index']+1}")
             if len(images) > 9:
-                st.caption(f"... 외 {len(images)-9}개 더 있습니다.")
+                _slbl = "접기 ▲" if _sec_all else f"전체 보기 ({len(images)-9}개 더) ▼"
+                if st.button(_slbl, key="section_gallery_btn"):
+                    st.session_state.section_gallery_all = not _sec_all
+                    st.rerun()
+
+            st.markdown("")
+
+            # 슬롯 위치 안내 미니어처
+            st.image(_make_divider_miniature(),
+                     caption="원형 슬롯 위치 — ① 우측 상단 / ② 우측 하단 / ③ 중앙 좌측",
+                     use_container_width=True)
 
             st.markdown("")
 
@@ -618,6 +693,7 @@ def show_step4():
                     pages=pages,
                     cover_image_bytes=st.session_state.cover_image_bytes,
                     section_image_bytes_list=st.session_state.section_img_bytes_list,
+                    toc_count=st.session_state.toc_count,
                 )
 
             filename = make_output_filename(st.session_state.business_name)
@@ -690,6 +766,8 @@ def show_main():
             st.session_state.parsed_pages = []
             st.session_state.section_img_idx_list   = [0, 0, 0]
             st.session_state.section_img_bytes_list = [None, None, None]
+            st.session_state.cover_gallery_all   = False
+            st.session_state.section_gallery_all = False
             st.rerun()  # 로그인 화면으로 전환
 
     # ── 메인 상단 제목 ──

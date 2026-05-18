@@ -348,6 +348,57 @@ def _crop_circle(image_bytes: bytes) -> bytes:
     return buf.read()
 
 
+def make_circular_image_png(
+    image_bytes: bytes,
+    output_size: int = 512,
+    border_color_rgb: tuple = (146, 208, 80),
+    border_width_px: int = 30,
+) -> bytes:
+    """
+    이미지를 원형으로 크롭하고 컬러 테두리를 그린 PNG bytes를 반환합니다.
+
+    Parameters
+    ----------
+    image_bytes      : 원본 이미지 bytes
+    output_size      : 출력 이미지 크기 (px, 정사각형)
+    border_color_rgb : 테두리 색상 (R, G, B)
+    border_width_px  : 테두리 두께 (px)
+    """
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+
+    # 정사각형 중앙 크롭 후 리사이즈
+    sq = min(img.width, img.height)
+    lx = (img.width  - sq) // 2
+    ty = (img.height - sq) // 2
+    img = img.crop((lx, ty, lx + sq, ty + sq)).resize(
+        (output_size, output_size), Image.LANCZOS
+    )
+
+    # 투명 캔버스에 원형 마스크로 사진 붙이기 (테두리 두께만큼 inset)
+    canvas = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 0))
+    inset  = border_width_px
+    mask   = Image.new("L", (output_size, output_size), 0)
+    ImageDraw.Draw(mask).ellipse(
+        (inset, inset, output_size - inset - 1, output_size - inset - 1),
+        fill=255,
+    )
+    canvas.paste(img, (0, 0), mask)
+
+    # 테두리 링 그리기 — 바깥에서 안쪽으로 border_width_px 픽셀
+    bd = ImageDraw.Draw(canvas)
+    r, g, b = border_color_rgb
+    for i in range(border_width_px):
+        bd.ellipse(
+            (i, i, output_size - 1 - i, output_size - 1 - i),
+            outline=(r, g, b, 255),
+        )
+
+    buf = io.BytesIO()
+    canvas.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.read()
+
+
 # ─────────────────────────────────────────────
 # (e) PPT 파일 저장
 # ─────────────────────────────────────────────

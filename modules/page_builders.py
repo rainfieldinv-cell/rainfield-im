@@ -34,7 +34,6 @@ from modules.constants import (
     OUTPUT_DIR, OUTPUT_FILENAME_FORMAT, TEMPLATES_DIR,
     LAYOUT_PPTX_PATH, SLIDE_INDEX_MAP,
     DEFAULT_TOC_MAP,
-    SECTION_DIVIDER_OVALS,
 )
 
 # ─────────────────────────────────────────────
@@ -50,6 +49,7 @@ from modules.ppt_generator import (
     add_text_box,
     add_image,
     add_oval_with_image,
+    make_circular_image_png,
     save_presentation,
 )
 
@@ -970,11 +970,33 @@ def build_content_slide(prs, title: str, subtitle: str, body_text: str = "",
 
 
 # ─────────────────────────────────────────────
+# (f) 섹션 구분 슬라이드 — 타원 쌍 매핑
+# 각 슬롯: (outer_left, outer_top, outer_w, outer_h, inner_left, inner_top)
+# outer = 테두리 링 / inner = 이미지 자리 → 둘 다 제거 후 PIL 원형 이미지 삽입
+# ─────────────────────────────────────────────
+_DIV_OVAL_PAIRS = [
+    # Slot 1 — 우측 상단  (타원 35 outer, 타원 14 inner)
+    (16.3273, 0.7346, 9.70, 9.70,   17.0734, 1.3751),
+    # Slot 2 — 우측 하단  (타원 32 outer, 타원 2  inner)
+    (17.3779, 8.2234, 8.70, 8.70,   17.9979, 8.7912),
+    # Slot 3 — 중앙 좌측  (타원 37 outer, 타원 15 inner)
+    (13.5919, 6.1749, 6.80, 6.80,   14.1443, 6.6548),
+]
+_OVAL_TOL = _Cm(0.3)   # 위치 매칭 허용 오차
+
+# 템플릿의 소제목 그룹 위치 — 부정확한 템플릿 텍스트를 교체하기 위해 항상 제거
+_DIV_SUBTITLE_GROUP_LEFT = 3.5328   # cm
+_DIV_SUBTITLE_GROUP_TOP  = 9.9047   # cm
+_DIV_SUBTITLE_GROUP_TOL  = _Cm(0.5)
+
+
+# ─────────────────────────────────────────────
 # (f) 섹션 구분 슬라이드 생성 함수
 # ─────────────────────────────────────────────
 def build_section_divider_slide(prs, section_number: str = "", section_title: str = "",
                                  business_name: str = "",
-                                 section_image_bytes_list: list = None):
+                                 section_image_bytes_list: list = None,
+                                 subtitles: list = None):
     """
     섹션 구분 슬라이드를 만들어 prs에 추가합니다.
 
@@ -984,7 +1006,9 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
     section_number            : 섹션 번호 문자열 (예: "01", "02", "03", "04")
     section_title             : 섹션 제목 문자열 (예: "사모사채 개요", "금융개요")
     section_image_bytes_list  : 원형 슬롯 3개에 넣을 이미지 bytes 리스트 (None 항목은 건너뜀)
-                                SECTION_DIVIDER_OVALS 순서와 1:1 대응
+                                _DIV_OVAL_PAIRS 순서와 1:1 대응
+    subtitles                 : 이 섹션의 소제목 목록 (예: ["1.1 개요", "1.2 투자구조"])
+                                None이면 소제목 표시 안 함
 
     Returns
     -------
@@ -1011,17 +1035,53 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
             _replace_text_frame_content(shape.text_frame, new_text)
             break
 
-    # 원형 이미지 3개 슬롯 — SECTION_DIVIDER_OVALS 위치에 순서대로 삽입
+    # 템플릿 소제목 그룹 제거 후 올바른 소제목 텍스트박스 삽입
+    for shape in list(slide.shapes):
+        if (shape.shape_type == 6 and   # GROUP
+                abs(shape.left - _Cm(_DIV_SUBTITLE_GROUP_LEFT)) < _DIV_SUBTITLE_GROUP_TOL and
+                abs(shape.top  - _Cm(_DIV_SUBTITLE_GROUP_TOP))  < _DIV_SUBTITLE_GROUP_TOL):
+            shape.element.getparent().remove(shape.element)
+            break
+
+    if subtitles:
+        sub_text   = "\n".join(subtitles)
+        sub_height = max(0.8, 0.65 * len(subtitles))
+        add_text_box(slide, sub_text,
+                     left_cm=_DIV_SUBTITLE_GROUP_LEFT, top_cm=_DIV_SUBTITLE_GROUP_TOP,
+                     width_cm=12.0, height_cm=sub_height,
+                     font_name=FONT_BOLD, font_size_pt=16.0)
+
+    # 원형 이미지 슬롯 처리 — 이미지가 있는 슬롯만 타원 제거 후 PIL 원형 사진 삽입
     if section_image_bytes_list:
-        for img_bytes, (left, top, diam) in zip(section_image_bytes_list, SECTION_DIVIDER_OVALS):
-            if not img_bytes:
+        for slot_idx, img_bytes in enumerate(section_image_bytes_list):
+            if not img_bytes or slot_idx >= len(_DIV_OVAL_PAIRS):
                 continue
+
+            ol, ot, ow, oh, il, it = _DIV_OVAL_PAIRS[slot_idx]
+
+            # 해당 슬롯의 outer+inner 타원 shapes 찾아서 제거
+            to_remove = []
+            for shape in slide.shapes:
+                sl, st = shape.left, shape.top
+                if ((abs(sl - _Cm(ol)) < _OVAL_TOL and abs(st - _Cm(ot)) < _OVAL_TOL) or
+                        (abs(sl - _Cm(il)) < _OVAL_TOL and abs(st - _Cm(it)) < _OVAL_TOL)):
+                    to_remove.append(shape)
+
+            for shape in to_remove:
+                parent = shape.element.getparent()
+                if parent is not None:
+                    parent.remove(shape.element)
+
+            # PIL 원형 이미지(테두리 포함) 생성 후 outer 타원 위치에 삽입
             try:
-                add_oval_with_image(slide, img_bytes,
-                                    left_cm=left, top_cm=top,
-                                    diameter_cm=diam)
+                circ_png = make_circular_image_png(img_bytes, output_size=512,
+                                                    border_color_rgb=(146, 208, 80),
+                                                    border_width_px=30)
+                add_image(slide, circ_png,
+                          left_cm=ol, top_cm=ot,
+                          width_cm=ow, height_cm=oh)
             except Exception as exc:
-                print(f"[경고] 섹션 원형 이미지 삽입 실패 ({left:.2f},{top:.2f}): {exc}")
+                print(f"[경고] 섹션 원형 이미지 삽입 실패 slot={slot_idx}: {exc}")
 
     _replace_footer_business_name(slide, business_name)
     return slide
@@ -1076,6 +1136,7 @@ def build_full_presentation(
     cover_image_bytes: bytes = None,
     executive_summary_sections: list = None,
     section_image_bytes_list: list = None,
+    toc_count: int = None,
 ) -> bytes:
     """
     content_parser 결과를 받아 완성된 PPT를 bytes로 반환합니다.
@@ -1091,6 +1152,8 @@ def build_full_presentation(
                                  None이면 ES 슬라이드 생략
     section_image_bytes_list   : [bytes|None, bytes|None, bytes|None]
                                  섹션 divider 원형 슬롯 3개 이미지 (4개 섹션 공통)
+    toc_count                  : 목차 항목 수 강제 지정 (4 또는 5).
+                                 None이면 pages에서 자동 감지.
 
     Returns
     -------
@@ -1110,11 +1173,13 @@ def build_full_presentation(
     # ── 3. 목차 ────────────────────────────────────────────
     unique_sections = _count_unique_sections(pages)
     toc_map = _build_toc_map(pages)
-    build_toc_slide(prs, num_sections=len(unique_sections), toc_map=toc_map)
+    num_toc = toc_count if toc_count in (4, 5) else len(unique_sections)
+    build_toc_slide(prs, num_sections=num_toc, toc_map=toc_map)
 
     # ── 4. 섹션 구분 + 내용 슬라이드 ─────────────────────
     _build_content_block(prs, pages, business_name=business_name,
-                          section_image_bytes_list=section_image_bytes_list)
+                          section_image_bytes_list=section_image_bytes_list,
+                          toc_map=toc_map)
 
     # ── 5. 연락처 슬라이드 ────────────────────────────────
     build_contact_slide(prs)
@@ -1162,7 +1227,8 @@ def _build_toc_map(pages: list) -> dict:
 
 
 def _build_content_block(prs, pages: list, business_name: str = "",
-                          section_image_bytes_list: list = None):
+                          section_image_bytes_list: list = None,
+                          toc_map: dict = None):
     """
     pages 목록을 순회하며 섹션 구분 슬라이드 + 내용 슬라이드를 삽입합니다.
 
@@ -1180,7 +1246,9 @@ def _build_content_block(prs, pages: list, business_name: str = "",
     ----------
     section_image_bytes_list : [bytes|None, bytes|None, bytes|None]
                                섹션 divider 원형 슬롯 3개에 넣을 이미지 (4개 섹션 공통)
+    toc_map                  : {"01": ["1.1 ...", ...], ...} — 섹션별 소제목 목록
     """
+    _toc = toc_map or DEFAULT_TOC_MAP
     current_sec_num = ""   # 현재 섹션 번호 ("01", "02" …)
     section_num = 0
 
@@ -1206,7 +1274,8 @@ def _build_content_block(prs, pages: list, business_name: str = "",
             divider_title = page.get("section_label") or section_title or ""
             build_section_divider_slide(prs, num_str, divider_title,
                                         business_name=business_name,
-                                        section_image_bytes_list=section_image_bytes_list)
+                                        section_image_bytes_list=section_image_bytes_list,
+                                        subtitles=_toc.get(this_sec_num, []))
             current_sec_num = this_sec_num
             # 섹션 첫 페이지에 본문·부제목 없으면 content slide 스킵
             if not body_text and not subtitle:
@@ -1275,6 +1344,7 @@ def build_preview_presentation(
             prs, sec_num, sec_label,
             business_name=business_name,
             section_image_bytes_list=section_image_bytes_list,
+            subtitles=DEFAULT_TOC_MAP.get(sec_num, []),
         )
 
     finalize_presentation(prs, template_count)
