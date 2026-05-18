@@ -433,22 +433,39 @@ def _postprocess_table(table: list) -> list:
 
 def _is_valid_table(table_data: list) -> bool:
     """
-    추출된 표 데이터가 실제 표인지 검사합니다.
+    추출된 표 데이터가 실제 표인지 엄격하게 검사합니다.
 
     필터 조건 (하나라도 해당하면 False):
-      - 열 수 < 2       : 1열 표 = 테두리 있는 텍스트 박스
-      - 빈 셀 비율 > 70% : 대부분 비어있는 레이아웃 요소
-      - 유니크 값 < 3   : 모두 같은 값 (반복 레이블 등)
+      - 행 수 < 5        : 너무 작은 표 = 오탐 가능성 높음
+      - 열 수 < 3        : 1~2열 표 = 텍스트박스 오인식
+      - 열 수 > 12       : phantom columns (레이아웃 요소)
+      - 불릿 문자 시작 셀 존재 : 본문 단락을 표로 오인식
+      - 빈 셀 비율 > 85% : 대부분 비어있는 레이아웃 요소
+      - 유니크 값 < 3    : 모두 같은 값 (반복 레이블 등)
       - 50자 초과 셀 ≥ 5 : 단락 텍스트를 표로 오인식
+      - 헤더 없음        : 첫 행 모든 셀이 비어있거나 너무 긺
     """
     if not table_data:
         return False
 
+    rows = len(table_data)
     cols = max((len(row) for row in table_data), default=0)
-    if cols < 2:
+
+    # 행/열 수 조건
+    if rows < 5:
         return False
-    if cols > 12:   # 12열 초과 = 레이아웃 요소 오탐 (phantom columns)
+    if cols < 3:
         return False
+    if cols > 12:
+        return False
+
+    # 불릿 문자로 시작하는 셀 = 본문 단락 오인식
+    BULLET_CHARS = ('▶', '•', '■', '▪', '→', '·', '◆', '○', '●')
+    for row in table_data:
+        for cell in row:
+            cell_str = str(cell or '').strip()
+            if any(cell_str.startswith(b) for b in BULLET_CHARS):
+                return False
 
     total_cells = sum(len(row) for row in table_data)
     if total_cells == 0:
@@ -471,6 +488,16 @@ def _is_valid_table(table_data: list) -> bool:
     if long_cells > 5:
         return False
 
+    # 첫 행(헤더) 검사: 유효한 헤더 셀이 1개 이상 있어야 함
+    # 헤더 셀 = 비어있지 않고 30자 이하 (긴 문장은 헤더가 아님)
+    header_row = table_data[0]
+    valid_header_cells = sum(
+        1 for cell in header_row
+        if cell and 0 < len(str(cell).strip()) <= 30
+    )
+    if valid_header_cells < 2:
+        return False
+
     return True
 
 
@@ -491,24 +518,14 @@ def _bbox_overlap_ratio(bbox_a: tuple, bbox_b: tuple) -> float:
 
 def _extract_tables_dual_strategy(plumber_page, debug: bool = False):
     """
-    두 가지 전략으로 표를 추출합니다.
-
-    - 전략 A (lines) : 선 기반 — 테두리 있는 표 (주 전략)
-    - 전략 B (text)  : 텍스트 정렬 기반 — 선 없는 표 (보조 전략)
-
-    채택 기준 (OR):
-      - 전략 A에서 감지된 표는 기본 채택
-      - 전략 B에서 감지됐지만 A에 없는 표도 추가 채택
-      - 두 전략 모두 감지한 표(IoU ≥ 0.4)는 '고신뢰도'로 표시 (향후 활용 가능)
+    선 기반(lines) 전략만 사용해 표를 추출합니다.
+    텍스트 정렬 기반(text) 전략은 불릿 단락을 표로 오인식하므로 비활성화.
 
     Returns
     -------
     List[Tuple[list, tuple]] — (2D 배열, bbox) 리스트
     """
-    OVERLAP_THRESH = 0.4
-
     settings_a = {"vertical_strategy": "lines", "horizontal_strategy": "lines"}
-    settings_b = {"vertical_strategy": "text",  "horizontal_strategy": "text"}
 
     try:
         raw_a = plumber_page.find_tables(table_settings=settings_a) or []
@@ -517,41 +534,14 @@ def _extract_tables_dual_strategy(plumber_page, debug: bool = False):
         if debug:
             print(f"  [전략A 오류] {exc}")
 
-    try:
-        raw_b = plumber_page.find_tables(table_settings=settings_b) or []
-    except Exception as exc:
-        raw_b = []
-        if debug:
-            print(f"  [전략B 오류] {exc}")
-
     if debug:
-        print(f"  [전략A-lines] {len(raw_a)}개 / [전략B-text] {len(raw_b)}개 감지")
+        print(f"  [전략A-lines] {len(raw_a)}개 감지 (text 전략 비활성화)")
 
     result = []
-    used_b = set()
-
-    # 전략 A의 모든 표 채택 (주 전략)
     for tbl_a in raw_a:
         extracted = tbl_a.extract()
         if extracted:
             result.append((extracted, tbl_a.bbox))
-            # 전략 B에서 같은 영역 감지됐으면 used_b에 기록
-            for j, tbl_b in enumerate(raw_b):
-                if _bbox_overlap_ratio(tbl_a.bbox, tbl_b.bbox) >= OVERLAP_THRESH:
-                    used_b.add(j)
-                    if debug:
-                        print(f"  [고신뢰] bbox={tbl_a.bbox} — 두 전략 모두 감지")
-                    break
-
-    # 전략 B에서만 감지된 표 추가 채택 (보조)
-    for j, tbl_b in enumerate(raw_b):
-        if j in used_b:
-            continue
-        extracted = tbl_b.extract()
-        if extracted:
-            result.append((extracted, tbl_b.bbox))
-            if debug:
-                print(f"  [전략B 단독] bbox={tbl_b.bbox} 추가 채택")
 
     return result
 
