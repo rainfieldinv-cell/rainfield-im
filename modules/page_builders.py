@@ -1075,7 +1075,7 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
             # PIL 원형 이미지(테두리 포함) 생성 후 outer 타원 위치에 삽입
             try:
                 circ_png = make_circular_image_png(img_bytes, output_size=512,
-                                                    border_color_rgb=(146, 208, 80),
+                                                    border_color_rgb=(255, 255, 255),
                                                     border_width_px=30)
                 add_image(slide, circ_png,
                           left_cm=ol, top_cm=ot,

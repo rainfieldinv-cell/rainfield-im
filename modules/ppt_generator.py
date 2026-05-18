@@ -351,7 +351,7 @@ def _crop_circle(image_bytes: bytes) -> bytes:
 def make_circular_image_png(
     image_bytes: bytes,
     output_size: int = 512,
-    border_color_rgb: tuple = (146, 208, 80),
+    border_color_rgb: tuple = (255, 255, 255),
     border_width_px: int = 30,
 ) -> bytes:
     """
