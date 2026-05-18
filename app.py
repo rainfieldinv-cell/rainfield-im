@@ -686,6 +686,10 @@ def show_main():
             st.session_state.month_en = datetime.now().strftime("%B")
             st.session_state.year = str(datetime.now().year)
             st.session_state.cover_image_index = 0
+            st.session_state.cover_image_bytes = None
+            st.session_state.parsed_pages = []
+            st.session_state.section_img_idx_list   = [0, 0, 0]
+            st.session_state.section_img_bytes_list = [None, None, None]
             st.rerun()  # 로그인 화면으로 전환
 
     # ── 메인 상단 제목 ──
