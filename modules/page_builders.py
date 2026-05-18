@@ -749,18 +749,28 @@ def _make_dummy_image(width: int, height: int, color: tuple) -> bytes:
 
 # ─────────────────────────────────────────────
 # (c) 목차(TOC) 슬라이드 생성 함수
+# TOC oval 위치 — toc_4 / toc_5 레이아웃 공통
 # ─────────────────────────────────────────────
-def build_toc_slide(prs, num_sections: int = 4, toc_map: dict = None):
+_TOC_OVAL_LEFT = 0.8409
+_TOC_OVAL_TOP  = 6.9520
+_TOC_OVAL_W    = 5.2600
+_TOC_OVAL_H    = 5.3000
+_TOC_OVAL_TOL  = _Cm(0.4)
+
+
+def build_toc_slide(prs, num_sections: int = 4, toc_map: dict = None,
+                    toc_image_bytes_list: list = None):
     """
     목차(CONTENTS) 슬라이드를 만들어 prs에 추가합니다.
     '부제목' 자리표시자가 포함된 도형을 실제 소항목으로 교체합니다.
+    레이아웃의 원형 oval은 항상 제거하고, 이미지가 제공된 경우 PIL 원형 사진을 삽입합니다.
 
     Parameters
     ----------
-    prs          : create_presentation_from_template()으로 만든 Presentation 객체
-    num_sections : 목차 항목 수 — 5개면 toc_5, 그 외 toc_4 레이아웃 사용
-    toc_map      : {"01": ["1.1 ...", ...], "02": [...], ...}
-                   None이면 DEFAULT_TOC_MAP 사용
+    prs                   : create_presentation_from_template()으로 만든 Presentation 객체
+    num_sections          : 목차 항목 수 — 5개면 toc_5, 그 외 toc_4 레이아웃 사용
+    toc_map               : {"01": ["1.1 ...", ...], "02": [...], ...}  None이면 DEFAULT_TOC_MAP 사용
+    toc_image_bytes_list  : [bytes|None] — 목차 원형 슬롯(1개)에 넣을 이미지 bytes
 
     Returns
     -------
@@ -770,7 +780,6 @@ def build_toc_slide(prs, num_sections: int = 4, toc_map: dict = None):
     slide = clone_slide_layout(prs, layout_type)
 
     # "부제목" 자리표시자가 포함된 도형 → 실제 소항목으로 교체
-    # 도형 텍스트가 "3.1 사업개요\n3.2 부제목" 형태이면 앞자리 숫자로 섹션 특정
     _SEC_FROM_TXT = re.compile(r'^(\d+)\.')
     for shape in slide.shapes:
         if not shape.has_text_frame:
@@ -784,6 +793,30 @@ def build_toc_slide(prs, num_sections: int = 4, toc_map: dict = None):
         sec_num = f"0{m.group(1)}"  # "3" → "03", "4" → "04"
         subtitles = (toc_map or {}).get(sec_num) or DEFAULT_TOC_MAP.get(sec_num) or []
         _replace_text_frame_content(shape.text_frame, "\n".join(subtitles))
+
+    # TOC oval 항상 제거 (이미지 유무 무관)
+    to_remove = []
+    for shape in slide.shapes:
+        if (abs(shape.left - _Cm(_TOC_OVAL_LEFT)) < _TOC_OVAL_TOL and
+                abs(shape.top  - _Cm(_TOC_OVAL_TOP))  < _TOC_OVAL_TOL):
+            to_remove.append(shape)
+    for shape in to_remove:
+        parent = shape.element.getparent()
+        if parent is not None:
+            parent.remove(shape.element)
+
+    # 이미지가 제공된 경우 PIL 원형 사진 삽입
+    img_bytes = (toc_image_bytes_list[0] if toc_image_bytes_list else None)
+    if img_bytes:
+        try:
+            circ_png = make_circular_image_png(img_bytes, output_size=512,
+                                               border_color_rgb=(255, 255, 255),
+                                               border_width_px=30)
+            add_image(slide, circ_png,
+                      left_cm=_TOC_OVAL_LEFT, top_cm=_TOC_OVAL_TOP,
+                      width_cm=_TOC_OVAL_W, height_cm=_TOC_OVAL_H)
+        except Exception as exc:
+            print(f"[경고] 목차 원형 이미지 삽입 실패: {exc}")
 
     return slide
 
@@ -1137,6 +1170,7 @@ def build_full_presentation(
     executive_summary_sections: list = None,
     section_image_bytes_list: list = None,
     toc_count: int = None,
+    toc_image_bytes_list: list = None,
 ) -> bytes:
     """
     content_parser 결과를 받아 완성된 PPT를 bytes로 반환합니다.
@@ -1174,7 +1208,10 @@ def build_full_presentation(
     unique_sections = _count_unique_sections(pages)
     toc_map = _build_toc_map(pages)
     num_toc = toc_count if toc_count in (4, 5) else len(unique_sections)
-    build_toc_slide(prs, num_sections=num_toc, toc_map=toc_map)
+    if unique_sections:
+        num_toc = min(num_toc, len(unique_sections))  # 더미 섹션 방지
+    build_toc_slide(prs, num_sections=num_toc, toc_map=toc_map,
+                    toc_image_bytes_list=toc_image_bytes_list)
 
     # ── 4. 섹션 구분 + 내용 슬라이드 ─────────────────────
     _build_content_block(prs, pages, business_name=business_name,
@@ -1318,9 +1355,10 @@ def build_preview_presentation(
     month_en: str,
     cover_image_bytes: bytes = None,
     section_image_bytes_list: list = None,
+    toc_image_bytes_list: list = None,
 ) -> bytes:
     """
-    표지 1장 + 섹션 구분 슬라이드 4장 = 총 5장짜리 미리보기 PPT를 반환합니다.
+    표지 1장 + 목차 1장 + 섹션 구분 슬라이드 4장 = 총 6장짜리 미리보기 PPT를 반환합니다.
     실제 콘텐츠 슬라이드 없이 디자인 확인용으로 사용합니다.
 
     Parameters
@@ -1329,6 +1367,7 @@ def build_preview_presentation(
     year / month_en          : 표지 날짜
     cover_image_bytes        : 표지 이미지 bytes
     section_image_bytes_list : 섹션 divider 원형 슬롯 3개 이미지 리스트
+    toc_image_bytes_list     : 목차 원형 슬롯 1개 이미지 리스트
 
     Returns
     -------
@@ -1338,6 +1377,9 @@ def build_preview_presentation(
     template_count = len(prs.slides)
 
     build_cover_slide(prs, business_name, year, month_en, cover_image_bytes)
+
+    build_toc_slide(prs, num_sections=4, toc_map=DEFAULT_TOC_MAP,
+                    toc_image_bytes_list=toc_image_bytes_list)
 
     for sec_num, sec_label in _PREVIEW_SECTIONS:
         build_section_divider_slide(

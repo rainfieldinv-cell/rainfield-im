@@ -79,6 +79,12 @@ if "section_img_idx_list" not in st.session_state:
 if "section_img_bytes_list" not in st.session_state:
     st.session_state.section_img_bytes_list = [None, None, None]
 
+# 목차 이미지 관련 세션 상태 — 원형 슬롯 1개
+if "toc_img_idx" not in st.session_state:
+    st.session_state.toc_img_idx = 0
+if "toc_img_bytes" not in st.session_state:
+    st.session_state.toc_img_bytes = None
+
 
 # ─────────────────────────────────────────────
 # [로그인 화면 함수]
@@ -356,6 +362,56 @@ def _make_divider_miniature(w_px: int = 540, h_px: int = 374) -> bytes:
 
 
 # ─────────────────────────────────────────────
+# [목차 TOC 슬롯 위치 미니어처 헬퍼]
+# ─────────────────────────────────────────────
+@st.cache_data
+def _make_toc_miniature(w_px: int = 540, h_px: int = 374) -> bytes:
+    """목차 슬라이드 레이아웃을 단순화한 PNG 미니어처를 반환합니다.
+    ① 표시로 원형 슬롯 위치를 직관적으로 안내합니다."""
+    import io as _mio
+    from PIL import Image as _Img, ImageDraw as _Draw, ImageFont as _Font
+
+    SLIDE_W = 27.52
+    SLIDE_H = 19.05
+    sx, sy = w_px / SLIDE_W, h_px / SLIDE_H
+
+    img  = _Img.new("RGB", (w_px, h_px), (248, 248, 248))
+    draw = _Draw.Draw(img)
+    draw.rectangle([0, 0, w_px - 1, h_px - 1], outline=(200, 200, 200), width=2)
+
+    # 오른쪽 목차 항목 힌트 (4개 행)
+    for row in range(4):
+        y_top = int((2.0 + row * 4.1) * sy)
+        draw.rectangle(
+            [int(7.5 * sx), y_top, int(26.5 * sx), int(y_top + 3.2 * sy)],
+            fill=(225, 225, 225), outline=(190, 190, 190),
+        )
+
+    # 1개 원형 슬롯 — TOC oval 위치 (left=0.84, top=6.95, w=5.26, h=5.30)
+    _GREEN = (146, 208, 80)
+    ol, ot, ow, oh = 0.8409, 6.9520, 5.2600, 5.3000
+    cx = int((ol + ow / 2) * sx)
+    cy = int((ot + oh / 2) * sy)
+    rx = int(ow / 2 * sx)
+    ry = int(oh / 2 * sy)
+
+    try:
+        _fnt_path = os.path.join(os.path.dirname(__file__), "fonts", "PEOPLEFONTB.TTF")
+        _base_fnt = _Font.truetype(_fnt_path, size=28)
+    except Exception:
+        _base_fnt = _Font.load_default()
+
+    draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry],
+                 fill=(220, 220, 220), outline=_GREEN, width=5)
+    draw.text((cx, cy), "①", font=_base_fnt, fill=(50, 50, 50), anchor="mm")
+
+    buf = _mio.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.getvalue()
+
+
+# ─────────────────────────────────────────────
 # [목차 개수 자동 감지 헬퍼]
 # ─────────────────────────────────────────────
 def _detect_toc_count(full_text: str) -> int:
@@ -406,6 +462,20 @@ def show_step3():
         key="toc_radio",
     )
     st.session_state.toc_count = toc_choice
+
+    # Task 4: 선택한 목차 수와 실제 추출 섹션 수가 다를 때 경고
+    _parsed = st.session_state.parsed_pages
+    if _parsed:
+        _sec_titles = list(dict.fromkeys(
+            p.get("section_title", "").strip() for p in _parsed
+            if p.get("section_title", "").strip()
+        ))
+        _actual_count = len(_sec_titles)
+        if _actual_count > 0 and toc_choice > _actual_count:
+            st.warning(
+                f"⚠️ 목차 {toc_choice}개를 선택하셨지만 실제 추출된 섹션은 "
+                f"**{_actual_count}개**입니다. 생성 시 {_actual_count}개 기준으로 처리됩니다."
+            )
 
     st.markdown("---")
 
@@ -565,12 +635,70 @@ def show_step3():
     st.markdown("---")
 
     # ────────────────────────────────────────
-    # (E) 표지 및 섹션 미리보기
+    # (D-2) 목차 이미지 선택 (선택 사항)
     # ────────────────────────────────────────
-    st.markdown("### 🚀 표지 및 섹션 미리보기")
-    st.caption("표지 1장 + 섹션 구분 페이지 4장 = 총 5장짜리 미리보기 PPT를 생성합니다. 정식 완성본이 아닙니다.")
+    st.markdown("### 📌 목차 이미지 선택 (선택 사항)")
+    st.caption("목차 페이지의 원형 자리(1개)에 들어갈 이미지를 선택하세요.")
 
-    if st.button("🚀 표지 및 섹션 미리 생성", type="primary"):
+    if not images:
+        st.info("추출된 이미지가 없어 목차 이미지를 선택할 수 없습니다.")
+    else:
+        import io as _io
+        with st.expander("목차 이미지 선택 (원형 자리 1개)"):
+            _tgcols = st.columns(3)
+            for _i, _img in enumerate(images[:9]):
+                with _tgcols[_i % 3]:
+                    st.image(_img["pil_image"], use_container_width=True)
+                    st.caption(f"#{_img['index']+1}")
+            if len(images) > 9:
+                with st.expander(f"나머지 {len(images)-9}개 이미지 더 보기"):
+                    _more_tgcols = st.columns(3)
+                    for _i, _img in enumerate(images[9:]):
+                        with _more_tgcols[_i % 3]:
+                            st.image(_img["pil_image"], use_container_width=True)
+                            st.caption(f"#{_img['index']+1}")
+
+            st.markdown("")
+
+            st.image(_make_toc_miniature(),
+                     caption="원형 슬롯 위치 — ① 좌측 중앙",
+                     use_container_width=True)
+
+            st.markdown("")
+
+            _toc_prev = st.session_state.toc_img_idx
+            _toc_col, _ = st.columns([1, 2])
+            with _toc_col:
+                st.caption("원형 자리 1번 (좌측 중앙)")
+                _toc_sel_num = st.number_input(
+                    "이미지 번호 (0 = 선택 안 함)",
+                    min_value=0,
+                    max_value=len(images),
+                    value=_toc_prev,
+                    step=1,
+                    key="toc_oval_slot_0",
+                )
+                st.session_state.toc_img_idx = int(_toc_sel_num)
+                if _toc_sel_num > 0:
+                    _toc_sel = images[int(_toc_sel_num) - 1]
+                    st.image(_toc_sel["pil_image"], use_container_width=True)
+                    st.caption(f"선택됨: #{int(_toc_sel_num)}")
+                    _tbuf = _io.BytesIO()
+                    _toc_sel["pil_image"].save(_tbuf, format="PNG")
+                    st.session_state.toc_img_bytes = _tbuf.getvalue()
+                else:
+                    st.caption("(선택 안 함)")
+                    st.session_state.toc_img_bytes = None
+
+    st.markdown("---")
+
+    # ────────────────────────────────────────
+    # (E) 표지·목차·섹션 미리보기
+    # ────────────────────────────────────────
+    st.markdown("### 🚀 표지·목차·섹션 미리보기")
+    st.caption("표지 1장 + 목차 1장 + 섹션 구분 페이지 4장 = 총 6장짜리 미리보기 PPT를 생성합니다. 정식 완성본이 아닙니다.")
+
+    if st.button("🚀 표지·목차·섹션 미리 생성", type="primary"):
         try:
             with st.spinner("미리보기 PPT를 생성하는 중입니다..."):
                 import io as _io
@@ -580,12 +708,13 @@ def show_step3():
                     month_en=st.session_state.month_en,
                     cover_image_bytes=st.session_state.cover_image_bytes,
                     section_image_bytes_list=st.session_state.section_img_bytes_list,
+                    toc_image_bytes_list=[st.session_state.toc_img_bytes],
                 )
             _preview_name = (
                 f"preview_{st.session_state.business_name}"
                 f"_{datetime.now().strftime('%y%m%d')}.pptx"
             )
-            st.success("✅ 미리보기 생성 완료 (표지 1장 + 섹션 구분 4장)")
+            st.success("✅ 미리보기 생성 완료 (표지 1장 + 목차 1장 + 섹션 구분 4장)")
             st.download_button(
                 label="⬇️ 미리보기 PPT 다운로드",
                 data=preview_bytes,
@@ -689,6 +818,7 @@ def show_step4():
                     cover_image_bytes=st.session_state.cover_image_bytes,
                     section_image_bytes_list=st.session_state.section_img_bytes_list,
                     toc_count=st.session_state.toc_count,
+                    toc_image_bytes_list=[st.session_state.toc_img_bytes],
                 )
 
             filename = make_output_filename(st.session_state.business_name)
@@ -761,6 +891,8 @@ def show_main():
             st.session_state.parsed_pages = []
             st.session_state.section_img_idx_list   = [0, 0, 0]
             st.session_state.section_img_bytes_list = [None, None, None]
+            st.session_state.toc_img_idx   = 0
+            st.session_state.toc_img_bytes = None
             st.rerun()  # 로그인 화면으로 전환
 
     # ── 메인 상단 제목 ──
