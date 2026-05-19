@@ -1371,6 +1371,10 @@ def _build_content_block(prs, pages: list, business_name: str = "",
     current_sec_num = ""   # 현재 섹션 번호 ("01", "02" …)
     section_num = 0
 
+    # 원본 문서 마지막 페이지(연락처·면책 페이지)는 슬라이드로 변환하지 않음
+    if pages:
+        pages = pages[:-1]
+
     for page in pages:
         section_title = page.get("section_title", "").strip()
         subtitle      = page.get("subtitle", "").strip()
