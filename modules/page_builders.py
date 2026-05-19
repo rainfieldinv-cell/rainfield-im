@@ -1136,21 +1136,52 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
                      font_name=FONT_BOLD, font_size_pt=16.0)
 
     # 원형 이미지 슬롯 처리
-    # 도형 삭제 없음 — 안쪽 연두 oval 위에 사진을 z-order 상위로 덮어씌움
+    # 연두색 oval 도형을 식별 → 좌표 저장 → 도형 제거 → 같은 자리에 사진 삽입
     if section_image_bytes_list:
-        inner_ovals = _detect_inner_green_ovals(slide)
+        # 1) 연두색 oval 도형 식별 (shape 객체 + 좌표 함께 저장)
+        from pptx.dml.color import RGBColor
+        green_oval_shapes = []
+        for shape in slide.shapes:
+            try:
+                fill = shape.fill
+                if fill.type != 1:
+                    continue
+                rgb = fill.fore_color.rgb
+                r, g, b = int(rgb[0]), int(rgb[1]), int(rgb[2])
+                gr, gg, gb = _GREEN_RGB
+                if abs(r - gr) <= _GREEN_TOL and abs(g - gg) <= _GREEN_TOL and abs(b - gb) <= _GREEN_TOL:
+                    green_oval_shapes.append(shape)
+            except Exception:
+                pass
 
-        # 색상 감지 실패 시 하드코딩 fallback
-        if not inner_ovals:
-            print("[경고] _detect_inner_green_ovals 실패 → fallback 좌표 사용")
-            inner_ovals = _DIV_INNER_OVALS
+        # 2) _DIV_INNER_OVALS 순서(Slot1→2→3)로 재정렬
+        if len(green_oval_shapes) == len(_DIV_INNER_OVALS):
+            ordered_shapes = []
+            remaining = list(green_oval_shapes)
+            for hl, ht, _hw, _hh in _DIV_INNER_OVALS:
+                hl_emu = int(hl / 2.54 * 914400)
+                ht_emu = int(ht / 2.54 * 914400)
+                best = min(remaining, key=lambda s: (s.left - hl_emu)**2 + (s.top - ht_emu)**2)
+                ordered_shapes.append(best)
+                remaining.remove(best)
+            green_oval_shapes = ordered_shapes
 
         for slot_idx, img_bytes in enumerate(section_image_bytes_list):
-            if not img_bytes or slot_idx >= len(inner_ovals):
+            if not img_bytes:
+                continue
+            if slot_idx >= len(green_oval_shapes):
                 continue
 
-            il, it, iw, ih = inner_ovals[slot_idx]
+            target_shape = green_oval_shapes[slot_idx]
+            # 좌표 저장
+            il = target_shape.left   / 914400 * 2.54
+            it = target_shape.top    / 914400 * 2.54
+            iw = target_shape.width  / 914400 * 2.54
+            ih = target_shape.height / 914400 * 2.54
+            # 3) 연두색 oval 도형 제거
+            target_shape.element.getparent().remove(target_shape.element)
 
+            # 4) 같은 좌표에 원형 사진 삽입
             try:
                 circ_png = make_circular_image_png(img_bytes, output_size=512,
                                                     border_color_rgb=(255, 255, 255),
