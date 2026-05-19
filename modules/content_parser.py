@@ -18,6 +18,8 @@ import os
 import re
 from typing import List, Dict
 
+from modules.constants import DEFAULT_TOC_MAP
+
 PageData = Dict[str, str]
 
 # ─────────────────────────────────────────────
@@ -622,16 +624,27 @@ def _extract_tables_dual_strategy(plumber_page, debug: bool = False):
 _SUBTITLE_NUM_PREFIX = re.compile(r'^\d+\.\d+\s*')
 _APPENDIX_KEYWORDS   = ('appendix', '별첨', '부록', '참고')
 
+# "N.N 한글" 패턴만 진짜 소제목으로 허용 (예: "3.1 사업개요")
+_VALID_SUBTITLE_RE = re.compile(r'^\d+\.\d+\s+[가-힣]')
+# 본문 마커: 이 문자로 시작하면 body text이므로 즉시 제외
+_BODY_MARKER_CHARS = set('▶■•▪◆→☞※')
+
 
 def extract_toc_map(pages: list) -> dict:
     """
-    pages에서 section_num → subtitles 매핑을 추출합니다.
-    page_builders._build_toc_map()과 동일한 역할이지만
-    section_num 필드를 우선 사용하여 더 정확합니다.
+    pages에서 'N.N [한글]' 형식의 소제목만 수집해 section_num → subtitles 매핑을 반환합니다.
+
+    필터 규칙:
+      - ▶ ■ • 등 본문 마커로 시작하는 줄 제외
+      - '^숫자.숫자 [한글]' 패턴에 맞지 않는 줄 제외 (예: "3.1 사업개요")
+      → 본문 텍스트·표 내용이 목차에 침입하는 것을 방지
+
+    PDF의 헤더에서 소제목이 제대로 추출되지 않으면 빈 dict를 반환합니다.
+    이 경우 build_toc_slide / _build_content_block 이 DEFAULT_TOC_MAP으로 fallback합니다.
 
     Returns
     -------
-    {"01": ["1.1 ...", ...], "02": [...], ...}
+    {"01": ["1.1 ...", ...], "02": [...], ...}  — 소제목 없으면 {}
     """
     _SEC_NUM = re.compile(r'^(0[1-9])\b')
     toc: dict  = {}
@@ -644,10 +657,18 @@ def extract_toc_map(pages: list) -> dict:
             sec_num = m.group(1) if m else ""
         if not sec_num or not subtitle:
             continue
+        # 본문 마커로 시작하는 줄 제외
+        if subtitle[0] in _BODY_MARKER_CHARS:
+            continue
+        # "N.N 한글" 패턴이 아닌 줄 제외 (표 헤더, 긴 문장 등)
+        if not _VALID_SUBTITLE_RE.match(subtitle):
+            continue
         seen.setdefault(sec_num, set())
         if subtitle not in seen[sec_num]:
             seen[sec_num].add(subtitle)
             toc.setdefault(sec_num, []).append(subtitle)
+    print(f"[extract_toc_map] 결과: { {k: len(v) for k, v in toc.items()} } "
+          f"(비어있으면 DEFAULT_TOC_MAP 사용)")
     return toc
 
 
@@ -722,12 +743,14 @@ def split_into_5_sections(toc_4_map: dict, section_labels_4: dict = None) -> tup
 
     분할 기준:
       - Appendix/별첨이 아닌 섹션 중 소제목이 가장 많은 섹션을 절반으로 분할.
+      - toc_4_map이 비어 있으면 DEFAULT_TOC_MAP을 기준으로 분할합니다.
       - 동률이면 뒤 번호 우선.
       - 분할 대상 섹션 이후의 모든 섹션 번호를 +1.
 
     Parameters
     ----------
     toc_4_map        : {"01": [...], "02": [...], "03": [...], "04": [...]}
+                       빈 dict도 허용 — DEFAULT_TOC_MAP으로 fallback
     section_labels_4 : {"01": "사모사채 개요", ..., "04": "Appendix"} — 없으면 자동 생략
 
     Returns
@@ -739,13 +762,17 @@ def split_into_5_sections(toc_4_map: dict, section_labels_4: dict = None) -> tup
     split_info : {
         "orig_num"       : str   — 분할된 원본 섹션 번호 (예: "03"),
         "new_second_num" : str   — 분할로 생성된 새 번호 (예: "04"),
-        "second_subs"    : set   — 새 섹션으로 이동한 소제목 집합,
+        "second_subs"    : set   — 새 섹션으로 이동한 소제목 집합 (DEFAULT_TOC_MAP 기준),
         "renumbered"     : dict  — {old_num: new_num} 번호 밀린 섹션 매핑,
     }
     """
     labels = section_labels_4 or {}
+
+    # toc_4_map이 비어 있으면 DEFAULT_TOC_MAP을 기준으로 분할
+    effective_toc = toc_4_map if toc_4_map else DEFAULT_TOC_MAP
+
     # subtitles 없는 섹션(Appendix 등)도 포함 — labels 키까지 합산
-    sorted_nums = sorted(set(toc_4_map.keys()) | set(labels.keys()))
+    sorted_nums = sorted(set(effective_toc.keys()) | set(labels.keys()))
 
     if not sorted_nums:
         raise ValueError("toc_4_map이 비어 있고 section_labels_4도 없습니다.")
@@ -755,11 +782,11 @@ def split_into_5_sections(toc_4_map: dict, section_labels_4: dict = None) -> tup
     def _priority(num: str):
         lbl         = labels.get(num, "").lower()
         is_appendix = any(k in lbl for k in _APPENDIX_KEYWORDS)
-        cnt         = len(toc_4_map.get(num, []))
+        cnt         = len(effective_toc.get(num, []))
         return (1 if is_appendix else 0, -cnt, num)
 
     split_target = min(sorted_nums, key=_priority)
-    target_subs  = list(toc_4_map[split_target])
+    target_subs  = list(effective_toc[split_target])
 
     # ── 2. 절반 분할 (홀수면 앞쪽이 1개 더) ────────────
     half        = (len(target_subs) + 1) // 2
@@ -780,17 +807,41 @@ def split_into_5_sections(toc_4_map: dict, section_labels_4: dict = None) -> tup
         if int(num) > split_num_int
     }
 
-    # ── 4. toc_5_map 구성 ─────────────────────────────────
+    # ── 4. toc_5_map 구성 (소제목 번호 재할당 포함) ────────────────────
+    _SUB_PREFIX_RE = re.compile(r'^(\d+)\.(\d+)\s*')
+
+    def _renumber_split(subs: list, new_sec: str) -> list:
+        """그룹2 소제목: N.M → new_sec.{1,2,...} 재할당 (번호 초기화)"""
+        result = []
+        for idx, s in enumerate(subs, 1):
+            m = _SUB_PREFIX_RE.match(s)
+            rest = s[m.end():] if m else s
+            result.append(f"{int(new_sec)}.{idx} {rest}".strip())
+        return result
+
+    def _renumber_shift(subs: list, old_sec: str, new_sec: str) -> list:
+        """이동된 섹션 소제목: N.M → (N+1).M 재할당 (부번호 유지)"""
+        result = []
+        for s in subs:
+            m = _SUB_PREFIX_RE.match(s)
+            if m and m.group(1) == str(int(old_sec)):
+                rest = s[m.end():]
+                result.append(f"{int(new_sec)}.{m.group(2)} {rest}".strip())
+            else:
+                result.append(s)
+        return result
+
     toc_5_map: dict = {}
     for num in sorted_nums:
-        subs = list(toc_4_map.get(num, []))   # subtitles 없는 섹션은 []
+        subs = list(effective_toc.get(num, []))   # subtitles 없는 섹션은 []
         if num == split_target:
-            toc_5_map[split_target] = subs_first
+            toc_5_map[split_target] = subs_first   # 앞 그룹은 원래 번호 유지
         elif num in renumbered:
-            toc_5_map[renumbered[num]] = subs
+            new_num = renumbered[num]
+            toc_5_map[new_num] = _renumber_shift(subs, num, new_num)
         else:
             toc_5_map[num] = subs
-    toc_5_map[new_second_num] = subs_second
+    toc_5_map[new_second_num] = _renumber_split(subs_second, new_second_num)
 
     # ── 5. labels_5 구성 ─────────────────────────────────
     labels_5: dict = {}
@@ -830,11 +881,10 @@ def remap_pages_for_5sections(pages: list, split_info: dict, labels_5: dict) -> 
     pages의 section_num / section_label을 5섹션 구조에 맞게 재할당합니다.
     원본 pages 리스트는 변경하지 않고 새 목록을 반환합니다.
 
-    분할 경계 판정 규칙:
-      - orig_num 섹션 내에서 second_subs에 속하는 subtitle이 처음 등장하는 페이지부터
-        해당 섹션이 끝날 때까지 모든 페이지를 new_second_num으로 이동합니다.
-      - 이렇게 하면 경계 이후에 subtitle이 없거나 다른 subtitle을 가진 페이지(재무제표 등)도
-        올바르게 새 섹션에 포함됩니다.
+    분할 경계 판정 규칙 (페이지 수 기반):
+      - orig_num에 속하는 페이지들을 페이지 수 기준으로 절반 분할합니다.
+      - 앞 절반(올림)은 orig_num 유지, 나머지는 new_second_num으로 이동합니다.
+      - subtitle 텍스트 매칭을 사용하지 않으므로 PDF 본문이 오염될 위험이 없습니다.
 
     Parameters
     ----------
@@ -848,28 +898,28 @@ def remap_pages_for_5sections(pages: list, split_info: dict, labels_5: dict) -> 
     """
     orig_num       = split_info["orig_num"]
     new_second_num = split_info["new_second_num"]
-    second_subs    = split_info["second_subs"]   # set
     renumbered     = split_info["renumbered"]     # {old: new}
 
-    remapped        = []
-    in_second_group = False   # orig_num 섹션 내에서 경계를 지났는지 여부
+    # orig_num 섹션에 속하는 페이지의 전체 인덱스를 수집
+    orig_indices = [i for i, p in enumerate(pages)
+                    if p.get("section_num", "").strip() == orig_num]
 
-    for page in pages:
-        p        = dict(page)   # shallow copy — 원본 불변
-        sec_num  = p.get("section_num", "").strip()
-        subtitle = p.get("subtitle", "").strip()
+    # 앞 절반(올림)은 orig_num 유지, 나머지는 new_second_num
+    split_at = (len(orig_indices) + 1) // 2
+    second_group = set(orig_indices[split_at:])
+
+    remapped = []
+    for i, page in enumerate(pages):
+        p       = dict(page)   # shallow copy — 원본 불변
+        sec_num = p.get("section_num", "").strip()
 
         if sec_num == orig_num:
-            # 경계 감지: second_subs에 해당하는 subtitle이 처음 등장하면 이후 전부 이동
-            if subtitle in second_subs:
-                in_second_group = True
-            if in_second_group:
+            if i in second_group:
                 p["section_num"]   = new_second_num
                 p["section_label"] = labels_5.get(new_second_num, p.get("section_label", ""))
             else:
                 p["section_label"] = labels_5.get(orig_num, p.get("section_label", ""))
         elif sec_num in renumbered:
-            # 번호 이동: 기존 섹션 +1
             new_num = renumbered[sec_num]
             p["section_num"]   = new_num
             p["section_label"] = labels_5.get(new_num, p.get("section_label", ""))
