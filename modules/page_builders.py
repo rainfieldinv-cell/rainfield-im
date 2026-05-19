@@ -809,6 +809,7 @@ def build_toc_slide(prs, num_sections: int = 4, toc_map: dict = None,
             new_label = section_labels.get(sec_num)
             if new_label:
                 _replace_text_frame_content(shape.text_frame, f"{sec_num}  {new_label}")
+                shape.text_frame.word_wrap = False
 
     # 도형 삭제 없음 — 이미지 제공 시 oval 위에 z-order 상위로 덮어씌움
     img_bytes = (toc_image_bytes_list[0] if toc_image_bytes_list else None)
