@@ -228,12 +228,17 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
                 "subtitle":      pd["subtitle"] or pd["section_title"],
             }
 
+        # ── 페이지 이미지 추출 ──────────────────────────────
+        pd["images"] = _extract_page_images(fitz_doc, i)
+        pd["page_num"] = page_num
+
         if debug:
             sec_preview  = pd["section_title"][:30]
             body_preview = pd["body_text"][:40].replace("\n", " ")
             tbl_count    = len(pd.get("tables", []))
+            img_count    = len(pd["images"])
             print(f"[p{page_num:02d}/{total}] KEEP  | sec={sec_preview!r:35} | "
-                  f"body={len(pd['body_text'])}자 | tables={tbl_count}개 | {body_preview!r}")
+                  f"body={len(pd['body_text'])}자 | tables={tbl_count}개 | imgs={img_count}개 | {body_preview!r}")
 
         result.append(pd)
 
@@ -378,6 +383,46 @@ def _is_heading_level(style_name: str, level: int) -> bool:
     if f"heading{level}" in s:
         return True
     return False
+
+
+# ──────────────────────────────────────────────────────
+# PDF 파서 — 페이지 단위 이미지 추출
+# ──────────────────────────────────────────────────────
+_IMG_MIN_PX = 200 * 200   # 200×200px 미만은 아이콘·로고로 간주하여 제외
+
+
+def _extract_page_images(fitz_doc, page_idx: int) -> list:
+    """
+    fitz_doc의 page_idx 페이지에서 이미지를 추출합니다.
+    _IMG_MIN_PX 미만 소형 이미지(아이콘·로고)는 제외합니다.
+
+    Returns
+    -------
+    [{"xref": int, "width": int, "height": int, "ext": str, "data": bytes}, ...]
+    """
+    page = fitz_doc[page_idx]
+    result = []
+    seen_xrefs = set()
+    for img in page.get_images(full=True):
+        xref = img[0]
+        if xref in seen_xrefs:
+            continue
+        seen_xrefs.add(xref)
+        try:
+            base = fitz_doc.extract_image(xref)
+            w, h = base["width"], base["height"]
+            if w * h < _IMG_MIN_PX:
+                continue
+            result.append({
+                "xref":   xref,
+                "width":  w,
+                "height": h,
+                "ext":    base["ext"],
+                "data":   base["image"],
+            })
+        except Exception:
+            pass
+    return result
 
 
 # ──────────────────────────────────────────────────────
