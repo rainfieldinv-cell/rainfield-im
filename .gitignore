@@ -3,6 +3,7 @@ venv/
 
 # 접근 코드 등 민감한 정보가 담긴 파일 (절대 공유 금지)
 .streamlit/secrets.toml
+.env
 
 # Python 캐시 파일 (자동 생성되는 불필요한 파일)
 __pycache__/
