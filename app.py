@@ -825,7 +825,8 @@ def show_step4():
                         _toc5, _lbl5, _split = split_into_5_sections(_toc4, _lbl4)
                         _pages5 = remap_pages_for_5sections(pages, _split, _lbl5)
                         final_pages     = _pages5
-                        final_toc_map   = _toc5
+                        final_toc_map   = dict(_toc5)
+                        final_toc_map["_labels"] = _lbl5  # 섹션 제목 레이블 주입
                         final_toc_count = 5
                     except Exception as _e:
                         st.warning(f"⚠️ 5섹션 자동 분할 실패({_e}). 4섹션으로 생성합니다.")

@@ -794,21 +794,21 @@ def build_toc_slide(prs, num_sections: int = 4, toc_map: dict = None,
         subtitles = (toc_map or {}).get(sec_num) or DEFAULT_TOC_MAP.get(sec_num) or []
         _replace_text_frame_content(shape.text_frame, "\n".join(subtitles))
 
-    # "0N  제목" 자리표시자 섹션 타이틀 박스 → 실제 레이블로 교체
-    # 박스를 위치(top, left) 순으로 정렬한 뒤, "제목" 플레이스홀더만 교체
-    _SEC_TITLE_RE = re.compile(r'^(\d{2})\s{2}(.+)$')
-    _SEC_LABELS = {"05": "Appendix"}  # toc_5 전용: 05번 섹션은 항상 원본 Appendix
-    title_candidates = [
-        (shape.top, shape.left, shape)
-        for shape in slide.shapes
-        if shape.has_text_frame and _SEC_TITLE_RE.match(shape.text_frame.text.strip())
-    ]
-    for _top, _left, shape in sorted(title_candidates):
-        m = _SEC_TITLE_RE.match(shape.text_frame.text.strip())
-        if m and m.group(2) == "제목":
-            sec_num = m.group(1)
-            label = _SEC_LABELS.get(sec_num, "제목")
-            _replace_text_frame_content(shape.text_frame, f"{sec_num}  {label}")
+    # 섹션 타이틀 박스 교체 — toc_map에 "_labels" 키가 있을 때만 동작
+    # 박스 식별: "0N  " 접두사(섹션 번호)로 식별, label 텍스트에 의존하지 않음
+    section_labels = (toc_map or {}).get("_labels", {})
+    if section_labels:
+        _SEC_TITLE_PREFIX = re.compile(r'^(\d{2})\s{2}')
+        for shape in slide.shapes:
+            if not shape.has_text_frame:
+                continue
+            m = _SEC_TITLE_PREFIX.match(shape.text_frame.text.strip())
+            if not m:
+                continue
+            sec_num = m.group(1)  # "01" ~ "05"
+            new_label = section_labels.get(sec_num)
+            if new_label:
+                _replace_text_frame_content(shape.text_frame, f"{sec_num}  {new_label}")
 
     # 도형 삭제 없음 — 이미지 제공 시 oval 위에 z-order 상위로 덮어씌움
     img_bytes = (toc_image_bytes_list[0] if toc_image_bytes_list else None)
