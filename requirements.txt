@@ -4,3 +4,5 @@ PyMuPDF
 pdfplumber
 python-docx
 Pillow
+anthropic
+python-dotenv
