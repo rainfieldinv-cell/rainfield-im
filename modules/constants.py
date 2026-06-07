@@ -101,8 +101,9 @@ SLIDE_INDEX_MAP = {
     "toc_4":              2,   # 목차 4개 항목 (01~04)
     "toc_5":              3,   # 목차 5개 항목 (01~05)
     "section_divider":    4,   # 섹션 구분 (큰 번호 + 섹션명)
-    "content":            5,   # 내용 페이지 — 텍스트 위주 (제목+부제목+본문)
-    "content_with_image": 10,  # 내용 페이지 — 이미지 포함 (제목+이미지+본문)
+    "content":              5,   # 내용 페이지 — 텍스트 위주 (제목+부제목+본문)
+    "investment_structure": 7,   # 2.1 투자구조도 — entity 박스 + 연결선 다이어그램
+    "content_with_image":  10,  # 내용 페이지 — 이미지 포함 (제목+이미지+본문)
     "contact":            12,  # 연락처 페이지 (마지막)
 }
 

@@ -779,19 +779,22 @@ def build_toc_slide(prs, num_sections: int = 4, toc_map: dict = None,
     layout_type = "toc_5" if num_sections == 5 else "toc_4"
     slide = clone_slide_layout(prs, layout_type)
 
-    # "부제목" 자리표시자가 포함된 도형 → 실제 소항목으로 교체
+    # 소제목 박스("N." 으로 시작) → 실제 소항목으로 교체.
+    #   ★"부제목" 글자 유무로 거르지 않는다(템플릿마다 01/02 박스엔 그 글자가 없어
+    #     교체가 안 돼 TOC와 본문이 어긋나던 버그). 번호 접두로만 식별.
+    #   섹션 타이틀 박스("01  …")는 점(.)이 없어 매칭 안 됨(안전).
     _SEC_FROM_TXT = re.compile(r'^(\d+)\.')
     for shape in slide.shapes:
         if not shape.has_text_frame:
             continue
-        text = shape.text_frame.text
-        if "부제목" not in text:
-            continue
-        m = _SEC_FROM_TXT.match(text.strip())
+        text = shape.text_frame.text.strip()
+        m = _SEC_FROM_TXT.match(text)
         if not m:
             continue
         sec_num = f"0{m.group(1)}"  # "3" → "03", "4" → "04"
-        subtitles = (toc_map or {}).get(sec_num) or DEFAULT_TOC_MAP.get(sec_num) or []
+        subtitles = (toc_map or {}).get(sec_num)
+        if not subtitles:
+            subtitles = DEFAULT_TOC_MAP.get(sec_num) or []
         _replace_text_frame_content(shape.text_frame, "\n".join(subtitles))
 
     # 섹션 타이틀 박스 교체 — toc_map에 "_labels" 키가 있을 때만 동작
@@ -999,9 +1002,18 @@ def build_content_slide(prs, title: str, subtitle: str, body_text: str = "",
             table_h = min(table_h, SLIDE_H_CM - current_top - FOOTER_RESERVE)
             if table_h < 0.5:
                 break
-            _add_table_to_slide(slide, table_data,
-                                 TABLE_LEFT, current_top,
-                                 TABLE_WIDTH, table_h)
+            gf = _add_table_to_slide(slide, table_data,
+                                      TABLE_LEFT, current_top,
+                                      TABLE_WIDTH, table_h)
+            # 표 서식 표준 적용 (헤더행 Bold·08377C, 세부 Light, 여백/정렬 규칙)
+            #   지연 import 로 ai_slide_builders ↔ page_builders 순환참조 회피
+            if gf is not None:
+                try:
+                    from modules.ai_slide_builders import style_table, PALETTE
+                    style_table(gf, nested=False, has_header=True, label_cols=(),
+                                header_fill=PALETTE["navy_dark"])
+                except Exception as _exc:
+                    print(f"[build_content_slide] style_table 적용 실패: {_exc}")
             current_top += table_h + SPACING
 
     _replace_footer_business_name(slide, business_name)
@@ -1111,12 +1123,20 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
 
     new_text = f"{section_number}  {section_title}" if section_number else section_title
 
+    # 소제목이 많으면(4개+) 제목+소제목 블록을 위로 올림 → 배경 물결선과 겹침 방지
+    n_sub = len(subtitles or [])
+    shift_up = 2.6 if n_sub >= 4 else (1.2 if n_sub == 3 else 0.0)   # cm
+    title_top = TARGET_TOP - shift_up
+    sub_top = _DIV_SUBTITLE_GROUP_TOP - shift_up
+
     for shape in slide.shapes:
         if not shape.has_text_frame:
             continue
         if (abs(shape.left - _Cm(TARGET_LEFT)) < TOLERANCE and
                 abs(shape.top  - _Cm(TARGET_TOP))  < TOLERANCE):
             _replace_text_frame_content(shape.text_frame, new_text)
+            if shift_up:
+                shape.top = _Cm(title_top)
             break
 
     # 템플릿 소제목 그룹 제거 후 올바른 소제목 텍스트박스 삽입
@@ -1130,8 +1150,9 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
     if subtitles:
         sub_text   = "\n".join(subtitles)
         sub_height = max(0.8, 0.65 * len(subtitles))
+        # ★제목과 함께 위로(sub_top) — 제목만 올리고 소제목은 안 올리던 버그 수정
         add_text_box(slide, sub_text,
-                     left_cm=_DIV_SUBTITLE_GROUP_LEFT, top_cm=_DIV_SUBTITLE_GROUP_TOP,
+                     left_cm=_DIV_SUBTITLE_GROUP_LEFT, top_cm=sub_top,
                      width_cm=12.0, height_cm=sub_height,
                      font_name=FONT_BOLD, font_size_pt=16.0)
 
@@ -1248,6 +1269,7 @@ def build_full_presentation(
     toc_count: int = None,
     toc_image_bytes_list: list = None,
     toc_map: dict = None,
+    exec_summary_data: dict = None,
 ) -> bytes:
     """
     content_parser 결과를 받아 완성된 PPT를 bytes로 반환합니다.
@@ -1281,8 +1303,15 @@ def build_full_presentation(
     # ── 1. 표지 ────────────────────────────────────────────
     build_cover_slide(prs, business_name, year, month_en, cover_image_bytes)
 
-    # ── 2. Executive Summary (선택) ───────────────────────
-    if executive_summary_sections:
+    # ── 2. Investment Highlights / Executive Summary (선택) ───────────────────────
+    #   exec_summary_data(generate_executive_summary 결과)가 있으면 고정형식 빌더 우선
+    if exec_summary_data:
+        try:
+            from modules.ai_slide_builders import build_slide_2_executive_summary
+            build_slide_2_executive_summary(prs, exec_summary_data, business_name=business_name)
+        except Exception as _exc:
+            print(f"[build_full_presentation] Investment Highlights 빌더 실패: {_exc}")
+    elif executive_summary_sections:
         build_executive_summary_slide(prs, executive_summary_sections, business_name)
 
     # ── 3. 목차 ────────────────────────────────────────────
@@ -1392,9 +1421,11 @@ def _build_content_block(prs, pages: list, business_name: str = "",
 
         if is_new_section:
             section_num += 1
-            num_str = f"{section_num:02d}"
-            # divider 제목: section_label 우선, 없으면 section_title
-            divider_title = page.get("section_label") or section_title or ""
+            # divider 번호: 실제 섹션 번호("0N") 우선(누적 카운터 아님) → 05/06 중복 방지
+            num_str = this_sec_num if this_sec_num else f"{section_num:02d}"
+            # divider 제목: 이름만(번호 제외) → "01 01" 중복 방지
+            divider_title = page.get("section_name") \
+                or re.sub(r'^0[1-9]\s*', '', section_title) or section_title or ""
             build_section_divider_slide(prs, num_str, divider_title,
                                         business_name=business_name,
                                         section_image_bytes_list=section_image_bytes_list,
@@ -1404,7 +1435,7 @@ def _build_content_block(prs, pages: list, business_name: str = "",
             if not body_text and not subtitle:
                 continue
         else:
-            num_str = f"{section_num:02d}" if section_num > 0 else ""
+            num_str = this_sec_num if this_sec_num else (f"{section_num:02d}" if section_num > 0 else "")
 
         # 표시할 제목: 현재 섹션 번호 + section_title
         display_title = f"{num_str}  {section_title}" if num_str and section_title else section_title
@@ -1414,14 +1445,30 @@ def _build_content_block(prs, pages: list, business_name: str = "",
         tables_data = page.get("tables") or []
         body_to_use = (page.get("text_without_tables") or body_text) if tables_data else body_text
 
-        build_content_slide(
-            prs,
-            title=display_title,
-            subtitle=subtitle,
-            body_text=body_to_use,
-            tables=tables_data,
-            business_name=business_name,
-        )
+        # ── 틀-우선 자동 라우터: 판별된 유형(E 등)은 전용 빌더, 아니면 폴백 ──
+        #   지연 import로 frame_builders ↔ page_builders 순환참조 회피
+        handled = False
+        try:
+            from modules.frame_builders import build_page_auto
+            handled = build_page_auto(
+                prs, page,
+                title=display_title,
+                subtitle=subtitle,
+                body_text=body_to_use,
+                business_name=business_name,
+            )
+        except Exception as _exc:
+            print(f"[_build_content_block] 자동 라우터 실패 → 폴백: {_exc}")
+
+        if not handled:
+            build_content_slide(
+                prs,
+                title=display_title,
+                subtitle=subtitle,
+                body_text=body_to_use,
+                tables=tables_data,
+                business_name=business_name,
+            )
 
 
 # ─────────────────────────────────────────────

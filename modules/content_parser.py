@@ -231,6 +231,10 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
         # ── 페이지 이미지 추출 ──────────────────────────────
         pd["images"] = _extract_page_images(fitz_doc, i)
         pd["page_num"] = page_num
+        # ── 원문 텍스트 보관 (LLM 페이지 구조화용) ───────────
+        pd["raw_text"] = pdf_page.get_text("text") or ""
+        # ── 빨간 글씨 추출(원본 강조 재현용) ───────────
+        pd["_red_texts"] = _extract_red_texts(pdf_page)
 
         if debug:
             sec_preview  = pd["section_title"][:30]
@@ -391,6 +395,27 @@ def _is_heading_level(style_name: str, level: int) -> bool:
 _IMG_MIN_PX = 200 * 200   # 200×200px 미만은 아이콘·로고로 간주하여 제외
 
 
+def _extract_red_texts(pdf_page) -> list:
+    """페이지에서 '빨간색' 글자 조각을 추출(원본 강조 표시 재현용)."""
+    reds = []
+    try:
+        d = pdf_page.get_text("dict")
+    except Exception:
+        return reds
+    for b in d.get("blocks", []):
+        for ln in b.get("lines", []):
+            for sp in ln.get("spans", []):
+                col = sp.get("color", 0) or 0
+                r = (col >> 16) & 0xFF
+                g = (col >> 8) & 0xFF
+                bb = col & 0xFF
+                if r > 120 and g < 90 and bb < 90:   # 붉은 계열
+                    t = (sp.get("text", "") or "").strip()
+                    if len(t) >= 2:
+                        reds.append(t)
+    return reds
+
+
 def _extract_page_images(fitz_doc, page_idx: int) -> list:
     """
     fitz_doc의 page_idx 페이지에서 이미지를 추출합니다.
@@ -549,17 +574,19 @@ def _postprocess_table(table: list) -> list:
 
 def _is_valid_table(table_data: list) -> bool:
     """
-    추출된 표 데이터가 실제 표인지 엄격하게 검사합니다.
+    추출된 표 데이터가 실제 표인지 검사합니다.
+    ※ _extract_page_tables 에서 _postprocess_table(빈 행·팬텀 열 제거) 이후의
+      "정제된 표" 를 대상으로 호출되므로, 임계치를 관대하게 둔다 (내용 보존 우선).
 
     필터 조건 (하나라도 해당하면 False):
-      - 행 수 < 5        : 너무 작은 표 = 오탐 가능성 높음
-      - 열 수 < 3        : 1~2열 표 = 텍스트박스 오인식
-      - 열 수 > 12       : phantom columns (레이아웃 요소)
+      - 행 수 < 2        : 헤더 1줄짜리 = 표 아님
+      - 열 수 < 2        : 단일 열 = 텍스트박스/라벨 조각
+      - 열 수 > 14       : phantom columns (정제 후에도 과다)
       - 불릿 문자 시작 셀 존재 : 본문 단락을 표로 오인식
-      - 빈 셀 비율 > 85% : 대부분 비어있는 레이아웃 요소
-      - 유니크 값 < 3    : 모두 같은 값 (반복 레이블 등)
-      - 50자 초과 셀 ≥ 5 : 단락 텍스트를 표로 오인식
-      - 헤더 없음        : 첫 행 모든 셀이 비어있거나 너무 긺
+      - 빈 셀 비율 > 95% : 거의 전부 비어있는 레이아웃 요소
+      - 유니크 값 < 2    : 의미 있는 데이터가 사실상 없음
+      - 80자 초과 셀 ≥ 8 : 단락 텍스트를 표로 오인식
+      - 헤더 유효셀 < 1  : 헤더 행이 전부 비었거나 너무 긺
     """
     if not table_data:
         return False
@@ -567,21 +594,25 @@ def _is_valid_table(table_data: list) -> bool:
     rows = len(table_data)
     cols = max((len(row) for row in table_data), default=0)
 
-    # 행/열 수 조건
-    if rows < 5:
+    # 행/열 수 조건 (완화: 작은 표도 살림)
+    if rows < 2:
         return False
-    if cols < 3:
+    if cols < 2:
         return False
-    if cols > 12:
+    if cols > 14:
         return False
 
-    # 불릿 문자가 셀 어딘가에 있으면 = 본문 단락 오인식
+    # 불릿 단락 오인식 방지 — 단, "•" 를 셀 마커로 쓰는 정상 표(사업개요표 등)는 살림.
+    #   좁은 표(≤2열)에서 불릿이 다수 행을 차지하면 본문 불릿 리스트로 간주해 탈락,
+    #   3열 이상 데이터 표는 불릿이 있어도 허용.
     BULLET_CHARS = ('▶', '•', '■', '▪', '◆')
-    for row in table_data:
-        for cell in row:
-            cell_str = str(cell or '').strip()
-            if any(b in cell_str for b in BULLET_CHARS):
-                return False
+    if cols <= 2:
+        bullet_rows = sum(
+            1 for row in table_data
+            if any(str(c or '').strip()[:1] in BULLET_CHARS for c in row)
+        )
+        if bullet_rows >= max(2, rows * 0.5):
+            return False
 
     total_cells = sum(len(row) for row in table_data)
     if total_cells == 0:
@@ -590,28 +621,27 @@ def _is_valid_table(table_data: list) -> bool:
         1 for row in table_data for cell in row
         if not str(cell or "").strip()
     )
-    if empty_cells / total_cells > 0.85:
+    if empty_cells / total_cells > 0.95:        # 85% → 95% 완화
         return False
 
     flat = [str(c).strip() for row in table_data for c in row if str(c or "").strip()]
-    if len(set(flat)) < 3:
+    if len(set(flat)) < 2:                      # 3 → 2 완화
         return False
 
     long_cells = sum(
         1 for row in table_data for cell in row
-        if cell and len(str(cell)) > 50
+        if cell and len(str(cell)) > 80          # 50 → 80
     )
-    if long_cells > 5:
+    if long_cells > 8:                           # 5 → 8 완화
         return False
 
     # 첫 행(헤더) 검사: 유효한 헤더 셀이 1개 이상 있어야 함
-    # 헤더 셀 = 비어있지 않고 30자 이하 (긴 문장은 헤더가 아님)
     header_row = table_data[0]
     valid_header_cells = sum(
         1 for cell in header_row
-        if cell and 0 < len(str(cell).strip()) <= 30
+        if cell and 0 < len(str(cell).strip()) <= 40
     )
-    if valid_header_cells < 2:
+    if valid_header_cells < 1:                    # 2 → 1 완화
         return False
 
     return True
@@ -632,34 +662,120 @@ def _bbox_overlap_ratio(bbox_a: tuple, bbox_b: tuple) -> float:
     return inter / union if union > 0 else 0.0
 
 
+def _count_filled_cells(tbl: list) -> int:
+    """표(2D 리스트)에서 내용이 있는(비어있지 않은) 셀 개수."""
+    return sum(1 for row in (tbl or []) for c in row if str(c or "").strip())
+
+
+def _strategy_lines(page, debug=False):
+    """1차: 선(lines) 전략 (기존 동작 보존 — 선 있는 표는 여기서 최다 셀)."""
+    out = []
+    settings = {"vertical_strategy": "lines", "horizontal_strategy": "lines"}
+    try:
+        for t in (page.find_tables(table_settings=settings) or []):
+            ext = t.extract()
+            if ext:
+                out.append((ext, tuple(t.bbox), "lines"))
+    except Exception as exc:
+        if debug:
+            print(f"  [lines 오류] {exc}")
+    return out
+
+
+def _strategy_text(page, debug=False):
+    """2차: 텍스트 정렬(text) 전략 — 테두리 없는 표 대응."""
+    out = []
+    settings = {
+        "vertical_strategy": "text", "horizontal_strategy": "text",
+        "snap_tolerance": 4, "text_tolerance": 3,
+    }
+    try:
+        for t in (page.find_tables(table_settings=settings) or []):
+            ext = t.extract()
+            if ext:
+                out.append((ext, tuple(t.bbox), "text"))
+    except Exception as exc:
+        if debug:
+            print(f"  [text 오류] {exc}")
+    return out
+
+
+def _strategy_pymupdf(page, debug=False):
+    """3차: PyMuPDF(fitz) find_tables — 미설치/실패 시 건너뜀(경고만)."""
+    out = []
+    try:
+        import fitz  # PyMuPDF
+    except Exception:
+        if debug:
+            print("  [pymupdf] 미설치 — 3차 전략 건너뜀")
+        return out
+    doc = None
+    try:
+        pdfobj = page.pdf
+        path = getattr(pdfobj, "path", None)
+        if path:
+            doc = fitz.open(path)
+        else:
+            stream = getattr(pdfobj, "stream", None)
+            if stream is None:
+                return out
+            pos = stream.tell()
+            stream.seek(0)
+            data = stream.read()
+            stream.seek(pos)
+            doc = fitz.open(stream=data, filetype="pdf")
+        fp = doc[page.page_number - 1]
+        finder = fp.find_tables()
+        for t in getattr(finder, "tables", []):
+            ext = t.extract()
+            if ext:
+                out.append((ext, tuple(t.bbox), "pymupdf"))
+    except Exception as exc:
+        if debug:
+            print(f"  [pymupdf 오류] {exc}")
+    finally:
+        if doc is not None:
+            try:
+                doc.close()
+            except Exception:
+                pass
+    return out
+
+
 def _extract_tables_dual_strategy(plumber_page, debug: bool = False):
-    """
-    선 기반(lines) 전략만 사용해 표를 추출합니다.
-    텍스트 정렬 기반(text) 전략은 불릿 단락을 표로 오인식하므로 비활성화.
+    """다단계 표 추출.
+
+    1차 lines → 2차 text → 3차 pymupdf 후보를 모두 모은 뒤,
+    같은 영역(bbox 겹침>0.5)에 대해서는 "내용 있는 셀이 가장 많은" 결과만 채택한다.
+    (선 있는 표는 lines가 보통 최다 → 기존 동작 보존, 선 없는 표는 text/pymupdf가 보완)
 
     Returns
     -------
-    List[Tuple[list, tuple]] — (2D 배열, bbox) 리스트
+    List[Tuple[list, tuple, str]] — (2D 배열, bbox, 채택전략) 리스트
     """
-    settings_a = {"vertical_strategy": "lines", "horizontal_strategy": "lines"}
-
-    try:
-        raw_a = plumber_page.find_tables(table_settings=settings_a) or []
-    except Exception as exc:
-        raw_a = []
-        if debug:
-            print(f"  [전략A 오류] {exc}")
+    candidates = []
+    candidates += _strategy_lines(plumber_page, debug)
+    candidates += _strategy_text(plumber_page, debug)
+    candidates += _strategy_pymupdf(plumber_page, debug)
 
     if debug:
-        print(f"  [전략A-lines] {len(raw_a)}개 감지 (text 전략 비활성화)")
+        from collections import Counter as _Cnt
+        print(f"  [후보 전략별] {dict(_Cnt(s for _, _, s in candidates))}")
 
-    result = []
-    for tbl_a in raw_a:
-        extracted = tbl_a.extract()
-        if extracted:
-            result.append((extracted, tbl_a.bbox))
+    # 점수 = 내용 셀 수 + 전략 가점(lines 우대).
+    #   선 있는 표는 lines 가 구조(헤더 등)를 더 정확히 잡으므로 근소차에선 lines 채택.
+    _BONUS = {"lines": 3, "pymupdf": 1, "text": 0}
 
-    return result
+    def _score(item):
+        ext, _, strat = item
+        return _count_filled_cells(ext) + _BONUS.get(strat, 0)
+
+    chosen = []
+    for ext, bbox, strat in sorted(candidates, key=_score, reverse=True):
+        if any(_bbox_overlap_ratio(bbox, cb) > 0.5 for _, cb, _ in chosen):
+            continue
+        chosen.append((ext, bbox, strat))
+    return chosen
 
 
 # ──────────────────────────────────────────────────────
@@ -988,19 +1104,22 @@ def _extract_page_tables(plumber_page, debug: bool = False) -> dict:
     tables: list = []
     table_bboxes: list = []
 
-    # ── 이중 전략 추출 + 유효성 검사 + 후처리 ─────────────
+    # ── 다단계 추출 → 후처리(팬텀 열 제거) → 유효성 검사 순 ─────────────
+    #   정제(_postprocess_table) 후의 표를 검증해야 phantom column 때문에 멀쩡한
+    #   표가 탈락하지 않는다.
     try:
-        for extracted, bbox in _extract_tables_dual_strategy(plumber_page, debug=debug):
-            if not _is_valid_table(extracted):
-                if debug:
-                    rows = len(extracted)
-                    cols = max((len(r) for r in extracted), default=0)
-                    print(f"  [제외] 유효성 검사 실패 {rows}행×{cols}열 bbox={bbox}")
-                continue
+        for extracted, bbox, strat in _extract_tables_dual_strategy(plumber_page, debug=debug):
             processed = _postprocess_table(extracted)
-            if processed:
-                tables.append(processed)
-                table_bboxes.append(bbox)
+            if not processed:
+                continue
+            if not _is_valid_table(processed):
+                if debug:
+                    rows = len(processed)
+                    cols = max((len(r) for r in processed), default=0)
+                    print(f"  [제외] 유효성 검사 실패 {rows}행×{cols}열 전략={strat} bbox={bbox}")
+                continue
+            tables.append(processed)
+            table_bboxes.append(bbox)
     except Exception as exc:
         if debug:
             print(f"  [_extract_page_tables] 오류: {exc}")

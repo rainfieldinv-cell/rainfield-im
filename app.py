@@ -838,6 +838,27 @@ def show_step4():
                     final_toc_map   = None   # build_full_presentation 내부에서 자동 추출
                     final_toc_count = toc_choice
 
+                # ── ★LLM 구조화 파이프라인 적용(테스트 하니스와 동일) ─────────────
+                #   본문 슬라이드를 LLM 페이지 구조화 경로로 생성하고, Executive
+                #   Summary 는 '지금 업로드한 PDF' 의 ES 페이지만 보고 생성한다.
+                os.environ["RAINFIELD_LLM"] = "1"   # _build_content_block LLM 경로 ON
+                exec_summary_data = None
+                try:
+                    from modules.llm_structure import enrich_and_number
+                    enrich_and_number(final_pages)
+                    from modules.ai_slide_builders import generate_executive_summary
+                    _es_text = "\n".join(
+                        (p.get("raw_text", "") or "") for p in final_pages
+                        if "Executive Summary" in (p.get("raw_text", "") or ""))
+                    if not _es_text:    # 폴백: 앞 2페이지
+                        _es_text = "\n".join((p.get("raw_text", "") or "")
+                                             for p in final_pages[:2])
+                    _es = generate_executive_summary(_es_text)
+                    if _es.get("ok"):
+                        exec_summary_data = _es["data"]
+                except Exception as _llm_e:
+                    st.warning(f"⚠️ LLM 구조화 일부 실패({_llm_e}) — 기본 경로로 진행합니다.")
+
                 ppt_bytes = build_full_presentation(
                     business_name=st.session_state.business_name,
                     year=st.session_state.year,
@@ -848,6 +869,7 @@ def show_step4():
                     toc_count=final_toc_count,
                     toc_map=final_toc_map,
                     toc_image_bytes_list=[st.session_state.toc_img_bytes],
+                    exec_summary_data=exec_summary_data,
                 )
 
             filename = make_output_filename(st.session_state.business_name)
