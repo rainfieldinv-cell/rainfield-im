@@ -206,7 +206,25 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
         # ── 규칙 3: 내용 부족 페이지 제외 ─────────────────────
         combined = (pd["section_title"] + pd["subtitle"] + pd["body_text"]).strip()
         if len(combined) < 15:
-            if debug:
+            # ★이미지만 있는 페이지(조감도·광역입지 등): 버리면 그림이 사라진다.
+            #   큰 이미지가 있으면 직전 본문 페이지(건축개요 등)에 y좌표 순으로 첨부 →
+            #   build_structured_slide 의 side_box(표 옆 라벨 박스) 경로로 렌더된다.
+            recovered = _extract_page_images(fitz_doc, i)
+            if recovered and result:
+                ypos = {}
+                for im in pdf_page.get_images(full=True):
+                    try:
+                        rects = pdf_page.get_image_rects(im[0])
+                        if rects:
+                            ypos[im[0]] = rects[0].y0
+                    except Exception:
+                        pass
+                recovered.sort(key=lambda im: ypos.get(im.get("xref"), 0.0))
+                result[-1].setdefault("images", []).extend(recovered)
+                if debug:
+                    print(f"[p{page_num:02d}/{total}] 이미지전용 → 직전 페이지에 이미지 "
+                          f"{len(recovered)}개 첨부(조감도/광역입지 등)")
+            elif debug:
                 print(f"[p{page_num:02d}/{total}] SKIP — 내용 부족 ({len(combined)}자)")
             continue
 
