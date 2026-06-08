@@ -566,11 +566,14 @@ def _merge_vertical_runs(table, data, ncol, header_rows=0):
 
 
 def _merge_total_rows(table, data, ncol):
-    """합계/소계 행에서 라벨을 빈 칸들에 가로 병합(예 '터미널 합계(A)'가 구역·소재지·지목 칸 차지)."""
+    """합계/소계/총매출 등 합산행에서 라벨을 빈 칸들에 가로 병합
+       (예 '터미널 합계(A)'·'총 매출 (A)'가 옆 빈 칸들을 차지)."""
+    subtotal, grandtotal = _classify_total_rows(data, ncol)
+    total_set = subtotal | grandtotal
     for ri, row in enumerate(data):
-        txts = [str((row[c] if c < len(row) else "") or "").strip() for c in range(ncol)]
-        if not any(any(k in tx for k in _TOTAL_KW) for tx in txts):
+        if ri not in total_set:
             continue
+        txts = [str((row[c] if c < len(row) else "") or "").strip() for c in range(ncol)]
         first = next((i for i, tx in enumerate(txts) if tx), None)
         if first is None:
             continue
