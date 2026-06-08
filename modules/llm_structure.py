@@ -380,19 +380,35 @@ def _pack_short_pages(pages: list, *, debug: bool = False) -> None:
             group.append(pages[j]); j += 1
         if len(group) > 1:
             base = group[0]; bst = base["_struct"]
+
+            def _is_note_b(b):
+                s = str(b).lstrip()
+                return s.startswith(("주", "*", "※")) and (
+                    s[:1] in ("*", "※") or (len(s) > 1 and (s[1].isdigit() or s[1] == " ")))
+
+            # ★base(앞 표)의 각주는 base의 '마지막 표'에 귀속(아래 표로 안 넘어가게)
+            _base_notes = [b for b in (bst.get("bullets") or []) if _is_note_b(b)]
+            bst["bullets"] = [b for b in (bst.get("bullets") or []) if not _is_note_b(b)]
+            if _base_notes and bst.get("tables"):
+                bst["tables"][-1].setdefault("_notes", []).extend(_base_notes)
+
             for q in group[1:]:
                 qst = q["_struct"]
                 qname = q.get("subtitle", "")          # "3.2 ..."
                 qtabs = qst.get("tables") or []
+                # 이 페이지(q)의 각주는 이 페이지 '첫 표' 밑에만 붙인다(표별 각주 분리)
+                q_notes = [b for b in (qst.get("bullets") or []) if _is_note_b(b)]
+                q_prose = [b for b in (qst.get("bullets") or []) if not _is_note_b(b)]
                 for k, t in enumerate(qtabs):
                     t2 = dict(t)
                     if k == 0 and not (t2.get("title") or "").strip():
                         t2["title"] = qname             # 뒤 페이지 첫 표에 소제목 라벨
+                    if k == 0 and q_notes:
+                        t2.setdefault("_notes", []).extend(q_notes)
                     bst.setdefault("tables", []).append(t2)
-                if (qst.get("intro") or "").strip():
-                    bst.setdefault("bullets", []).append(qst["intro"].strip())
-                bst.setdefault("bullets", []).extend(
-                    b for b in (qst.get("bullets") or []) if str(b).strip())
+                # ★흡수된 페이지의 intro(LLM 생성 소개문, 원본엔 없음)는 떠다니는 불릿으로
+                #   찍지 않는다(사용자: "적지마" — 표만 깔끔하게). 표 옆 산문(분석)만 유지.
+                bst.setdefault("bullets", []).extend(q_prose)
             out.append(base)
             if debug:
                 print(f"  [페이지합치기] {[g.get('subtitle') for g in group]} → 1슬라이드")

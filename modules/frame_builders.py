@@ -1249,6 +1249,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         title = (tdef.get("title") or "").strip()
         has_h = bool(header)
         label_h = _LABEL_H if title else 0.0
+        tnotes = [str(x).strip() for x in (tdef.get("_notes") or []) if str(x).strip()]  # 이 표 전용 각주
 
         if kind == "label_value":
             # ★내용이 긴 약정문 → 행별 높이 가변. 행높이 합이 한 장 용량 넘으면 분할(헤더 반복).
@@ -1283,7 +1284,8 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             for k, (rows, rhs) in enumerate(chunks):
                 lbl = (f"{title}({k + 1}/{m})" if (title and m > 1) else title)
                 anchors = [(i, rows[i][0]) for i in range(len(rows)) if _nested_for(rows[i][0])]
-                blocks.append((lbl, kind, header, rows, ncol, fp, rhs, anchors))
+                _bn = tnotes if k == m - 1 else []   # 표 각주는 마지막 청크 밑에만
+                blocks.append((lbl, kind, header, rows, ncol, fp, rhs, anchors, _bn))
         else:
             rh = _rowh(fp)
             cap_full = max(1, int((_BODY_BOTTOM - _INTRO_T - label_h) / rh) - (1 if has_h else 0))
@@ -1332,7 +1334,8 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                                 chunk[0][c] = prev
                                 break
                 lbl = (f"{title}({k + 1}/{m})" if (title and m > 1) else title)
-                blocks.append((lbl, kind, header, chunk, ncol, fp, rh, None))
+                _bn = tnotes if k == m - 1 else []   # 표 각주는 마지막 청크 밑에만
+                blocks.append((lbl, kind, header, chunk, ncol, fp, rh, None, _bn))
 
     # ── 블록을 슬라이드에 채움 (각 청크는 빈 슬라이드 1장에 반드시 들어감) ──
     #   ★제목의 내용(인트로)이 없으면 본문을 인트로 자리(_INTRO_T)부터 시작 = 전체적으로 위로.
@@ -1357,12 +1360,13 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         top = _INTRO_T          # 연속 슬라이드(인트로 없음)는 인트로 자리부터 = 위로
 
     for blk in blocks:
-        lbl, kind, header, rows, ncol, fp, rh, _anchors = blk
+        lbl, kind, header, rows, ncol, fp, rh, _anchors, _tn = blk
         label_h = _LABEL_H if lbl else 0.0
+        _tn_h = (_est_text_height("\n".join(_tn), tw, 9) + 0.10) if _tn else 0.0
         if isinstance(rh, (list, tuple)):
-            need = label_h + (_rowh(fp) if header else 0) + sum(rh) + _GAP
+            need = label_h + (_rowh(fp) if header else 0) + sum(rh) + _tn_h + _GAP
         else:
-            need = label_h + ((1 if header else 0) + len(rows)) * rh + _GAP
+            need = label_h + ((1 if header else 0) + len(rows)) * rh + _tn_h + _GAP
         if cur["items"] and top + need > pack_bottom:
             flush()
         cur["items"].append(blk)
@@ -1390,7 +1394,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             _place_images_row(slide, big_imgs[:1], _TBL_L, t, _TBL_W, t + _IMG_TOP_H)
             t += _IMG_TOP_H + 0.12
         tbl_start = t   # 표가 시작되는 y(사진 옆배치 기준)
-        for (lbl, kind, header, rows, ncol, fp, rh, anchors) in plan["items"]:
+        for (lbl, kind, header, rows, ncol, fp, rh, anchors, tbl_notes) in plan["items"]:
             if lbl:
                 # ★'(단위 …)'는 표 우측 위에 Light 9pt 별도 글상자로(원본처럼), 라벨에선 분리
                 unit = ""
@@ -1450,7 +1454,15 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                                          color=PALETTE["gray_text"], red_set=red_set, ul_set=ul_set)
                     except Exception as _e:
                         print(f"[nested grid] 실패: {_e}")
-            t += used + _GAP
+            t += used
+            # ★이 표 '전용 각주'(주N)는 이 표 바로 밑에(다른 표/아래 페이지로 안 넘어감) ── 표별 각주 분리
+            if tbl_notes:
+                _tnt = "\n".join(tbl_notes)
+                _tnh = _est_text_height(_tnt, _TBL_W, 9)
+                _, _tnhh = _add_textbox(slide, _TBL_L, t + 0.04, _TBL_W, _tnh, _tnt,
+                                        size=9, color=PALETTE["gray_text"], red_set=red_set, ul_set=ul_set)
+                t += _tnhh + 0.06
+            t += _GAP
         # ★본문 사진 배치(top_bare는 위에서 처리).
         #   side_box(조감도/광역입지)=첫 plan(건축개요 표) 오른쪽 / 부록=마지막 plan 표없이 크게
         if side_box and idx == img_plan_idx and big_imgs:
