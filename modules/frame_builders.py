@@ -290,7 +290,8 @@ def build_page_auto(prs, page: dict, *, title: str, subtitle: str,
             section_label=page.get("section_label"),
             subtitle=page.get("subtitle"),
             images=page.get("images"),
-            red_texts=page.get("_red_texts"))
+            red_texts=page.get("_red_texts"),
+            underline_texts=page.get("_underline_texts"))
         return True
 
     ptype = classify_page(page)
@@ -351,33 +352,46 @@ def _est_text_height(text, W, size):
     return max(line_h, lines * line_h) + 0.03
 
 
-def _red_segments(line, red_set):
-    """한 줄을 [(텍스트, is_red)] 조각으로 분할(원본 빨간 글씨 부분만 빨강)."""
-    if not red_set:
-        return [(line, False)]
-    # 줄에 포함된 빨간 조각 중 가장 긴 것부터 한 번 분할
-    hit = None
-    # 4글자 미만(루시드 등 흔한 단어)은 산문에서 빨강 처리 안 함(과다 방지)
-    for rf in sorted((r.strip() for r in red_set if len(r.strip()) >= 4), key=len, reverse=True):
-        idx = line.find(rf)
-        if idx != -1:
-            hit = (idx, rf)
-            break
-    if not hit:
-        return [(line, False)]
-    idx, rf = hit
-    segs = []
-    if line[:idx]:
-        segs.append((line[:idx], False))
-    segs.append((rf, True))
-    segs.extend(_red_segments(line[idx + len(rf):], red_set))
+def _emph_segments(line, red_set, ul_set=None):
+    """한 줄을 [(텍스트, is_red, is_underline)] 조각으로 분할.
+       원본의 빨간 글씨/밑줄 부분만 강조(겹쳐도 문자 단위 마스크로 정확히 처리)."""
+    n = len(line)
+    if n == 0:
+        return [("", False, False)]
+    red_mask = [False] * n
+    ul_mask = [False] * n
+
+    def _mark(mask, frags, minlen):
+        for f in sorted({str(s).strip() for s in (frags or []) if len(str(s).strip()) >= minlen},
+                        key=len, reverse=True):
+            start = 0
+            while True:
+                idx = line.find(f, start)
+                if idx == -1:
+                    break
+                for k in range(idx, idx + len(f)):
+                    mask[k] = True
+                start = idx + len(f)
+
+    _mark(red_mask, red_set, 4)   # 빨강은 4글자 이상(루시드 등 과다 방지)
+    _mark(ul_mask, ul_set, 2)     # 밑줄은 2글자 이상
+    if not any(red_mask) and not any(ul_mask):
+        return [(line, False, False)]
+    segs, i = [], 0
+    while i < n:
+        r, u = red_mask[i], ul_mask[i]
+        j = i
+        while j < n and red_mask[j] == r and ul_mask[j] == u:
+            j += 1
+        segs.append((line[i:j], r, u))
+        i = j
     return segs
 
 
 def _add_textbox(slide, L, T, W, H, text, *, size=10.5, bold=False,
-                 color=None, align=PP_ALIGN.LEFT, red_set=None):
+                 color=None, align=PP_ALIGN.LEFT, red_set=None, ul_set=None):
     """글상자 생성 — 내부여백 0, 텍스트 내용에 딱 맞는 높이(군더더기 여백 없음). 반환=(shape, 높이in).
-       red_set 지정 시 원본 빨간 글씨에 해당하는 부분만 빨강으로 표시."""
+       red_set/ul_set 지정 시 원본 빨간 글씨/밑줄에 해당하는 부분만 빨강·밑줄로 표시."""
     text = str(text).rstrip("\n ")        # 끝의 빈 줄/공백 제거(빈 여백 방지)
     est_h = _est_text_height(text, W, size)
     tb = slide.shapes.add_textbox(Inches(L), Inches(T), Inches(W), Inches(est_h))
@@ -396,12 +410,14 @@ def _add_textbox(slide, L, T, W, H, text, *, size=10.5, bold=False,
         p.alignment = align
         p.font.size = Pt(size)                       # 문단 기본(빈 줄에도 적용)
         p.font.name = nm
-        for seg, is_red in _red_segments(line, red_set):
+        for seg, is_red, is_ul in _emph_segments(line, red_set, ul_set):
             run = p.add_run()
             run.text = seg
             run.font.name = nm
             run.font.size = Pt(size)
             run.font.color.rgb = _RED if is_red else (color or _BLACK)
+            if is_ul:
+                run.font.underline = True
     return tb, est_h
 
 
@@ -1044,7 +1060,7 @@ _LABEL_H = 0.34   # 표 미니라벨 높이
 
 def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                            section_label: str = None, subtitle: str = None,
-                           images=None, red_texts=None):
+                           images=None, red_texts=None, underline_texts=None):
     """LLM 구조화 결과 → 1개 이상의 본문 슬라이드. 내용이 길면 헤더 반복하며 "(i/n)"로 분할."""
     section_label = (section_label if section_label is not None
                      else struct.get("section_label") or "").strip()
@@ -1081,6 +1097,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
 
     red_set = set(red_texts or [])             # 산문(글상자) 부분 빨강용
     red_counts = Counter(red_texts or [])      # 표 셀 빨강용(모든 동일칸 빨강일 때만)
+    ul_set = set(underline_texts or [])        # 산문(글상자) 부분 밑줄용
     # ★주1)2)3) 등 각주는 본문이 아니라 맨 아래로(원본처럼). 그 외 설명만 본문 불릿.
     def _is_note(b):
         s = str(b).lstrip()
@@ -1241,7 +1258,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         if plan["intro"]:
             # ★제목의 내용 글상자 = Bold (사용자 지시), 원본 빨간 글씨 부분만 빨강
             _, h = _add_textbox(slide, _INTRO_L, _INTRO_T, _INTRO_W, 0.40, plan["intro"],
-                                size=9, bold=True, red_set=red_set)
+                                size=9, bold=True, red_set=red_set, ul_set=ul_set)
             t = _INTRO_T + h + 0.12
         # (본문 산문 bullets는 더 이상 표 위에 찍지 않음 — 표 아래로 이동, 아래 렌더 참조)
         # ★'그냥 사진'(지도 등)은 표 위에 전폭으로 (사람 제안서: 담보토지·인근시장)
@@ -1306,7 +1323,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                         if gnote.strip():
                             _add_textbox(slide, val_x + 0.05, row_y + 0.05 + grid_h + 0.02,
                                          val_w - 0.10, 0.2, gnote, size=9,
-                                         color=PALETTE["gray_text"], red_set=red_set)
+                                         color=PALETTE["gray_text"], red_set=red_set, ul_set=ul_set)
                     except Exception as _e:
                         print(f"[nested grid] 실패: {_e}")
             t += used + _GAP
@@ -1327,13 +1344,13 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             bh = _est_text_height(btext, tw, 10)
             _, _bhh = _add_textbox(slide, _TBL_L, t + 0.06, tw, bh, btext,
                                    size=10, bold=False, color=RGBColor(0x00, 0x00, 0x00),
-                                   red_set=red_set)
+                                   red_set=red_set, ul_set=ul_set)
             t += _bhh + 0.10
         # ★주N) 각주 = 표(또는 표아래 산문) '바로 밑'(별도 글상자). 빨간 부분 살림.
         if idx == n - 1 and notes_text:
             nh = _est_text_height(notes_text, _TBL_W, 9)
             _add_textbox(slide, _TBL_L, t + 0.04, _TBL_W, nh, notes_text,
-                         size=9, color=PALETTE["gray_text"], red_set=red_set)
+                         size=9, color=PALETTE["gray_text"], red_set=red_set, ul_set=ul_set)
         _add_combined_footer(slide, business_name)
         # ★출처는 항상 좌측 하단 고정(별도 글상자) — 원본에 있을 때만
         if idx == n - 1 and source:

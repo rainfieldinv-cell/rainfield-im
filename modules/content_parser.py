@@ -251,8 +251,9 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
         pd["page_num"] = page_num
         # ── 원문 텍스트 보관 (LLM 페이지 구조화용) ───────────
         pd["raw_text"] = pdf_page.get_text("text") or ""
-        # ── 빨간 글씨 추출(원본 강조 재현용) ───────────
+        # ── 빨간 글씨 / 밑줄 추출(원본 강조 재현용) ───────────
         pd["_red_texts"] = _extract_red_texts(pdf_page)
+        pd["_underline_texts"] = _extract_underline_texts(pdf_page, pd.get("table_bboxes"))
 
         if debug:
             sec_preview  = pd["section_title"][:30]
@@ -432,6 +433,58 @@ def _extract_red_texts(pdf_page) -> list:
                     if len(t) >= 2:
                         reds.append(t)
     return reds
+
+
+def _extract_underline_texts(pdf_page, table_bboxes=None) -> list:
+    """밑줄 친 글자 조각 추출(원본 강조 재현).
+       글자 baseline(y1) 바로 밑의 얇은 가로 rect/line 을, 그 위 글자들의 x범위와 거의
+       정확히 일치할 때만 밑줄로 인정. ★표 영역(table_bboxes) 안의 선은 셀 테두리이므로 제외."""
+    outs = []
+    tboxes = [b for b in (table_bboxes or []) if b and len(b) >= 4]
+
+    def _in_table(x0, x1, y):
+        cx = (x0 + x1) / 2.0
+        for (bx0, bt, bx1, bb) in tboxes:
+            if bx0 - 2 <= cx <= bx1 + 2 and bt - 2 <= y <= bb + 2:
+                return True
+        return False
+    try:
+        words = pdf_page.get_text("words")    # (x0,y0,x1,y1,word,block,line,wno)
+    except Exception:
+        return outs
+    segs = []   # (x0, x1, y) 얇은 가로선 후보
+    try:
+        for dr in pdf_page.get_drawings():
+            for it in dr.get("items", []):
+                if it[0] == "re":
+                    r = it[1]
+                    if r.height < 2.5 and r.width > 8:
+                        segs.append((r.x0, r.x1, r.y0))
+                elif it[0] == "l":
+                    p1, p2 = it[1], it[2]
+                    if abs(p1.y - p2.y) < 1.0 and abs(p2.x - p1.x) > 8:
+                        segs.append((min(p1.x, p2.x), max(p1.x, p2.x), p1.y))
+    except Exception:
+        return outs
+    for (sx0, sx1, sy) in segs:
+        cand = [w for w in words
+                if abs(w[3] - sy) <= 1.8 and w[2] > sx0 - 1 and w[0] < sx1 + 1]
+        if not cand:
+            continue
+        cand.sort(key=lambda w: w[0])
+        # 밑줄이 글자들을 '딱' 감싸야 함(양끝 8px 이내) — 아니면 표 테두리로 보고 제외
+        if abs(cand[0][0] - sx0) > 8 or abs(cand[-1][2] - sx1) > 8:
+            continue
+        frag = " ".join(w[4] for w in cand).strip()
+        # ★표 셀 단어 1개(소재지·시공사명 등) 오탐 배제: 여러 단어이거나 8자 이상인 강조구만 인정.
+        #   (원본 밑줄은 '포함 기준'·'…담보신탁으로 변경할'처럼 구(句) 단위)
+        if (" " not in frag) and len(frag) < 8:
+            continue
+        if not _in_table(sx0, sx1, sy) or " " in frag:
+            outs.append(frag)
+            if " " in frag:
+                outs.append(frag.replace(" ", ""))
+    return list(dict.fromkeys(outs))
 
 
 def _extract_page_images(fitz_doc, page_idx: int) -> list:

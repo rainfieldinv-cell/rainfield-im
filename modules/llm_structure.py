@@ -227,11 +227,13 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
         merged_tables.append({"title": "", "kind": "label_value", "header": [], "rows": lv_rows})
 
     base = fin[0]
-    # 빨간 글씨 합치기(병합된 페이지들 전부)
-    reds = []
+    # 빨간 글씨/밑줄 합치기(병합된 페이지들 전부)
+    reds, uls = [], []
     for p in fin:
         reds.extend(p.get("_red_texts") or [])
+        uls.extend(p.get("_underline_texts") or [])
     base["_red_texts"] = list(dict.fromkeys(reds))
+    base["_underline_texts"] = list(dict.fromkeys(uls))
     base["_struct"]["tables"] = merged_tables
     base["_struct"]["_nested_grids"] = nested
     base["_struct"]["subtitle"] = "기초자산 개요"
