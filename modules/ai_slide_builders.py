@@ -936,6 +936,11 @@ def build_slide_5_sasae_overview(prs, data: dict,
     intro_sh = _find_shape_by_pos(slide, 1.09, 2.29)
     if intro_sh:
         _replace_text_keep_runs(intro_sh.text_frame, intro)
+        # ★제목의 내용(인트로)은 항상 9pt 고정(다른 페이지와 통일 — 이 페이지만 10pt이던 문제)
+        for _p in intro_sh.text_frame.paragraphs:
+            _p.font.size = Pt(9)
+            for _r in _p.runs:
+                _r.font.size = Pt(9)
 
     # 기존 9r×2c TABLE 의 값 열(col 1)만 교체
     _fill_sasae_table(slide, fields)

@@ -1026,9 +1026,17 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                     cl.fill.solid()
                     cl.fill.fore_color.rgb = PALETTE["gray"]                 # 중간 소계/합계 = D9D9D9
     # ★원본 '포인트 색칠' 칸(시세표 공급평단가 주황 등) → 하늘색 65%로 재현(약속한 포인트색)
+    #   단, '구분/라벨 열'은 항상 밝은 회색이어야 하므로 제외(자금용도 등이 민트되던 문제).
     if fill_set:
+        skip_cols = set()
+        if kind == "label_value":
+            skip_cols = {0}
+        elif header:
+            skip_cols = {c for c in range(ncol) if c < len(header) and "구분" in str(header[c] or "")}
         for ri in range(hdr_rows, nrow):
             for ci in range(ncol):
+                if ci in skip_cols:
+                    continue
                 ct = t.cell(ri, ci).text.strip()
                 if ct and ct in fill_set:
                     _set_one_cell_fill_alpha(t.cell(ri, ci), "3E95BE", 35)
