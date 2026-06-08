@@ -1102,8 +1102,8 @@ def _img_labels_for(subtitle, n):
 
 
 def _place_images_col(slide, imgs, L, top, W, bottom, *, labels=None):
-    """오른쪽 열에 '표 박스(네이비 라벨 헤더 + 셀)'를 세로로 쌓고, 셀 위에 사진을 얹는다.
-       (사진만 붙이는 게 아니라 표처럼 깔끔하게 — 사용자 지시)"""
+    """오른쪽에 '구분 | 내용' 2열 표를 만들고 '내용' 칸에 사진을 얹는다(따로따로 사진 X).
+       구분=라벨(조감도/광역입지), 내용=이미지 — 원본 '표 안 사진' 형식(사용자 지시)."""
     imgs = [im for im in (imgs or []) if im.get("data")]
     if not imgs:
         return 0.0
@@ -1111,36 +1111,47 @@ def _place_images_col(slide, imgs, L, top, W, bottom, *, labels=None):
     if avail_h < 0.7:
         return 0.0
     n = len(imgs)
-    gap = 0.18
-    box_h = (avail_h - gap * (n - 1)) / n
-    hdr_h = 0.28
-    y = top
-    for i, im in enumerate(imgs):
-        lab = (labels[i] if labels and i < len(labels) else "참고 이미지")
-        # 2행 표(헤더 + 본문 셀)
-        gf = slide.shapes.add_table(2, 1, Inches(L), Inches(y), Inches(W), Inches(box_h))
-        tb = gf.table
-        tb.cell(0, 0).text = lab
-        tb.rows[0].height = Inches(hdr_h)
-        tb.rows[1].height = Inches(box_h - hdr_h)
-        style_table(gf, has_header=True, label_cols=(), header_fill=PALETTE["navy_dark"])
-        for p in tb.cell(0, 0).text_frame.paragraphs:
+    hdr_h = 0.30
+    row_h = (avail_h - hdr_h) / n
+    lab_w = 0.95
+    content_w = W - lab_w
+    gf = slide.shapes.add_table(1 + n, 2, Inches(L), Inches(top), Inches(W), Inches(avail_h))
+    tb = gf.table
+    tb.columns[0].width = Inches(lab_w)
+    tb.columns[1].width = Inches(content_w)
+    tb.cell(0, 0).text = "구분"
+    tb.cell(0, 1).text = "내용"
+    for i in range(n):
+        tb.cell(1 + i, 0).text = (labels[i] if labels and i < len(labels) else "참고 이미지")
+    # 헤더=네이비/흰색, 구분열(col0)=밝은 회색
+    style_table(gf, has_header=True, label_cols=(0,),
+                header_fill=PALETTE["navy_dark"], label_fill=PALETTE["label_gray"])
+    tb.rows[0].height = Inches(hdr_h)
+    for i in range(n):
+        tb.rows[1 + i].height = Inches(row_h)
+    for ci in (0, 1):
+        for p in tb.cell(0, ci).text_frame.paragraphs:
+            p.alignment = PP_ALIGN.CENTER
+    for i in range(n):
+        c = tb.cell(1 + i, 0)
+        c.vertical_anchor = MSO_ANCHOR.MIDDLE
+        for p in c.text_frame.paragraphs:
             p.alignment = PP_ALIGN.CENTER
             for r in p.runs:
-                r.font.size = Pt(9.5)
-        # 본문 셀 위에 사진 얹기(셀 안쪽 여백 0.05)
-        cell_w, cell_h = W - 0.10, (box_h - hdr_h) - 0.10
+                r.font.size = Pt(10)
+        # '내용' 칸에 사진 얹기(셀 안쪽 여백 0.06)
+        im = imgs[i]
+        cw, ch = content_w - 0.12, row_h - 0.12
         iw, ih = im.get("width", 1), im.get("height", 1)
-        scale = min(cell_w / iw, cell_h / ih)
+        scale = min(cw / iw, ch / ih) if iw and ih else 1.0
         w_in, h_in = iw * scale, ih * scale
-        px = L + (W - w_in) / 2
-        py = y + hdr_h + 0.05 + (cell_h - h_in) / 2
+        px = L + lab_w + (content_w - w_in) / 2
+        py = top + hdr_h + i * row_h + (row_h - h_in) / 2
         try:
             slide.shapes.add_picture(io.BytesIO(im["data"]), Inches(px), Inches(py),
                                      Inches(w_in), Inches(h_in))
         except Exception:
             pass
-        y += box_h + gap
     return avail_h
 
 
@@ -1276,8 +1287,12 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         else:
             rh = _rowh(fp)
             cap_full = max(1, int((_BODY_BOTTOM - _INTRO_T - label_h) / rh) - (1 if has_h else 0))
+            # ★상단 전폭 지도(top_bare)가 있는 표는 '첫 청크'를 지도 높이만큼 줄여, 지도+첫 묶음만
+            #   1페이지에(예: 토지개요 → 지도 + 터미널 합계까지). 나머지는 다음 페이지로.
+            cap_first = cap_full
+            if top_bare and _IMG_TOP_H > 0:
+                cap_first = max(1, cap_full - int(_IMG_TOP_H / rh) - 1)
             # ★카테고리(소계/합계로 끝나는 묶음)를 페이지 사이에서 쪼개지 않게 — 소계 경계에서 분할.
-            #   분양경비처럼 한 항목이 다음 장으로 넘어가 1줄만 찍히던 문제 방지(최대한 채워 끊음).
             _sub, _grand = _classify_total_rows(([header] if has_h else []) + body, ncol)
             _hoff = 1 if has_h else 0
             boundary_after = {ti - _hoff for ti in (_sub | _grand) if 0 <= ti - _hoff < len(body)}
@@ -1288,7 +1303,8 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                 cur_n += 1
                 if i in boundary_after:
                     last_b = i                      # 여기서 끊으면 안전(소계/합계 뒤)
-                if cur_n >= cap_full and i + 1 < len(body):
+                cap = cap_first if len(starts) == 1 else cap_full   # 첫 청크만 지도분 축소
+                if cur_n >= cap and i + 1 < len(body):
                     cut = last_b if last_b >= starts[-1] else i   # 경계 없으면 어쩔 수 없이 여기서
                     starts.append(cut + 1)
                     cur_n, last_b, i = 0, -1, cut + 1
