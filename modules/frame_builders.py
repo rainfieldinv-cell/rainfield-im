@@ -1186,11 +1186,29 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         else:
             rh = _rowh(fp)
             cap_full = max(1, int((_BODY_BOTTOM - _INTRO_T - label_h) / rh) - (1 if has_h else 0))
-            m = max(1, -(-len(body) // cap_full))        # 필요한 분할 수(ceil)
-            csize = -(-len(body) // m)                   # 균등 분할 크기
-            for k in range(m):
-                start = k * csize
-                chunk = [list(r) for r in body[start:start + csize]]   # 복사(수정 위해)
+            # ★카테고리(소계/합계로 끝나는 묶음)를 페이지 사이에서 쪼개지 않게 — 소계 경계에서 분할.
+            #   분양경비처럼 한 항목이 다음 장으로 넘어가 1줄만 찍히던 문제 방지(최대한 채워 끊음).
+            _sub, _grand = _classify_total_rows(([header] if has_h else []) + body, ncol)
+            _hoff = 1 if has_h else 0
+            boundary_after = {ti - _hoff for ti in (_sub | _grand) if 0 <= ti - _hoff < len(body)}
+            starts = [0]
+            cur_n, last_b = 0, -1
+            i = 0
+            while i < len(body):
+                cur_n += 1
+                if i in boundary_after:
+                    last_b = i                      # 여기서 끊으면 안전(소계/합계 뒤)
+                if cur_n >= cap_full and i + 1 < len(body):
+                    cut = last_b if last_b >= starts[-1] else i   # 경계 없으면 어쩔 수 없이 여기서
+                    starts.append(cut + 1)
+                    cur_n, last_b, i = 0, -1, cut + 1
+                    continue
+                i += 1
+            bounds = [(starts[s], starts[s + 1] if s + 1 < len(starts) else len(body))
+                      for s in range(len(starts))]
+            m = len(bounds)
+            for k, (start, _end) in enumerate(bounds):
+                chunk = [list(r) for r in body[start:_end]]   # 복사(수정 위해)
                 if not chunk:
                     continue
                 # ★다음 장으로 넘어간 세로병합값: 첫 행의 빈 칸을 직전 비어있지 않은 값으로 재표기
