@@ -1066,6 +1066,10 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                 if ci == ncol - 1:
                     _sides.append("R")
                 _set_cell_red_border(t.cell(ri, ci), _sides)
+            # ★윗 행(헤더)과 공유하는 위쪽 선이 회색에 덮이지 않도록, 윗 행 아래테두리도 빨강
+            if ri > 0:
+                for ci in range(ncol):
+                    _set_cell_red_border(t.cell(ri - 1, ci), ["B"])
     return height
 
 

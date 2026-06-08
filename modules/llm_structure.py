@@ -315,6 +315,9 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
     # ── 금융조건 = 하나의 표(여러 페이지로 쪼개진 것을 다시 합침) ──
     _merge_section2_financing(pages, debug=debug)
 
+    # ── 각주 복원: raw_text의 '주N)' 각주를 살리고(글머리 X), '출처:' 아닌 표각주는 표 밑으로 ──
+    _restore_page_notes(pages)
+
     # ── 투자구조도(2.1): 도형으로 직접 그림. 섹션2 맨 앞에 삽입 → 금융조건은 2.2로 밀림 ──
     try:
         from modules.ai_slide_builders import generate_investment_structure
@@ -362,6 +365,62 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
     # ── 짧은 페이지 합치기(한 슬라이드에 들어갈 만한 연속 섹션3/4 페이지) ──
     _pack_short_pages(pages, debug=debug)
     return pages
+
+
+def _restore_page_notes(pages: list) -> None:
+    """각 페이지 각주 정리:
+       ① raw_text의 '주N) …' 각주를 살려, prefix 없이 본문불릿(글머리 •)으로 들어간 것을 복원
+          (예 '향후 사업 일정은…' → '주 1) 향후 사업 일정은…' → 9pt 각주로 렌더).
+       ② '출처:' 형식이 아닌데 source에 들어간 표 각주(예 '금융감독원 전자공시시스템…')는
+          해당 표(_notes)로 옮겨 표 바로 밑 9pt 로 — 출처(좌하단)로 안 가게."""
+    for p in pages:
+        st = p.get("_struct")
+        if not isinstance(st, dict):
+            continue
+        raw = p.get("raw_text", "") or ""
+        raw_notes = []
+        for ln in raw.splitlines():
+            s = ln.strip()
+            if s.startswith("주") and ")" in s[:6]:
+                head = s[:s.index(")")].replace("주", "").strip()
+                after = s[s.index(")") + 1:].strip()
+                if head.isdigit() and len(after) >= 3:
+                    raw_notes.append(s)
+
+        def _match_raw(text):
+            t = str(text).strip()
+            for rn in raw_notes:
+                body = rn[rn.index(")") + 1:].strip()
+                if t and (t[:12] in body or body[:12] in t):
+                    return rn
+            return None
+
+        # ① prefix 없는 각주 불릿 복원
+        if raw_notes and st.get("bullets"):
+            nb = []
+            for b in st["bullets"]:
+                bs = str(b).strip()
+                nb.append(_match_raw(bs) if (not bs.startswith("주") and _match_raw(bs)) else b)
+            st["bullets"] = nb
+
+        # ② 출처가 '출처:' 형식이 아니면(표 각주) → 해당 표 _notes로
+        src = (st.get("source") or "").strip()
+        if src and ("출처" not in src):
+            note_txt = _match_raw(src) or (src if src.startswith("주") else "주1) " + src)
+            tabs = st.get("tables") or []
+            target = None
+            if any(k in src for k in ("재무제표", "감독원", "전자공시", "기준")):
+                for t in tabs:
+                    hd = " ".join(str(h) for h in (t.get("header") or []))
+                    rowtxt = " ".join(str(c) for r in (t.get("rows") or []) for c in r)
+                    if "회계연도" in hd or "회계연도" in rowtxt or "자산총계" in rowtxt:
+                        target = t
+                        break
+            if target is None and tabs:
+                target = tabs[-1]
+            if target is not None:
+                target.setdefault("_notes", []).append(note_txt)
+                st["source"] = ""
 
 
 def _pack_short_pages(pages: list, *, debug: bool = False) -> None:
