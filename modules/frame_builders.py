@@ -531,13 +531,17 @@ def _classify_total_rows(data, ncol):
     """행 인덱스를 (소계행, 합계/총합계행) 두 집합으로 분류.
        ★'라벨 셀'(짧은 칸 ≤12자)에 키워드가 있을 때만 인정 — 긴 값 속 '합계'(예: 연면적
          '지상…/지하…/합계 172,…')는 제외. 소계는 '소계'만, 합계/총계/총합계는 grand-total."""
+    # ★재무상태표 항목(자산총계/부채총계/자본총계)은 합계행 아님 — 원본도 색칠 안 함 → 분류 제외
+    _FIN_EXCLUDE = ("자산총계", "부채총계", "자본총계", "자 산 총 계", "부 채 총 계", "자 본 총 계")
     subtotal, grandtotal = set(), set()
     for i, row in enumerate(data):
         cells = [str((row[c] if c < len(row) else "") or "").strip() for c in range(ncol)]
-        is_sub = any(len(cx) <= 12 and any(k in cx for k in ("소계", "소 계")) for cx in cells)
+        is_sub = any(len(cx) <= 12 and cx not in _FIN_EXCLUDE and any(k in cx for k in ("소계", "소 계"))
+                     for cx in cells)
         #  '총…'(총매출/총비용/총계/총합계 등 짧은 합산 라벨)도 합계행으로 인정
-        is_grand = any(len(cx) <= 12 and (cx.startswith("총")
-                       or any(k in cx for k in ("합계", "총계", "총합계", "합 계", "총 계")))
+        is_grand = any(len(cx) <= 12 and cx not in _FIN_EXCLUDE
+                       and (cx.startswith("총")
+                            or any(k in cx for k in ("합계", "총계", "총합계", "합 계", "총 계")))
                        for cx in cells)
         if is_sub:
             subtotal.add(i)
@@ -697,21 +701,22 @@ def _set_para_default_font(p, font_pt, name):
         pass
 
 
-def _compact_grid(table, font_pt, row_h, kind="grid", has_header=False):
+def _compact_grid(table, font_pt, row_h, kind="grid", has_header=False, header_rows=None):
     """표 글자크기·행높이 통일 + Bold/Light.
        - grid: 줄바꿈 OFF(한 줄)·통일 행높이.
        - label_value: 내용 칸(ci=1)은 줄바꿈 ON + 행높이 가변(row_h가 리스트면 행별 높이).
        ★헤더행·구분열(label_value col0)은 Bold, 나머지 Light — 빈 칸 포함 모든 칸에 적용."""
     heights = row_h if isinstance(row_h, (list, tuple)) else None
+    hdr_n = header_rows if header_rows is not None else (1 if has_header else 0)
     for ri, row in enumerate(table.rows):
         if heights is not None:
             row.height = Inches(heights[ri] if ri < len(heights) else heights[-1])
-        elif has_header and ri == 0:
-            row.height = Cm(0.6)        # ★표 헤더행은 0.6cm, 내용행은 축소(사진 공간 확보)
+        elif hdr_n and ri < hdr_n:
+            row.height = Cm(0.6)        # ★표 헤더행(다단이면 여러 줄)은 0.6cm
         else:
             row.height = Inches(row_h)
         for ci, cell in enumerate(row.cells):
-            is_header_cell = has_header and ri == 0
+            is_header_cell = (ri < hdr_n)   # ★다단 헤더: 첫 hdr_n 행 모두 헤더(Bold)
             is_bold = is_header_cell or (kind == "label_value" and ci == 0)
             name = _FONT_BOLD if is_bold else _FONT_LIGHT
             cell.margin_left = cell.margin_right = Inches(0.04)
@@ -762,10 +767,15 @@ def _set_cell_red(cell):
             run.font.color.rgb = _RED
 
 
-def _set_cell_red_border(cell):
-    """셀 4변 빨간 테두리 1pt (원본 셀 외곽이 빨간 경우 — 시세표 '본건' 행 등)."""
+def _set_cell_red_border(cell, sides=("L", "R", "T", "B")):
+    """셀의 지정한 변만 빨간 테두리 1pt. sides 예: ('T','B') (위·아래만).
+       ★'본건' 행처럼 '행 바깥쪽만' 빨갛게 하려면 셀 위치별로 변을 골라 호출
+         (모든 셀 T/B, 첫 셀 +L, 끝 셀 +R → 내부 세로선은 빨갛지 않음)."""
+    want = {("a:ln" + s) for s in sides}
     tcPr = cell._tc.get_or_add_tcPr()
     for i, tag in enumerate(("a:lnL", "a:lnR", "a:lnT", "a:lnB")):
+        if tag not in want:
+            continue
         for el in tcPr.findall(qn(tag)):
             tcPr.remove(el)
         ln = tcPr.makeelement(qn(tag), {"w": "12700", "cap": "flat", "cmpd": "sng", "algn": "ctr"})
@@ -973,7 +983,7 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                         t.cell(ri, 1).merge(t.cell(ri, 3))   # 주소 등 전폭 값
                     except Exception:
                         pass
-    _compact_grid(t, font_pt, row_h, kind=kind, has_header=bool(header))
+    _compact_grid(t, font_pt, row_h, kind=kind, has_header=bool(header), header_rows=n_hdr)
     if header and hdr_fill_hex:   # 중첩표 헤더 = 밝은색 + 투명도
         _set_header_fill_alpha(t, hdr_fill_hex, hdr_alpha if hdr_alpha is not None else 35)
     hdr_rows = n_hdr
@@ -1027,12 +1037,18 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                 ct = cell.text.strip()
                 if ct and red_counts.get(ct, 0) > 0 and red_counts[ct] >= body_counts[ct]:
                     _set_cell_red(cell)
-    # ★원본에서 셀 외곽이 빨간 강조('본건' 행 등, 시세표) → 빨간 테두리 1pt 재현
+    # ★원본에서 '본건' 행 외곽이 빨간 강조(시세표) → 행 '바깥쪽만' 빨간 테두리 1pt
+    #   (모든 셀 위·아래, 첫 셀 +왼쪽, 끝 셀 +오른쪽 — 내부 세로선은 빨갛지 않음)
     for ri in range(hdr_rows, nrow):
         c0 = str((data[ri][0] if ri < len(data) and data[ri] else "") or "").strip()
         if c0 in ("본건", "본 건"):
             for ci in range(ncol):
-                _set_cell_red_border(t.cell(ri, ci))
+                _sides = ["T", "B"]
+                if ci == 0:
+                    _sides.append("L")
+                if ci == ncol - 1:
+                    _sides.append("R")
+                _set_cell_red_border(t.cell(ri, ci), _sides)
     return height
 
 
@@ -1430,19 +1446,19 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             # 표 없는 부록(현장사진·승인서) → 표 없이 사진만 크게(위쪽부터)
             _place_images_row(slide, big_imgs[:2], _TBL_L, tbl_start,
                               _TBL_W, _BODY_BOTTOM)
-        # ★본문 산문(설명 bullets) = 표 '아래'(원본: 글이 표 끝에). 본문 글상자=10pt 검정
-        #   (표 바로 밑 주N)/출처 9pt보다 크게 — 사용자 지시). Light체.
+        # ★순서(원본): 표 → 주N) 각주(표 바로 밑, 9pt 회색) → 본문 산문(10pt 검정).
+        #   주N)는 표에 딱 붙고, 분석 프로즈는 그 아래(원본: 인근 주요…는 주N) 다음).
+        if idx == n - 1 and notes_text:
+            nh = _est_text_height(notes_text, _TBL_W, 9)
+            _, _nhh = _add_textbox(slide, _TBL_L, t + 0.04, _TBL_W, nh, notes_text,
+                                   size=9, color=PALETTE["gray_text"], red_set=red_set, ul_set=ul_set)
+            t += _nhh + 0.10
         if idx == n - 1 and btext:
             bh = _est_text_height(btext, tw, 10)
             _, _bhh = _add_textbox(slide, _TBL_L, t + 0.06, tw, bh, btext,
                                    size=10, bold=False, color=RGBColor(0x00, 0x00, 0x00),
                                    red_set=red_set, ul_set=ul_set)
             t += _bhh + 0.10
-        # ★주N) 각주 = 표(또는 표아래 산문) '바로 밑'(별도 글상자). 빨간 부분 살림.
-        if idx == n - 1 and notes_text:
-            nh = _est_text_height(notes_text, _TBL_W, 9)
-            _add_textbox(slide, _TBL_L, t + 0.04, _TBL_W, nh, notes_text,
-                         size=9, color=PALETTE["gray_text"], red_set=red_set, ul_set=ul_set)
         _add_combined_footer(slide, business_name)
         # ★출처는 항상 좌측 하단 고정(별도 글상자) — 원본에 있을 때만
         if idx == n - 1 and source:
