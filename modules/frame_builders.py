@@ -619,6 +619,10 @@ def _merge_vertical_runs(table, data, ncol, header_rows=0):
             for rj in range(ri + 1, nrow):
                 if rj in boundary:      # 경계행 만나면 중단
                     break
+                # ★구분(c0)이 새로 시작되는 행 = 새 그룹 → 그 행의 빈 칸은 윗값의 연속이 아님
+                #   (예 Equity '롯데건설'이 '초기사업비' 행으로 잘못 번지던 문제)
+                if ci > 0 and str((data[rj][0] if data[rj] else "") or "").strip():
+                    break
                 v2 = str((data[rj][ci] if ci < len(data[rj]) else "") or "").strip()
                 if v2 == "":
                     end = rj
@@ -1070,6 +1074,18 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
             if ri > 0:
                 for ci in range(ncol):
                     _set_cell_red_border(t.cell(ri - 1, ci), ["B"])
+    # ★원본에서 '에쿼티 금액' 열 전체가 빨간 겉테두리(Equity 투입현황표) → 그 열 바깥만 빨강
+    #   (열의 모든 칸 좌·우, 맨 위 칸 +위, 맨 아래 칸 +아래 — 내부 가로선은 빨갛지 않음)
+    eq_col = next((c for c in range(ncol)
+                   if c < len(header) and "에쿼티" in str(header[c] or "")), None)
+    if eq_col is not None:
+        for ri in range(nrow):
+            _sides = ["L", "R"]
+            if ri == 0:
+                _sides.append("T")
+            if ri == nrow - 1:
+                _sides.append("B")
+            _set_cell_red_border(t.cell(ri, eq_col), _sides)
     return height
 
 
@@ -1444,8 +1460,12 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                     _a, _b = (_tail.split("/") + [""])[:2]
                     if _a.strip().isdigit() and _b.strip().isdigit():
                         _is_last_chunk = int(_a) >= int(_b)
+            # ★Equity 투입현황표(위탁자/에쿼티 헤더)는 원본에 빨간 글씨 없음 →
+            #   같은 슬라이드의 담보토지 빨강(루시드)이 번지지 않도록 red 억제
+            _hdr_blob = " ".join(str(h) for h in (header or []))
+            _rc = None if any(k in _hdr_blob for k in ("위탁자", "에쿼티")) else red_counts
             used = _render_table_chunk(slide, kind, header, rows, ncol, _TBL_L, t, tw, fp, rh,
-                                       red_counts=red_counts, anchor_rows=_anchor_li,
+                                       red_counts=_rc, anchor_rows=_anchor_li,
                                        is_last_chunk=_is_last_chunk, fill_set=fill_set)
             # ★표 안의 표: 앵커 행 내용칸 위에 grid를 얹음
             if anchors and isinstance(rh, (list, tuple)):

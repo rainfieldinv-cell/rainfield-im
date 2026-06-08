@@ -422,6 +422,49 @@ def _restore_page_notes(pages: list) -> None:
                 target.setdefault("_notes", []).append(note_txt)
                 st["source"] = ""
 
+        # ③ 사업수지: 발코니 확장/상가 행 비고가 비면 비율값으로 채움(원본은 비고=비율)
+        for t in (st.get("tables") or []):
+            hdr = [str(h or "") for h in (t.get("header") or [])]
+            if not any("세부" in h for h in hdr) or not any("비고" in h for h in hdr):
+                continue
+            try:
+                bi = next(i for i, h in enumerate(hdr) if "비율" in h)
+                gi = next(i for i, h in enumerate(hdr) if "비고" in h)
+                si_ = next(i for i, h in enumerate(hdr) if "세부" in h)
+            except StopIteration:
+                continue
+            for r in (t.get("rows") or []):
+                if si_ < len(r) and any(k in str(r[si_]) for k in ("발코니", "상가")):
+                    while len(r) <= gi:
+                        r.append("")
+                    if not str(r[gi]).strip() and bi < len(r) and str(r[bi]).strip():
+                        r[gi] = r[bi]
+
+        # ④ Equity 투입현황: 합계 행 에쿼티 칸이 비면 에쿼티 열 합으로 채움(원본은 합계도 표기)
+        for t in (st.get("tables") or []):
+            hdr = [str(h or "") for h in (t.get("header") or [])]
+            ei = next((i for i, h in enumerate(hdr) if "에쿼티" in h), None)
+            if ei is None:
+                continue
+            rows = t.get("rows") or []
+            tot_i = next((i for i, r in enumerate(rows) if r and "합계" in str(r[0])), None)
+            if tot_i is None:
+                continue
+            tr = rows[tot_i]
+            while len(tr) <= ei:
+                tr.append("")
+            if str(tr[ei]).strip():
+                continue
+            ssum, ok = 0, False
+            for j, r in enumerate(rows):
+                if j == tot_i or ei >= len(r):
+                    continue
+                v = str(r[ei]).replace(",", "").strip()
+                if v.isdigit():
+                    ssum += int(v); ok = True
+            if ok:
+                tr[ei] = f"{ssum:,}"
+
 
 def _pack_short_pages(pages: list, *, debug: bool = False) -> None:
     """연속된 섹션3/4 '짧은' 페이지를 한 슬라이드로 합쳐 페이지 수를 줄인다.
