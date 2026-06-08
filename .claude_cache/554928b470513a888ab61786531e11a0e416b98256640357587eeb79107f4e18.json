@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "data": {
+    "section_label": "Appendix 사업계획승인서",
+    "subtitle": "사업계획승인서 첨부 자료",
+    "intro": "본 페이지는 사업계획승인서 원본 문서를 첨부한 Appendix 섹션입니다.",
+    "bullets": [],
+    "tables": [],
+    "source": ""
+  },
+  "raw_text": "```json\n{\n  \"section_label\": \"Appendix 사업계획승인서\",\n  \"subtitle\": \"사업계획승인서 첨부 자료\",\n  \"intro\": \"본 페이지는 사업계획승인서 원본 문서를 첨부한 Appendix 섹션입니다.\",\n  \"bullets\": [],\n  \"tables\": [],\n  \"source\": \"\"\n}\n```",
+  "usage": {
+    "input_tokens": 948,
+    "output_tokens": 114,
+    "estimated_cost_usd": 0.004554
+  },
+  "cached": false,
+  "error": null
+}

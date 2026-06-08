@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "data": {
+    "intro_paragraph": "본 건은 대전 중구 서남부터미널 주상복합 개발사업에 대한 토지담보대출로, 총 400억원(선순위 Tr.A 200억원, 후순위 Tr.B 200억원)으로 구성된 투자구조입니다.",
+    "total_loan_amount": "400억원",
+    "tranches": [
+      {
+        "name": "Tranche A (선순위)",
+        "amount": "200억원 (LTV 20.4%)"
+      },
+      {
+        "name": "Tranche B (후순위)",
+        "amount": "200억원 (LTV 40.8%)"
+      }
+    ],
+    "entities": {
+      "borrower": "차주/시행사 — ㈜루시드",
+      "constructor": "시공사 — 롯데건설㈜",
+      "trustee": "신탁사 — 한국투자부동산신탁㈜",
+      "tr_a_lenders": "Tr.A 대주 — T.B.D.",
+      "spc": "신규 유동화 SPC T.B.D.",
+      "bondholders": "사채권자 T.B.D."
+    },
+    "relationships": [
+      "차주(㈜루시드) - 시공사(롯데건설㈜): 공동사업협약 (비율 5:5, 2021.09.15 체결) 및 책임준공·채무인수 약정",
+      "차주(㈜루시드) - 대주: 토지담보대출 약정 (총 400억원)",
+      "차주(㈜루시드) - 신탁사(한국투자부동산신탁㈜): 관리형토지신탁 계약 체결 → 기표 시점 담보신탁으로 변경 예정",
+      "SPC - 사채권자: 사모사채 발행/인수"
+    ]
+  },
+  "raw_text": "```json\n{\n  \"intro_paragraph\": \"본 건은 대전 중구 서남부터미널 주상복합 개발사업에 대한 토지담보대출로, 총 400억원(선순위 Tr.A 200억원, 후순위 Tr.B 200억원)으로 구성된 투자구조입니다.\",\n  \"total_loan_amount\": \"400억원\",\n  \"tranches\": [\n    {\"name\": \"Tranche A (선순위)\", \"amount\": \"200억원 (LTV 20.4%)\"},\n    {\"name\": \"Tranche B (후순위)\", \"amount\": \"200억원 (LTV 40.8%)\"}\n  ],\n  \"entities\": {\n    \"borrower\": \"차주/시행사 — ㈜루시드\",\n    \"constructor\": \"시공사 — 롯데건설㈜\",\n    \"trustee\": \"신탁사 — 한국투자부동산신탁㈜\",\n    \"tr_a_lenders\": \"Tr.A 대주 — T.B.D.\",\n    \"spc\": \"신규 유동화 SPC T.B.D.\",\n    \"bondholders\": \"사채권자 T.B.D.\"\n  },\n  \"relationships\": [\n    \"차주(㈜루시드) - 시공사(롯데건설㈜): 공동사업협약 (비율 5:5, 2021.09.15 체결) 및 책임준공·채무인수 약정\",\n    \"차주(㈜루시드) - 대주: 토지담보대출 약정 (총 400억원)\",\n    \"차주(㈜루시드) - 신탁사(한국투자부동산신탁㈜): 관리형토지신탁 계약 체결 → 기표 시점 담보신탁으로 변경 예정\",\n    \"SPC - 사채권자: 사모사채 발행/인수\"\n  ]\n}\n```",
+  "usage": {
+    "input_tokens": 1485,
+    "output_tokens": 556,
+    "estimated_cost_usd": 0.012795
+  },
+  "cached": false,
+  "error": null
+}

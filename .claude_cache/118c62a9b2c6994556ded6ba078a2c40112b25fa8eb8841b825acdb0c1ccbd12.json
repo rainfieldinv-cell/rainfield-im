@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "data": {
+    "numbers": [
+      "1,640억원",
+      "1,200억원",
+      "440억원"
+    ]
+  },
+  "raw_text": "```json\n{\"numbers\": [\"1,640억원\", \"1,200억원\", \"440억원\"]}\n```",
+  "usage": {
+    "input_tokens": 131,
+    "output_tokens": 31,
+    "estimated_cost_usd": 0.000858
+  },
+  "cached": false,
+  "error": null
+}

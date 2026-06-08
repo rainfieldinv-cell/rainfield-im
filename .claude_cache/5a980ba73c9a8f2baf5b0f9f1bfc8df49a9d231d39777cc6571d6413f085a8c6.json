@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "data": {
+    "section_num": 4,
+    "subtitle": "사업계획승인서",
+    "intro": "본건 사업에 대한 사업계획승인서 첨부 자료입니다.",
+    "bullets": [],
+    "tables": [],
+    "source": ""
+  },
+  "raw_text": "```json\n{\n  \"section_num\": 4,\n  \"subtitle\": \"사업계획승인서\",\n  \"intro\": \"본건 사업에 대한 사업계획승인서 첨부 자료입니다.\",\n  \"bullets\": [],\n  \"tables\": [],\n  \"source\": \"\"\n}\n```",
+  "usage": {
+    "input_tokens": 1579,
+    "output_tokens": 87,
+    "estimated_cost_usd": 0.006042
+  },
+  "cached": false,
+  "error": null
+}
