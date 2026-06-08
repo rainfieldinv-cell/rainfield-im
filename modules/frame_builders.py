@@ -519,7 +519,9 @@ def _classify_total_rows(data, ncol):
     for i, row in enumerate(data):
         cells = [str((row[c] if c < len(row) else "") or "").strip() for c in range(ncol)]
         is_sub = any(len(cx) <= 12 and any(k in cx for k in ("소계", "소 계")) for cx in cells)
-        is_grand = any(len(cx) <= 12 and any(k in cx for k in ("합계", "총계", "총합계", "합 계", "총 계"))
+        #  '총…'(총매출/총비용/총계/총합계 등 짧은 합산 라벨)도 합계행으로 인정
+        is_grand = any(len(cx) <= 12 and (cx.startswith("총")
+                       or any(k in cx for k in ("합계", "총계", "총합계", "합 계", "총 계")))
                        for cx in cells)
         if is_sub:
             subtotal.add(i)
@@ -818,7 +820,7 @@ def _set_header_fill_alpha(table, hex_color, alpha_pct):
 
 
 def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h, red_counts=None,
-                        hdr_fill_hex=None, hdr_alpha=None, anchor_rows=None):
+                        hdr_fill_hex=None, hdr_alpha=None, anchor_rows=None, is_last_chunk=True):
     """헤더(있으면)+행들을 렌더 → 높이(in).
        row_h: 스칼라(그리드 통일 행높이) 또는 본문행별 높이 리스트(label_value 가변).
        red_set: 원본 빨간 글씨 집합 — 매칭 셀은 빨간 글씨+빨간 테두리.
@@ -888,26 +890,36 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
             r = hdr_rows + li
             if r < nrow:
                 t.cell(r, 1).vertical_anchor = MSO_ANCHOR.TOP
-    # ★구분열(content 표, 헤더[0]='구분') 밝은 회색 — 원본: 구분 칸은 항상 F2F2F2
+    # ★구분열(content 표) 밝은 회색 — 원본: '구분' 칸은 항상 F2F2F2.
+    #   기업개요 4열(구분|내용|구분|내용)이면 양쪽 구분열(col0, col2) 모두 회색(사용자 지적).
     is_content = (kind != "label_value")
-    gubun_col0 = is_content and header and ("구분" in str(header[0] or ""))
-    if gubun_col0:
+    if is_content and header:
+        gubun_cols = [c for c in range(ncol) if c < len(header) and "구분" in str(header[c] or "")]
         for ri in range(hdr_rows, nrow):
-            cl = t.cell(ri, 0)
-            cl.fill.solid()
-            cl.fill.fore_color.rgb = PALETTE["label_gray"]
-    # ★합계행 음영(원본 4색 규칙): 소계=한 톤 어두운 회색(D9D9D9),
-    #   합계/총합계=하늘색 민트(3E95BE 투명65%). 구분열 회색을 덮어쓴다.
-    subtotal_rows, grandtotal_rows = _classify_total_rows(data, ncol)
-    for ri in range(hdr_rows, nrow):
-        if ri in grandtotal_rows:
-            for ci in range(ncol):
-                _set_one_cell_fill_alpha(t.cell(ri, ci), "3E95BE", 35)   # 민트+투명65%
-        elif ri in subtotal_rows:
-            for ci in range(ncol):
-                cl = t.cell(ri, ci)
+            for gc in gubun_cols:
+                cl = t.cell(ri, gc)
                 cl.fill.solid()
-                cl.fill.fore_color.rgb = PALETTE["gray"]                 # D9D9D9 (구분보다 한 톤 어둡게)
+                cl.fill.fore_color.rgb = PALETTE["label_gray"]
+    # ★합계행 음영(원본 규칙, 사용자 재확인):
+    #   - 표 안의 표(중첩 grid, hdr_fill_hex 지정) → 합계 색칠 '무조건 안 함'
+    #   - 그 외 표: 표의 '맨 밑' 합계/총합계(마지막 청크의 최하단 합계행) 1개만 하늘 민트(3E95BE 65%).
+    #     중간에 끼인 소계·합계·총합계는 전부 한 톤 어두운 회색(D9D9D9).
+    is_nested = bool(hdr_fill_hex)
+    if not is_nested:
+        subtotal_rows, grandtotal_rows = _classify_total_rows(data, ncol)
+        total_rows = subtotal_rows | grandtotal_rows
+        bottom_total = max(total_rows) if total_rows else -1
+        for ri in range(hdr_rows, nrow):
+            if ri not in total_rows:
+                continue
+            if ri == bottom_total and is_last_chunk:
+                for ci in range(ncol):
+                    _set_one_cell_fill_alpha(t.cell(ri, ci), "3E95BE", 35)   # 맨 밑 합계 = 민트 65%
+            else:
+                for ci in range(ncol):
+                    cl = t.cell(ri, ci)
+                    cl.fill.solid()
+                    cl.fill.fore_color.rgb = PALETTE["gray"]                 # 중간 소계/합계 = D9D9D9
     # ★원본 빨간 글씨 재현: '모든 동일텍스트 칸이 빨강이었을 때만' 칠함(과다 방지) + 빨간 테두리
     if red_counts:
         body_counts = Counter()
@@ -922,6 +934,12 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                 ct = cell.text.strip()
                 if ct and red_counts.get(ct, 0) > 0 and red_counts[ct] >= body_counts[ct]:
                     _set_cell_red(cell)
+    # ★원본에서 셀 외곽이 빨간 강조('본건' 행 등, 시세표) → 빨간 테두리 1pt 재현
+    for ri in range(hdr_rows, nrow):
+        c0 = str((data[ri][0] if ri < len(data) and data[ri] else "") or "").strip()
+        if c0 in ("본건", "본 건"):
+            for ci in range(ncol):
+                _set_cell_red_border(t.cell(ri, ci))
     return height
 
 
@@ -1240,8 +1258,17 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                 t += _LABEL_H
             tbl_top = t
             _anchor_li = {li for (li, _a) in anchors} if anchors else None
+            # ★분할표(k/m)에서 '맨 밑 합계=민트'는 마지막 청크에만 적용 → is_last_chunk 판단
+            _is_last_chunk = True
+            if lbl and lbl.rstrip().endswith(")") and "(" in lbl:
+                _tail = lbl[lbl.rfind("(") + 1:lbl.rfind(")")]
+                if "/" in _tail:
+                    _a, _b = (_tail.split("/") + [""])[:2]
+                    if _a.strip().isdigit() and _b.strip().isdigit():
+                        _is_last_chunk = int(_a) >= int(_b)
             used = _render_table_chunk(slide, kind, header, rows, ncol, _TBL_L, t, tw, fp, rh,
-                                       red_counts=red_counts, anchor_rows=_anchor_li)
+                                       red_counts=red_counts, anchor_rows=_anchor_li,
+                                       is_last_chunk=_is_last_chunk)
             # ★표 안의 표: 앵커 행 내용칸 위에 grid를 얹음
             if anchors and isinstance(rh, (list, tuple)):
                 lab_w = min(1.7, tw * 0.24)
@@ -1283,11 +1310,13 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                 # 표 없는 부록(현장사진·승인서) → 표 없이 사진만 크게(위쪽부터)
                 _place_images_row(slide, big_imgs[:2], _TBL_L, tbl_start,
                                   _TBL_W, _BODY_BOTTOM)
-        # ★본문 산문(설명 bullets) = 표 '아래'(원본: 글이 표 끝에). Light체. 마지막 플랜에만.
+        # ★본문 산문(설명 bullets) = 표 '아래'(원본: 글이 표 끝에). 본문 글상자=10pt 검정
+        #   (표 바로 밑 주N)/출처 9pt보다 크게 — 사용자 지시). Light체.
         if idx == n - 1 and btext:
-            bh = _est_text_height(btext, tw, 9)
+            bh = _est_text_height(btext, tw, 10)
             _, _bhh = _add_textbox(slide, _TBL_L, t + 0.06, tw, bh, btext,
-                                   size=9, bold=False, red_set=red_set)
+                                   size=10, bold=False, color=RGBColor(0x00, 0x00, 0x00),
+                                   red_set=red_set)
             t += _bhh + 0.10
         # ★주N) 각주 = 표(또는 표아래 산문) '바로 밑'(별도 글상자). 빨간 부분 살림.
         if idx == n - 1 and notes_text:
@@ -1384,9 +1413,9 @@ def _dbox(slide, l, t, w, header, bodies, *, hdr_cm=0.9, body_cm=1.7, header_fil
 
 
 def _dlabel(slide, l, t, w, text):
-    """선 위 설명 글상자(가운데, Bold 10.5pt). ★글상자 10.5pt + 전부 Bold(사용자 지시)."""
+    """선 위 설명 글상자(가운데, Bold 10.5pt). ★글상자 10.5pt + 전부 Bold + 검정(사용자 지시)."""
     _add_textbox(slide, l, t, w, 0.20, text, size=10.5, bold=True, align=PP_ALIGN.CENTER,
-                 color=PALETTE["gray_text"])
+                 color=RGBColor(0x00, 0x00, 0x00))
 
 
 def build_invest_diagram_slide(prs, data: dict, *, section_label, subtitle,

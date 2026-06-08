@@ -564,7 +564,8 @@ def _relayout_exec_summary(slide):
 
     # (제목GROUP, 부제, 바깥육각형, 안쪽육각형, 본문, has_sub)
     secs = [
-        ("그룹 1",  "TextBox 55", "육각형 5",  "육각형 17", "TextBox 42", True),
+        # 섹션1 부제(TextBox 55) 삭제 → ns=None, has_sub=False (간격 압축 = 높이 넘침 방지)
+        ("그룹 1",  None,         "육각형 5",  "육각형 17", "TextBox 42", False),
         ("그룹 2",  None,         "육각형 24", "육각형 25", "TextBox 26", False),
         ("그룹 51", None,         "육각형 48", "육각형 49", "TextBox 50", False),
     ]
@@ -816,8 +817,9 @@ def build_slide_2_executive_summary(prs, data: dict,
     #   현재 PDF 의 Executive Summary 페이지만 보고 만든 값이다(천안 잔재 X).
     _SEC1_BODY = (deal_summary or "").strip()
     _pts = [p for p in key_points[:4] if (p.get("description") or "").strip()]
+    # ★섹션2도 나머지 2개 섹션처럼 화살표(→) 스타일, '·'·':' 사용 금지(사용자 지시)
     _SEC2_BODY = "\n".join(
-        f"· {p.get('title','')} : {p.get('description','')}".strip() for p in _pts
+        f"→ {p.get('title','')} {p.get('description','')}".strip() for p in _pts
     )
     _SEC3_BODY = (kp5.get("description", "") or "").strip()
 
@@ -867,10 +869,10 @@ def build_slide_2_executive_summary(prs, data: dict,
     if s2_body is not None and s2_body.has_text_frame:
         clean_bullet(s2_body.text_frame)
 
-    # ── 사용자 요청: 하늘색 부제 2개만 삭제 (제목 GROUP 3개는 모두 유지) ──
-    #   TextBox 56("핵심 투자 포인트" 부제), TextBox 54("만기" 부제) → 삭제
-    #   유지: 그룹 1/2/51(제목+체크마크), TextBox 55(Bridge Loan 부제), 본문, 육각형
-    _DEL_NAMES = ["TextBox 56", "TextBox 54"]
+    # ── 사용자 요청: 하늘색 부제 '전부' 삭제 (제목 GROUP 3개는 모두 유지) ──
+    #   섹션1 부제(TextBox 55)도 삭제 — "밑에 하늘색 글씨 빼"
+    #   유지: 그룹 1/2/51(제목+체크마크), 본문, 육각형
+    _DEL_NAMES = ["TextBox 55", "TextBox 56", "TextBox 54"]
 
     def _shape_text(sh):
         if sh.has_text_frame:

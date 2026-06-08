@@ -186,6 +186,15 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
         for b in (p["_struct"].get("bullets") or []):
             if str(b).strip() and b not in all_notes:
                 all_notes.append(str(b).strip())
+        # ★LLM이 bullets로 안 뺀 경우 대비 — raw_text 에서 '주N) <내용>' 각주 정의 직접 추출
+        #   (탁상감정가 980억…, 대여금 상환 방법… 등이 누락되던 문제)
+        for ln in (p.get("raw_text", "") or "").splitlines():
+            s = ln.strip()
+            if s.startswith("주") and ")" in s:
+                head = s[:s.index(")")].replace("주", "").strip()
+                after = s[s.index(")") + 1:].strip()
+                if head.isdigit() and len(after) >= 3 and s not in all_notes:
+                    all_notes.append(s)
 
     def _take_note(keys):
         for i, nt in enumerate(all_notes):
