@@ -61,40 +61,37 @@ PALETTE = {
 # ════════════════════════════════════════════════════════
 
 SLIDE_2_SYSTEM_PROMPT = """당신은 부동산 PF 투자제안서 작성 전문가입니다.
-주어진 PDF 원문 전체를 읽고, Executive Summary 슬라이드에 들어갈 핵심 메시지 5개를 추출합니다.
+주어진 PDF 의 'Executive Summary' 페이지 내용(여러 개의 항목/문장)을 읽고, 그 내용을 정확히
+'3개 섹션'으로 요약·재구성합니다.
 
 [엄격한 규칙]
-1. 모든 숫자(금액/비율/날짜/평수/세대수)는 PDF 원문에 있는 값만 사용하라. 절대 새로 만들거나 추정하지 마라.
-2. 출력은 반드시 아래 JSON 스키마를 따라야 한다. 키를 추가하거나 변경하지 마라.
-3. key_points 는 정확히 5개여야 한다.
-4. 각 항목의 title 은 12자 이내, description 은 80자 이내로 간결하게.
-5. 한국어로 작성하되, 투자자가 한눈에 핵심을 파악할 수 있도록 명확하게.
-
-[5개 항목 고정 순서 — title 은 이 순서대로]
-1. "낮은 인허가 리스크"
-2. "시공사 리스크"
-3. "낮은 토지확보 리스크"
-4. "높은 분양성"
-5. "만기"
+1. ★원문에 실제로 있는 내용만 사용하라. 원문에 없는 항목(예: 분양성, 만기일자 등)은 절대
+   만들지 마라. "확인 불가" 같은 문구도 쓰지 마라 — 없으면 그 주제를 아예 다루지 마라.
+2. 원문 항목들을 의미가 비슷한 것끼리 묶어 정확히 3개 섹션으로 나눈다.
+3. 각 섹션은 title(내용에 맞는 8자 이내 제목)과 body(핵심 요약)로 구성.
+   - 'Executive Summary' 라는 단어는 title 에 쓰지 마라.
+   - title 예: "거래 개요", "사업 구조", "인허가·시공", "핵심 포인트" 등 — 내용에 맞게.
+4. body 는 원문을 그대로 복붙하지 말고 요약하라. 한 섹션에 포인트가 여러 개면 '\\n' 로 줄을 나눠라
+   (각 줄이 한 포인트). 숫자/사실은 원문 값 그대로.
+5. 보통 1번 섹션=거래 개요(차주·사업지·금액·구조), 2번=핵심 포인트(인허가/시공/토지 등 리스크),
+   3번=나머지 핵심(사업 구조·책임준공 등). 단 원문 내용에 맞춰 유연하게.
+6. 한국어. 출력은 JSON 만.
 
 [JSON 출력 스키마]
 {
-  "deal_title": "본 건 거래 한 줄 요약 (예: 천안 부성2지구 도시개발사업 토지담보대출 사모사채)",
-  "deal_summary": "본 건 개요 2~3 문장. 차주, 사업지, 금액, 만기 포함.",
-  "key_points": [
-    {"title": "낮은 인허가 리스크", "description": "PDF 원문 근거 포함 80자 이내"},
-    {"title": "시공사 리스크", "description": "PDF 원문 근거 포함 80자 이내"},
-    {"title": "낮은 토지확보 리스크", "description": "PDF 원문 근거 포함 80자 이내"},
-    {"title": "높은 분양성", "description": "PDF 원문 근거 포함 80자 이내"},
-    {"title": "만기", "description": "PDF 원문 근거 포함 80자 이내"}
+  "deal_title": "본 건 거래 한 줄 요약(사업명+토지담보대출 등)",
+  "sections": [
+    {"title": "8자 이내 제목", "body": "요약(여러 포인트면 \\n 로 구분)"},
+    {"title": "8자 이내 제목", "body": "요약"},
+    {"title": "8자 이내 제목", "body": "요약"}
   ]
 }"""
 
-SLIDE_2_USER_TEMPLATE = """[PDF 원문]
+SLIDE_2_USER_TEMPLATE = """[PDF 원문 — Executive Summary 페이지]
 {pdf_text}
 
-위 PDF 를 분석해 Executive Summary JSON 을 출력하라.
-key_points 는 반드시 5개, title 은 지정된 순서와 동일하게."""
+위 Executive Summary 내용을 '3개 섹션'으로 요약해 JSON 으로 출력하라.
+원문에 없는 내용은 만들지 말 것(특히 분양성·만기일자). sections 는 정확히 3개."""
 
 
 def generate_executive_summary(pdf_text: str) -> dict:
@@ -115,7 +112,7 @@ def generate_executive_summary(pdf_text: str) -> dict:
         user_prompt=SLIDE_2_USER_TEMPLATE.format(pdf_text=pdf_text),
         slide_num=2,
         pdf_context=pdf_text,
-        prompt_version="v1",
+        prompt_version="exec_v2_3sections",
     )
 
     if result["ok"]:
@@ -806,22 +803,37 @@ def build_slide_2_executive_summary(prs, data: dict,
     """
     slide = clone_slide_layout(prs, "executive_summary")
 
-    deal_title   = data.get("deal_title", "")
-    deal_summary = data.get("deal_summary", "")
-    key_points   = data.get("key_points", [])
+    deal_title = data.get("deal_title", "")
 
-    kp5 = key_points[4] if len(key_points) > 4 else {}
+    # ── ★원본 Executive Summary 내용을 '3개 섹션(제목+본문)'으로 요약한 결과 사용 ──
+    #   원문에 없는 항목(분양성/만기일자 등) 억지 생성 금지. 구버전(key_points)도 호환 변환.
+    sections = data.get("sections")
+    if not sections:
+        _kp = data.get("key_points", [])
+        _ds = (data.get("deal_summary") or "").strip()
+        sections = [{"title": "거래 개요", "body": _ds}]
+        _pts = [p for p in _kp[:4] if (p.get("description") or "").strip()]
+        if _pts:
+            sections.append({"title": "핵심 투자 포인트",
+                             "body": "\n".join(f"{p.get('title','')} {p.get('description','')}".strip()
+                                               for p in _pts)})
+        if len(_kp) > 4 and (_kp[4].get("description") or "").strip():
+            sections.append({"title": _kp[4].get("title", "만기"),
+                             "body": _kp[4].get("description", "")})
+    sections = list(sections or [])[:3]
+    while len(sections) < 3:
+        sections.append({"title": "", "body": ""})
 
-    # ── 본문/부제 텍스트 (★데이터 기반 — '지금 변환 중인 PDF' 의 Executive Summary 에서 생성) ──
-    #   하드코딩 절대 금지. deal_summary / key_points 는 generate_executive_summary 가
-    #   현재 PDF 의 Executive Summary 페이지만 보고 만든 값이다(천안 잔재 X).
-    _SEC1_BODY = (deal_summary or "").strip()
-    _pts = [p for p in key_points[:4] if (p.get("description") or "").strip()]
-    # ★섹션2도 나머지 2개 섹션처럼 화살표(→) 스타일, '·'·':' 사용 금지(사용자 지시)
-    _SEC2_BODY = "\n".join(
-        f"→ {p.get('title','')} {p.get('description','')}".strip() for p in _pts
-    )
-    _SEC3_BODY = (kp5.get("description", "") or "").strip()
+    def _arrowify(body):
+        lines = [ln.lstrip("·•-→ ").strip() for ln in str(body or "").split("\n") if ln.strip()]
+        return "\n".join(f"→ {ln}" for ln in lines)
+
+    _TITLES = [(sections[0].get("title") or "거래 개요").strip(),
+               (sections[1].get("title") or "핵심 투자 포인트").strip(),
+               (sections[2].get("title") or "사업 구조").strip()]
+    _SEC1_BODY = _arrowify(sections[0].get("body"))
+    _SEC2_BODY = _arrowify(sections[1].get("body"))
+    _SEC3_BODY = _arrowify(sections[2].get("body"))
 
     def _s(l, t, text):
         sh = _find_shape_by_pos(slide, l, t)
@@ -830,17 +842,12 @@ def build_slide_2_executive_summary(prs, data: dict,
         else:
             print(f"[경고] build_slide_2: TEXT_BOX 못 찾음 ({l:.2f}, {t:.2f})")
 
-    # 텍스트 박스 교체 (좌표: 원본 템플릿 cm 기준 — relayout 전)
-    _s(6.80, 3.14,  deal_title)      # TextBox 55 — 섹션1 부제(Bridge Loan 총 1,640억) 유지
-    _s(4.49, 4.07,  _SEC1_BODY)      # TextBox 42 — 섹션1 본문(압축)
-    _s(4.91, 8.22,  _SEC2_BODY)      # TextBox 26 — 섹션2 본문(4줄)
-    _s(4.50, 16.31, _SEC3_BODY)      # TextBox 50 — 섹션3 본문(압축)
-    # 부제 TextBox 56("핵심 투자 포인트")·TextBox 54("만기")는 아래에서 삭제하므로 채우지 않음
+    # 본문 박스 교체 (부제 TextBox 55 는 삭제 대상이라 채우지 않음 — 하늘색 부제 제거)
+    _s(4.49, 4.07,  _SEC1_BODY)      # TextBox 42 — 섹션1 본문
+    _s(4.91, 8.22,  _SEC2_BODY)      # TextBox 26 — 섹션2 본문
+    _s(4.50, 16.31, _SEC3_BODY)      # TextBox 50 — 섹션3 본문
 
-    # GROUP 제목 교체:
-    #   섹션1 "Executive Summary"(고정 라벨) → 내용 기반 제목으로 교체
-    #     (★요청: 항목 제목에 'Executive Summary' 단어 금지. 내용을 보고 제목을 쓴다.)
-    #   섹션2 → "핵심 투자 포인트", 섹션3 → kp5 제목("만기")
+    # GROUP 제목 = 3개 섹션 제목(내용 기반). 'Executive Summary' 단어 금지.
     def _grp_text(grp):
         try:
             return " ".join(c.text_frame.text for c in grp.shapes
@@ -853,21 +860,26 @@ def build_slide_2_executive_summary(prs, data: dict,
             continue
         cur  = _grp_text(shape)
         t_cm = shape.top / 360000
-        if "Executive" in cur:          # 섹션1 제목 (고정 'Executive Summary')
-            _fill_group_label(shape, "거래 개요")
-        elif abs(t_cm - 6.39) < 0.40:     # 그룹 2 (섹션2 제목)
-            _fill_group_label(shape, "핵심 투자 포인트")
-        elif abs(t_cm - 13.95) < 0.40:  # 그룹 51 (섹션3 제목)
-            _fill_group_label(shape, kp5.get("title", "만기"))
+        if "Executive" in cur:            # 섹션1 제목
+            _fill_group_label(shape, _TITLES[0])
+        elif abs(t_cm - 6.39) < 0.40:       # 섹션2 제목
+            _fill_group_label(shape, _TITLES[1])
+        elif abs(t_cm - 13.95) < 0.40:    # 섹션3 제목
+            _fill_group_label(shape, _TITLES[2])
 
     # ── 수정 2: 섹션 간격 압축 + 육각형 컨테이너 폭 통일 ──
     _relayout_exec_summary(slide)
 
-    # ── 섹션2 본문(4줄) 글머리 정리: 자동 글머리 제거 + 레벨/들여쓰기 통일 ──
-    #   (텍스트 앞의 "·" 가 유일한 글머리가 됨)
-    s2_body = next((sh for sh in slide.shapes if sh.name == "TextBox 26"), None)
-    if s2_body is not None and s2_body.has_text_frame:
-        clean_bullet(s2_body.text_frame)
+    # ── 3개 본문 박스 모두 자동 글머리(템플릿 → 등) 제거 + 회색 통일 ──
+    #   (내가 넣은 '→ ' 가 유일한 글머리가 되도록. 3섹션 글씨 = 같은 회색으로 통일)
+    _BODY_GRAY = RGBColor(0x59, 0x59, 0x59)
+    for _nm in ("TextBox 42", "TextBox 26", "TextBox 50"):
+        _b = next((sh for sh in slide.shapes if sh.name == _nm), None)
+        if _b is not None and _b.has_text_frame:
+            clean_bullet(_b.text_frame)
+            for _p in _b.text_frame.paragraphs:
+                for _r in _p.runs:
+                    _r.font.color.rgb = _BODY_GRAY
 
     # ── 사용자 요청: 하늘색 부제 '전부' 삭제 (제목 GROUP 3개는 모두 유지) ──
     #   섹션1 부제(TextBox 55)도 삭제 — "밑에 하늘색 글씨 빼"
