@@ -1109,9 +1109,13 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
     side_box = bool(big_imgs) and has_tbl and labeled_img
     top_bare = bool(big_imgs) and has_tbl and not labeled_img
     _IMG_W, _IMG_GAP_LR = 4.0, 0.25
-    tw = (_TBL_W - _IMG_W - _IMG_GAP_LR) if side_box else _TBL_W
+    _sidebox_tw = _TBL_W - _IMG_W - _IMG_GAP_LR
+    tw = _sidebox_tw if side_box else _TBL_W
     img_col_L = _TBL_L + tw + _IMG_GAP_LR
     _IMG_TOP_H = 2.8 if top_bare else 0.0
+    # ★side_box(조감도/광역입지) 이미지는 '첫 plan'(건축개요 사업명·대지위치 표) 옆에 둔다.
+    #   → 용도별공급계획(다음 plan)은 전폭 유지(좁아져 이상해지던 문제 해결).
+    img_plan_idx = 0
 
     # ── 표를 청크로 분할 + 라벨에 "(k/m)" 부착 (★우측상단 표식 아님, 표 라벨에 이어 적음) ──
     #   각 표마다 빈 슬라이드 1장 용량 기준으로 m등분 → "(k/m)"이 안정적으로 결정됨.
@@ -1226,6 +1230,10 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
     for idx, plan in enumerate(plans):
         slide = clone_slide_layout(prs, "content", skip_graphic_frames=True)
         _fill_header(slide, section_label, subtitle, "")   # 소제목은 목차와 동일
+        # ★plan별 표 폭: side_box 이미지가 들어가는 plan만 좁게, 나머지는 전폭
+        if side_box:
+            tw = _sidebox_tw if idx == img_plan_idx else _TBL_W
+            img_col_L = _TBL_L + tw + _IMG_GAP_LR
         t = _INTRO_T
         if plan["intro"]:
             # ★제목의 내용 글상자 = Bold (사용자 지시), 원본 빨간 글씨 부분만 빨강
@@ -1299,17 +1307,17 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                     except Exception as _e:
                         print(f"[nested grid] 실패: {_e}")
             t += used + _GAP
-        # ★본문 사진 배치(top_bare는 위에서 처리). side_box=표박스 우측 / 부록=표없이 크게
-        if idx == n - 1 and big_imgs and not top_bare:
+        # ★본문 사진 배치(top_bare는 위에서 처리).
+        #   side_box(조감도/광역입지)=첫 plan(건축개요 표) 오른쪽 / 부록=마지막 plan 표없이 크게
+        if side_box and idx == img_plan_idx and big_imgs:
             labels = _img_labels_for(subtitle, min(2, len(big_imgs)))
-            if side_box:
-                # 원본이 '표 안 사진'(조감도·광역위치도) → 라벨 헤더 표박스(각 1:1), 표 오른쪽
-                _place_images_col(slide, big_imgs[:2], img_col_L, tbl_start,
-                                  _IMG_W, _BODY_BOTTOM, labels=labels)
-            elif not has_tbl:
-                # 표 없는 부록(현장사진·승인서) → 표 없이 사진만 크게(위쪽부터)
-                _place_images_row(slide, big_imgs[:2], _TBL_L, tbl_start,
-                                  _TBL_W, _BODY_BOTTOM)
+            # 원본이 '표 안 사진'(조감도·광역위치도) → 라벨 헤더 표박스(각 1:1), 표 오른쪽
+            _place_images_col(slide, big_imgs[:2], img_col_L, tbl_start,
+                              _IMG_W, _BODY_BOTTOM, labels=labels)
+        elif idx == n - 1 and big_imgs and not top_bare and not side_box and not has_tbl:
+            # 표 없는 부록(현장사진·승인서) → 표 없이 사진만 크게(위쪽부터)
+            _place_images_row(slide, big_imgs[:2], _TBL_L, tbl_start,
+                              _TBL_W, _BODY_BOTTOM)
         # ★본문 산문(설명 bullets) = 표 '아래'(원본: 글이 표 끝에). 본문 글상자=10pt 검정
         #   (표 바로 밑 주N)/출처 9pt보다 크게 — 사용자 지시). Light체.
         if idx == n - 1 and btext:
