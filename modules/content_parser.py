@@ -254,6 +254,7 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
         # ── 빨간 글씨 / 밑줄 추출(원본 강조 재현용) ───────────
         pd["_red_texts"] = _extract_red_texts(pdf_page)
         pd["_underline_texts"] = _extract_underline_texts(pdf_page, pd.get("table_bboxes"))
+        pd["_filled_texts"] = _extract_filled_texts(pdf_page)
 
         if debug:
             sec_preview  = pd["section_title"][:30]
@@ -499,6 +500,42 @@ def _extract_underline_texts(pdf_page, table_bboxes=None) -> list:
             outs.append(frag)
             if " " in frag:
                 outs.append(frag.replace(" ", ""))
+    return list(dict.fromkeys(outs))
+
+
+def _extract_filled_texts(pdf_page) -> list:
+    """원본에서 '포인트 색'으로 칠해진 셀의 텍스트 추출(시세표 공급평단가 주황 등).
+       → 렌더 시 그 칸을 하늘색 65%로 재현(원본 색칠 부분 = 하늘 65% 약속).
+       헤더(어두운 색)·회색 음영은 제외, 채도 있는 밝은 하이라이트만."""
+    outs = []
+    try:
+        words = pdf_page.get_text("words")
+        draws = pdf_page.get_drawings()
+    except Exception:
+        return outs
+    for dr in draws:
+        f = dr.get("fill")
+        if f is None:
+            continue
+        try:
+            r, g, b = [round(c * 255) for c in f[:3]]
+        except Exception:
+            continue
+        # 포인트(하이라이트): 회색 아님(채널차>20) + 밝음(평균>140). 헤더(어두움)/회색 제외.
+        if (max(r, g, b) - min(r, g, b)) <= 20 or (r + g + b) / 3 <= 140:
+            continue
+        for it in dr.get("items", []):
+            if it[0] != "re":
+                continue
+            rc = it[1]
+            if rc.width < 8 or rc.height < 4:
+                continue
+            inside = [w[4] for w in words
+                      if w[0] >= rc.x0 - 1 and w[2] <= rc.x1 + 1
+                      and w[1] >= rc.y0 - 1 and w[3] <= rc.y1 + 1]
+            t = " ".join(inside).strip()
+            if len(t) >= 2:
+                outs.append(t)
     return list(dict.fromkeys(outs))
 
 

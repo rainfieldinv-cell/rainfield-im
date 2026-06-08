@@ -291,7 +291,8 @@ def build_page_auto(prs, page: dict, *, title: str, subtitle: str,
             subtitle=page.get("subtitle"),
             images=page.get("images"),
             red_texts=page.get("_red_texts"),
-            underline_texts=page.get("_underline_texts"))
+            underline_texts=page.get("_underline_texts"),
+            fill_texts=page.get("_filled_texts"))
         return True
 
     ptype = classify_page(page)
@@ -895,7 +896,8 @@ def _set_header_fill_alpha(table, hex_color, alpha_pct):
 
 
 def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h, red_counts=None,
-                        hdr_fill_hex=None, hdr_alpha=None, anchor_rows=None, is_last_chunk=True):
+                        hdr_fill_hex=None, hdr_alpha=None, anchor_rows=None, is_last_chunk=True,
+                        fill_set=None):
     """헤더(있으면)+행들을 렌더 → 높이(in).
        row_h: 스칼라(그리드 통일 행높이) 또는 본문행별 높이 리스트(label_value 가변).
        red_set: 원본 빨간 글씨 집합 — 매칭 셀은 빨간 글씨+빨간 테두리.
@@ -1023,6 +1025,13 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                     cl = t.cell(ri, ci)
                     cl.fill.solid()
                     cl.fill.fore_color.rgb = PALETTE["gray"]                 # 중간 소계/합계 = D9D9D9
+    # ★원본 '포인트 색칠' 칸(시세표 공급평단가 주황 등) → 하늘색 65%로 재현(약속한 포인트색)
+    if fill_set:
+        for ri in range(hdr_rows, nrow):
+            for ci in range(ncol):
+                ct = t.cell(ri, ci).text.strip()
+                if ct and ct in fill_set:
+                    _set_one_cell_fill_alpha(t.cell(ri, ci), "3E95BE", 35)
     # ★원본 빨간 글씨 재현: '모든 동일텍스트 칸이 빨강이었을 때만' 칠함(과다 방지) + 빨간 테두리
     if red_counts:
         body_counts = Counter()
@@ -1161,7 +1170,7 @@ _LABEL_H = 0.34   # 표 미니라벨 높이
 
 def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                            section_label: str = None, subtitle: str = None,
-                           images=None, red_texts=None, underline_texts=None):
+                           images=None, red_texts=None, underline_texts=None, fill_texts=None):
     """LLM 구조화 결과 → 1개 이상의 본문 슬라이드. 내용이 길면 헤더 반복하며 "(i/n)"로 분할."""
     section_label = (section_label if section_label is not None
                      else struct.get("section_label") or "").strip()
@@ -1199,6 +1208,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
     red_set = set(red_texts or [])             # 산문(글상자) 부분 빨강용
     red_counts = Counter(red_texts or [])      # 표 셀 빨강용(모든 동일칸 빨강일 때만)
     ul_set = set(underline_texts or [])        # 산문(글상자) 부분 밑줄용
+    fill_set = set(fill_texts or [])           # 원본 포인트 색칠 칸 → 하늘 65%
     # ★주1)2)3) 등 각주는 본문이 아니라 맨 아래로(원본처럼). 그 외 설명만 본문 불릿.
     def _is_note(b):
         s = str(b).lstrip()
@@ -1424,7 +1434,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                         _is_last_chunk = int(_a) >= int(_b)
             used = _render_table_chunk(slide, kind, header, rows, ncol, _TBL_L, t, tw, fp, rh,
                                        red_counts=red_counts, anchor_rows=_anchor_li,
-                                       is_last_chunk=_is_last_chunk)
+                                       is_last_chunk=_is_last_chunk, fill_set=fill_set)
             # ★표 안의 표: 앵커 행 내용칸 위에 grid를 얹음
             if anchors and isinstance(rh, (list, tuple)):
                 lab_w = min(1.7, tw * 0.24)

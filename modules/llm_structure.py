@@ -228,12 +228,14 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
 
     base = fin[0]
     # 빨간 글씨/밑줄 합치기(병합된 페이지들 전부)
-    reds, uls = [], []
+    reds, uls, fills = [], [], []
     for p in fin:
         reds.extend(p.get("_red_texts") or [])
         uls.extend(p.get("_underline_texts") or [])
+        fills.extend(p.get("_filled_texts") or [])
     base["_red_texts"] = list(dict.fromkeys(reds))
     base["_underline_texts"] = list(dict.fromkeys(uls))
+    base["_filled_texts"] = list(dict.fromkeys(fills))
     base["_struct"]["tables"] = merged_tables
     base["_struct"]["_nested_grids"] = nested
     base["_struct"]["subtitle"] = "기초자산 개요"
