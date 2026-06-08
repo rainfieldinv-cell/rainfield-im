@@ -546,6 +546,52 @@ def _classify_total_rows(data, ncol):
     return subtotal, grandtotal
 
 
+def _header_groups(header):
+    """플랫 헤더에서 다단(그룹) 헤더 감지(시세표: 면적(평)/실거래가·분양가).
+       반환 (group_row, sub_row, vmerge_cols, hmerges) 또는 None.
+        - group_row: 상위 헤더행(그룹 시작칸=그룹명, 그룹 내 나머지=빈칸, 비그룹칸=원래 이름)
+        - sub_row  : 하위 헤더행(그룹칸=세부명, 비그룹칸=빈칸)
+        - vmerge_cols: 위·아래 세로병합할 비그룹 칸 인덱스
+        - hmerges  : [(start,end,label)] 상위행에서 가로병합할 그룹 범위"""
+    h = [str(x or "").strip() for x in (header or [])]
+    n = len(h)
+    if n < 4:
+        return None
+
+    def _runs(idxs):
+        runs = []
+        for i in idxs:
+            if runs and i == runs[-1][1] + 1:
+                runs[-1][1] = i
+            else:
+                runs.append([i, i])
+        return [(a, b) for a, b in runs if b > a]   # 2칸 이상만
+
+    grouped = [False] * n
+    row0 = list(h)
+    row1 = [""] * n
+    hmerges = []
+    for (s, e) in _runs([i for i, x in enumerate(h) if "면적(평)" in x or "면적(㎡)" in x]):
+        hmerges.append((s, e, "면적(평)"))
+        for i in range(s, e + 1):
+            grouped[i] = True
+            row1[i] = h[i].replace("(평)", "").replace("(㎡)", "")
+    for (s, e) in _runs([i for i, x in enumerate(h)
+                         if any(k in x for k in ("시점", "거래", "분양가", "평단가"))]):
+        hmerges.append((s, e, "실거래가/분양가"))
+        for i in range(s, e + 1):
+            grouped[i] = True
+            row1[i] = h[i]
+    if not hmerges:
+        return None
+    for (s, e, lab) in hmerges:
+        row0[s] = lab
+        for i in range(s + 1, e + 1):
+            row0[i] = ""
+    vmerge = [i for i in range(n) if not grouped[i]]
+    return row0, row1, vmerge, hmerges
+
+
 def _merge_vertical_runs(table, data, ncol, header_rows=0):
     """열에서 값 있는 칸 아래로 이어지는 빈 칸들을 세로 병합(반복값=첫 칸만, 아래 빈칸 → 병합).
        ★구분열(ci==0)은 소계 행을 넘어 카테고리를 이어 병합(원본: '공동주택'이 소계까지 한 칸).
@@ -844,13 +890,21 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
        row_h: 스칼라(그리드 통일 행높이) 또는 본문행별 높이 리스트(label_value 가변).
        red_set: 원본 빨간 글씨 집합 — 매칭 셀은 빨간 글씨+빨간 테두리.
        hdr_fill_hex/hdr_alpha: 헤더행 특수 색(중첩표용 3E95BE+투명도)."""
-    data = ([header] if header else []) + rows
+    # ★다단(그룹) 헤더(시세표 등): 헤더를 2줄(상위 그룹 + 하위 세부)로 구성
+    hdr_grp = _header_groups(header) if (kind != "label_value" and header) else None
+    if hdr_grp:
+        _g_row0, _g_row1, _g_vmerge, _g_hmerges = hdr_grp
+        header_list = [_g_row0, _g_row1]
+    else:
+        header_list = [header] if header else []
+    n_hdr = len(header_list)
+    data = header_list + rows
     if not data or ncol == 0:
         return 0.0
     nrow = len(data)
     if isinstance(row_h, (list, tuple)):
         hdr_h = _rowh(font_pt)
-        row_heights = ([hdr_h] if header else []) + list(row_h)
+        row_heights = [hdr_h] * n_hdr + list(row_h)
         height = sum(row_heights)
         row_h = row_heights        # 아래 _compact_grid에 행별 높이 전달
     else:
@@ -882,15 +936,35 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                     t.cell(ri, ci).text_frame,
                     str((row[ci] if ci < len(row) else "") or ""))
         style_table(gf, has_header=bool(header), label_cols=(), header_fill=PALETTE["navy_dark"])
+        # ★다단 헤더: 둘째 헤더행(세부)도 네이비+흰색 Bold, 그룹 병합(상위 가로 / 비그룹 세로)
+        if hdr_grp:
+            for ci in range(ncol):
+                cl = t.cell(1, ci)
+                cl.fill.solid(); cl.fill.fore_color.rgb = PALETTE["navy_dark"]
+                for p in cl.text_frame.paragraphs:
+                    p.alignment = PP_ALIGN.CENTER
+                    for r in p.runs:
+                        r.font.name = _FONT_BOLD
+                        r.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            for (s, e, _lab) in _g_hmerges:        # 상위행 그룹 가로병합
+                try:
+                    t.cell(0, s).merge(t.cell(0, e))
+                except Exception:
+                    pass
+            for c in _g_vmerge:                    # 비그룹 칸 세로병합(상·하위 헤더)
+                try:
+                    t.cell(0, c).merge(t.cell(1, c))
+                except Exception:
+                    pass
         # ★기업개요 4열(구분|내용|구분|내용)은 세로병합 금지 — 각 행이 독립(업종명이 주소 행으로
         #   번지는 버그 방지). 대신 우측 쌍이 빈 행(주소 등)은 값(col1)을 우측 끝까지 가로 병합(전폭).
         is_corp4 = (ncol == 4 and len(header) == 4
                     and "구분" in str(header[0]) and "구분" in str(header[2]))
         if not is_corp4:
-            _merge_vertical_runs(t, data, ncol, header_rows=1 if header else 0)  # 반복값 세로병합
+            _merge_vertical_runs(t, data, ncol, header_rows=n_hdr)  # 반복값 세로병합
         _merge_total_rows(t, data, ncol)                                     # 합계행 가로병합
         if is_corp4:
-            for ri in range(1 if header else 0, nrow):
+            for ri in range(n_hdr, nrow):
                 r = data[ri]
                 c2 = str((r[2] if len(r) > 2 else "") or "").strip()
                 c3 = str((r[3] if len(r) > 3 else "") or "").strip()
@@ -902,7 +976,7 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
     _compact_grid(t, font_pt, row_h, kind=kind, has_header=bool(header))
     if header and hdr_fill_hex:   # 중첩표 헤더 = 밝은색 + 투명도
         _set_header_fill_alpha(t, hdr_fill_hex, hdr_alpha if hdr_alpha is not None else 35)
-    hdr_rows = 1 if header else 0
+    hdr_rows = n_hdr
     # ★표 안의 표 앵커 행은 글씨를 위에 두고 그 아래 grid를 얹으므로 위 정렬(나머지는 가운데)
     if anchor_rows:
         for li in anchor_rows:
