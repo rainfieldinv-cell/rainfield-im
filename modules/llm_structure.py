@@ -172,6 +172,29 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
             else:
                 grids.append(t)
 
+    # ★사업명/시행사·차주 행을 표 맨 위에(원본: 구조도 밑부터 기초자산 표 = 사업명부터 시작).
+    #   구조도 페이지(fin에서 제외됨)의 label_value 표에서 값을 가져와 신탁사 앞에 prepend.
+    biz_top, _seen = [], set()
+    for p in pages:
+        for t in ((p.get("_struct") or {}).get("tables") or []):
+            if (t.get("kind") or "") != "label_value":
+                continue
+            for r in (t.get("rows") or []):
+                lab = str(r[0] if r else "").strip()
+                val = str(r[1] if r and len(r) > 1 else "").strip()
+                if not val:
+                    continue
+                if lab == "사업명" and "사업명" not in _seen:
+                    biz_top.append(["사업명", val]); _seen.add("사업명")
+                elif "시행사" in lab and "차주" in lab and "시행사" not in _seen:
+                    biz_top.append([lab, val]); _seen.add("시행사")
+    if biz_top:
+        biz_top.sort(key=lambda r: 0 if r[0] == "사업명" else 1)
+        # 이미 lv_rows에 같은 라벨 있으면 중복 제거
+        _exist = {str(r[0]).strip() for r in lv_rows if r}
+        biz_top = [r for r in biz_top if r[0] not in _exist]
+        lv_rows = biz_top + lv_rows
+
     # ── ★표 안의 표: grid(대출조건·Cash 등)를 「구분|내용」 표의 해당 '행 셀' 안에 중첩 ──
     #   행 라벨(앵커)에 grid를 매달고, 렌더러가 그 행의 내용칸 위에 grid를 얹는다.
     def _find_row(sub):
@@ -224,7 +247,10 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
 
     merged_tables = []
     if lv_rows:
-        merged_tables.append({"title": "", "kind": "label_value", "header": [], "rows": lv_rows})
+        _lvt = {"title": "", "kind": "label_value", "header": [], "rows": lv_rows}
+        if all_notes:    # '본 금융조건은 당사자들간…' 등 남은 각주 → 표 바로 밑 9pt
+            _lvt["_notes"] = list(all_notes)
+        merged_tables.append(_lvt)
 
     base = fin[0]
     # 빨간 글씨/밑줄 합치기(병합된 페이지들 전부)
