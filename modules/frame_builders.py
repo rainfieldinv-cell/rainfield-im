@@ -1141,15 +1141,16 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                     cl = t.cell(ri, ci)
                     cl.fill.solid()
                     cl.fill.fore_color.rgb = PALETTE["gray"]                 # 중간 소계/합계 = D9D9D9
-    # ★구분열은 항상 밝은 회색 F2F2F2(합계 음영보다 우선) — 단 그 칸 자체가 합계 라벨(소계/합계/총…)이면
-    #   합계 음영 유지. 원본: '발코니 확장' 같은 구분값은 소계행이어도 구분이므로 밝은 회색.
+    # ★구분열은 항상 밝은 회색 F2F2F2(합계 음영보다 우선). 단 '합계행'(total로 분류된 행)은 합계 음영 유지.
+    #   행이 합계가 아니면 라벨에 '총'이 들어가도(자산총계·부채총계 등 항목명) 전부 F2F2F2 — 일관되게.
     if gubun_cols:
+        _g_sub, _g_grand = _classify_total_rows(data, ncol)
+        _g_totrows = _g_sub | _g_grand
         for ri in range(hdr_rows, nrow):
+            if ri in _g_totrows:        # 진짜 합계행만 음영 유지
+                continue
             for gc in gubun_cols:
                 cl = t.cell(ri, gc)
-                txt = cl.text.strip()
-                if any(k in txt for k in ("소계", "합계", "총")):
-                    continue
                 cl.fill.solid()
                 cl.fill.fore_color.rgb = PALETTE["label_gray"]
     # ★원본 '포인트 색칠' 칸(시세표 공급평단가 주황 등) → 하늘색 65%로 재현(약속한 포인트색)
