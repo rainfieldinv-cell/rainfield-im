@@ -11,6 +11,8 @@ PDF 한 페이지의 원문 텍스트를 LLM(Claude)이 읽어, 가로 A4 제안
 claude_api.call_claude()를 그대로 재사용(캐시·재시도·비용로깅·숫자환각검증 내장).
 """
 
+import re
+
 from modules.claude_api import call_claude, verify_numbers_in_pdf
 
 PROMPT_VERSION = "structure_v4"
@@ -388,6 +390,17 @@ def _restore_page_notes(pages: list) -> None:
                 if head.isdigit() and len(after) >= 3:
                     raw_notes.append(s)
 
+        # ⓪ 출처(source)가 비었으면 raw_text의 '(출처 : …)' 줄에서 복구
+        #    (LLM이 인근 분양/시세 표의 '출처 : 국토부실거래가…'를 누락하던 문제)
+        if not (st.get("source") or "").strip():
+            for ln in raw.splitlines():
+                s = ln.strip().lstrip("(").strip()
+                if s.startswith("출처"):
+                    s = s[2:].lstrip(" :：·").rstrip(")").strip()
+                    if s:
+                        st["source"] = s
+                    break
+
         def _match_raw(text):
             t = str(text).strip()
             for rn in raw_notes:
@@ -404,24 +417,35 @@ def _restore_page_notes(pages: list) -> None:
                 nb.append(_match_raw(bs) if (not bs.startswith("주") and _match_raw(bs)) else b)
             st["bullets"] = nb
 
-        # ② 출처가 '출처:' 형식이 아니면(표 각주) → 해당 표 _notes로
+        # ② source에 섞여 들어온 주N)·표각주 분리 — 출처(국토부·KB부동산 등)는 source로,
+        #    주N)·재무각주(감독원/전자공시)는 해당 표 _notes(표 밑 9pt)로.
+        #    (LLM이 '출처 / 주1) / 주2) / 주3)'을 source 한 칸에 몰아넣던 문제 해결)
         src = (st.get("source") or "").strip()
-        if src and ("출처" not in src):
-            note_txt = _match_raw(src) or (src if src.startswith("주") else "주1) " + src)
+        if src:
+            pieces = [x.strip() for x in re.split(r"\s*/\s*|\n", src) if x.strip()]
+            note_parts, src_parts = [], []
+            for pc in pieces:
+                is_ju = bool(re.match(r"^주\s*\d+\s*\)", pc))
+                is_fin = any(k in pc for k in ("재무제표", "감독원", "전자공시"))
+                (note_parts if (is_ju or is_fin) else src_parts).append(pc)
             tabs = st.get("tables") or []
-            target = None
-            if any(k in src for k in ("재무제표", "감독원", "전자공시", "기준")):
+            if note_parts and tabs:
+                fin_t = None
                 for t in tabs:
-                    hd = " ".join(str(h) for h in (t.get("header") or []))
-                    rowtxt = " ".join(str(c) for r in (t.get("rows") or []) for c in r)
-                    if "회계연도" in hd or "회계연도" in rowtxt or "자산총계" in rowtxt:
-                        target = t
+                    blob = (" ".join(str(h) for h in (t.get("header") or []))
+                            + " ".join(str(c) for r in (t.get("rows") or []) for c in r))
+                    if any(k in blob for k in ("회계연도", "자산총계", "요약")):
+                        fin_t = t
                         break
-            if target is None and tabs:
-                target = tabs[-1]
-            if target is not None:
-                target.setdefault("_notes", []).append(note_txt)
-                st["source"] = ""
+                for npart in note_parts:
+                    tgt = (fin_t if (fin_t and any(k in npart for k in ("재무", "감독원", "전자공시")))
+                           else tabs[-1])
+                    tgt.setdefault("_notes", [])
+                    if npart not in tgt["_notes"]:
+                        tgt["_notes"].append(npart)
+            elif note_parts:
+                st.setdefault("bullets", []).extend(note_parts)
+            st["source"] = " ".join(src_parts).strip()
 
         # ③ 사업수지: 발코니 확장/상가 행 비고가 비면 비율값으로 채움(원본은 비고=비율)
         for t in (st.get("tables") or []):
