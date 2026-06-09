@@ -465,6 +465,55 @@ def _restore_page_notes(pages: list) -> None:
             if ok:
                 tr[ei] = f"{ssum:,}"
 
+        # ⑤ 사업수지(구분|세부항목|세대수/내역|…) 표 정규화 — 사람 제안서 구조와 맞춤
+        #   · '총 매출/총 비용' 같은 섹션 합계 라벨이 구분(c0)에 있으면 세부항목(c1)으로 옮김
+        #     → 구분(매출/비용)은 그 합계행까지 세로로 한 칸, 합계 라벨은 세부항목+세대수내역만 가로병합
+        #   · '소계'가 세부항목(c1)에 있으면 세대수/내역(c2)으로 옮김(세부항목은 카테고리로 병합 유지)
+        for t in (st.get("tables") or []):
+            hdr = [str(h or "") for h in (t.get("header") or [])]
+            if not (len(hdr) >= 3 and "구분" in hdr[0]
+                    and ("세부" in hdr[1] or "항목" in hdr[1])):
+                continue
+            for r in (t.get("rows") or []):
+                if len(r) < 3:
+                    continue
+                c0 = str(r[0] or "").strip()
+                c1 = str(r[1] or "").strip()
+                c2 = str(r[2] or "").strip()
+                # 섹션 합계(총 매출/총 비용 등)가 구분열에 → 세부항목열로 이동, 구분은 비워 윗 그룹에 병합
+                if c0 and c0.startswith("총") and not c1 and not c2:
+                    r[1] = c0
+                    r[0] = ""
+                # '소계'가 세부항목열에 → 세대수/내역열로(세부항목은 카테고리 병합 유지)
+                elif c1 == "소계":
+                    r[1] = ""
+                    r[2] = ("소계 " + c2).strip() if c2 else "소계"
+
+        # ⑥ 토지개요: 감정평가금액(980억)은 원본상 A구역 블록 값 → 터미널 행에 잘못 있으면 A구역 첫 행으로 이동
+        for t in (st.get("tables") or []):
+            hdr = [str(h or "") for h in (t.get("header") or [])]
+            if not (any("소재지" in h for h in hdr) and any("감정평가" in h for h in hdr)
+                    and any("구역" in h for h in hdr)):
+                continue
+            ai = next(i for i, h in enumerate(hdr) if "감정평가" in h)
+            gi = next(i for i, h in enumerate(hdr) if "구역" in h)
+            rows = t.get("rows") or []
+            a_row = next((r for r in rows if gi < len(r) and "A구역" in str(r[gi])), None)
+            if a_row is None:
+                continue
+            while len(a_row) <= ai:
+                a_row.append("")
+            if str(a_row[ai]).strip():
+                continue
+            for r in rows:
+                if r is a_row or ai >= len(r):
+                    continue
+                v = str(r[ai]).strip()
+                if v and v != "-" and ("억" in v or v.replace(",", "").isdigit()):
+                    a_row[ai] = v
+                    r[ai] = ""
+                    break
+
 
 def _pack_short_pages(pages: list, *, debug: bool = False) -> None:
     """연속된 섹션3/4 '짧은' 페이지를 한 슬라이드로 합쳐 페이지 수를 줄인다.
@@ -539,6 +588,13 @@ def _pack_short_pages(pages: list, *, debug: bool = False) -> None:
                 # ★흡수된 페이지의 intro(LLM 생성 소개문, 원본엔 없음)는 떠다니는 불릿으로
                 #   찍지 않는다(사용자: "적지마" — 표만 깔끔하게). 표 옆 산문(분석)만 유지.
                 bst.setdefault("bullets", []).extend(q_prose)
+            # ★흡수된 페이지의 빨강/밑줄/포인트색 문구도 base로 합침(각주 빨강 재현 — Equity 주2) 등)
+            for _key in ("_red_texts", "_underline_texts", "_filled_texts"):
+                _merged = list(base.get(_key) or [])
+                for q in group[1:]:
+                    _merged.extend(q.get(_key) or [])
+                if _merged:
+                    base[_key] = list(dict.fromkeys(_merged))
             out.append(base)
             if debug:
                 print(f"  [페이지합치기] {[g.get('subtitle') for g in group]} → 1슬라이드")
