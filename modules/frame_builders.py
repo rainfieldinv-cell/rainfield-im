@@ -640,7 +640,29 @@ def _merge_vertical_runs(table, data, ncol, header_rows=0):
     def _cell(ri, ci):
         return str((data[ri][ci] if ri < len(data) and ci < len(data[ri]) else "") or "").strip()
 
-    # 그룹(세로 병합) 열 = 비-합계 행에서 '값 뒤 빈칸' 패턴이 있는 열(연번 같은 일련번호 제외)
+    # ★숫자 측정값 열(전용면적·공급면적·세대수·면적 등)은 세로병합하지 않는다 — 각 행(층/타입)이
+    #   고유 수치이므로 빈칸은 '윗값의 연속'이 아니라 '값 없음'이다(운수시설 전용면적 788.63이
+    #   빈 지하2층으로 잘못 번지던 문제). 단 Equity 투입현황표(헤더에 '에쿼티')는 토지매매대금 46억이
+    #   2개 하위행에 걸쳐야 하므로 예외로 둔다.
+    hdr_blob = " ".join(_cell(r, c) for r in range(header_rows) for c in range(ncol))
+    _allow_num = "에쿼티" in hdr_blob
+
+    def _is_numeric_col(ci):
+        vals = [_cell(ri, ci) for ri in range(header_rows, nrow)
+                if ri not in total_rows and _cell(ri, ci)]
+        if not vals:
+            return False
+        num = sum(1 for v in vals
+                  if v.replace(",", "").replace(".", "").replace("%", "").isdigit())
+        return num >= max(1, int(len(vals) * 0.6))
+
+    def _is_remark_col(ci):     # 비고/비율 등 행마다 독립적인 설명열 → 세로병합 금지
+        return any(k in _cell(r, ci) for r in range(header_rows) for k in ("비고", "비율"))
+    # 숫자 측정열·비고열은 세로병합 대상에서 제외(Equity 표는 예외)
+    no_merge = (set() if _allow_num
+                else {ci for ci in range(ncol) if _is_numeric_col(ci) or _is_remark_col(ci)})
+
+    # 그룹(세로 병합) 열 = 비-합계 행에서 '값 뒤 빈칸' 패턴이 있는 열(연번/숫자 측정열 제외)
     def _is_group_col(ci):
         seen = False
         for ri in range(header_rows, nrow):
@@ -651,7 +673,7 @@ def _merge_vertical_runs(table, data, ncol, header_rows=0):
             elif seen:
                 return True
         return False
-    group_cols = [ci for ci in range(ncol) if _is_group_col(ci)]
+    group_cols = [ci for ci in range(ncol) if _is_group_col(ci) and ci not in no_merge]
     gset = set(group_cols)
 
     # 합계행이 가로 라벨로 점유하는 열 집합 = [최좌측 값 ~ 그 다음 값 직전]
@@ -664,9 +686,15 @@ def _merge_vertical_runs(table, data, ncol, header_rows=0):
         return set(range(lo, hi))
     label_cols = {ri: _label_cols(ri) for ri in total_rows}
 
+    primary = group_cols[0] if group_cols else None    # 표의 최상위(맨 왼쪽) 그룹열
     for ci in range(ncol):
+        if ci in no_merge:          # 숫자·비고열은 세로병합 자체를 하지 않음(각 행 고유값)
+            continue
         is_group = ci in gset
-        left_anchor = max((g for g in group_cols if g < ci), default=None)
+        # 앵커 = 최상위 그룹열. 그 값이 바뀌면 새 그룹 → 하위 열 병합 끊음.
+        #   (감정평가는 '구역' 기준으로 묶여야지, 중간 '소유자' 열이 바뀐다고 끊기면 안 됨.
+        #    Equity '롯데건설'은 '구분' 바뀔 때만 끊김.)
+        left_anchor = primary if (primary is not None and ci != primary) else None
         ri = header_rows
         while ri < nrow:
             # 시작 칸이 합계 라벨에 점유되거나(라벨 행), 비그룹열인데 합계행이면 시작 안 함
@@ -835,9 +863,13 @@ def _set_cell_red_border(cell, sides=("L", "R", "T", "B")):
     """셀의 지정한 변만 빨간 테두리 1pt. sides 예: ('T','B') (위·아래만).
        ★'본건' 행처럼 '행 바깥쪽만' 빨갛게 하려면 셀 위치별로 변을 골라 호출
          (모든 셀 T/B, 첫 셀 +L, 끝 셀 +R → 내부 세로선은 빨갛지 않음)."""
+    # ★OOXML tcPr 자식 순서 규칙: a:lnL, a:lnR, a:lnT, a:lnB … 가 '채우기(solidFill)'보다 앞이어야 함.
+    #   고정 index(insert(i))로 넣으면 셀에 fill이 이미 있을 때 테두리가 fill '뒤'로 들어가 순서가
+    #   깨지고 PowerPoint가 무시함(테두리가 안 그려지던 근본 원인). → 항상 올바른 위치에 삽입.
+    order = ["a:lnL", "a:lnR", "a:lnT", "a:lnB"]
     want = {("a:ln" + s) for s in sides}
     tcPr = cell._tc.get_or_add_tcPr()
-    for i, tag in enumerate(("a:lnL", "a:lnR", "a:lnT", "a:lnB")):
+    for tag in order:
         if tag not in want:
             continue
         for el in tcPr.findall(qn(tag)):
@@ -847,7 +879,9 @@ def _set_cell_red_border(cell, sides=("L", "R", "T", "B")):
         sf.append(sf.makeelement(qn("a:srgbClr"), {"val": "C00000"}))
         ln.append(sf)
         ln.append(ln.makeelement(qn("a:prstDash"), {"val": "solid"}))
-        tcPr.insert(i, ln)
+        # 삽입 위치 = 순서상 자기 앞에 와야 하는 ln 태그 중 이미 존재하는 개수(그 뒤, fill 앞)
+        idx = sum(1 for pre in order[:order.index(tag)] if tcPr.find(qn(pre)) is not None)
+        tcPr.insert(idx, ln)
 
 
 def _grid_font(ncol):
@@ -1182,6 +1216,9 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
             _set_cell_red_border(t.cell(ri, eq_col), _sides)
             if eq_col > 0:                       # 왼쪽 공유선이 회색에 덮이지 않게 옆 칸 우테두리도 빨강
                 _set_cell_red_border(t.cell(ri, eq_col - 1), ["R"])
+        # ★박스 위쪽 모서리 완성: 헤더('에쿼티 금액(원)') 아래선도 빨강(데이터 첫 칸 위와 공유)
+        if hdr_rows > 0:
+            _set_cell_red_border(t.cell(hdr_rows - 1, eq_col), ["B"])
     return height
 
 

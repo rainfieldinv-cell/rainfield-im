@@ -490,7 +490,9 @@ def _restore_page_notes(pages: list) -> None:
                     r[1] = ""
                     r[2] = ("소계 " + c2).strip() if c2 else "소계"
 
-        # ⑥ 토지개요: 감정평가금액(980억)은 원본상 A구역 블록 값 → 터미널 행에 잘못 있으면 A구역 첫 행으로 이동
+        # ⑥ 토지개요: 감정평가금액(980억)은 전체 담보(터미널+A구역) 총 감정가 → 원본은 한 칸으로 두 블록에 걸침.
+        #    표가 터미널/A구역 페이지로 나뉘므로 '각 구역 블록 첫 행'(터미널·A구역, 국공유지·합계 제외)에
+        #    980억을 넣어 두 페이지 모두 그 열이 병합되어 980억이 보이게 한다.
         for t in (st.get("tables") or []):
             hdr = [str(h or "") for h in (t.get("header") or [])]
             if not (any("소재지" in h for h in hdr) and any("감정평가" in h for h in hdr)
@@ -499,20 +501,21 @@ def _restore_page_notes(pages: list) -> None:
             ai = next(i for i, h in enumerate(hdr) if "감정평가" in h)
             gi = next(i for i, h in enumerate(hdr) if "구역" in h)
             rows = t.get("rows") or []
-            a_row = next((r for r in rows if gi < len(r) and "A구역" in str(r[gi])), None)
-            if a_row is None:
+            appraisal = ""
+            for r in rows:                      # 기존 감정가 값 추출 + 파셀 행에서 비움
+                if ai < len(r):
+                    v = str(r[ai]).strip()
+                    if v and v != "-" and ("억" in v or v.replace(",", "").isdigit()):
+                        appraisal = v
+                        r[ai] = ""
+            if not appraisal:
                 continue
-            while len(a_row) <= ai:
-                a_row.append("")
-            if str(a_row[ai]).strip():
-                continue
-            for r in rows:
-                if r is a_row or ai >= len(r):
-                    continue
-                v = str(r[ai]).strip()
-                if v and v != "-" and ("억" in v or v.replace(",", "").isdigit()):
-                    a_row[ai] = v
-                    r[ai] = ""
+            for r in rows:                      # 구역 시작 행(터미널/A구역)에 표기
+                gv = str(r[gi]).strip() if gi < len(r) else ""
+                if gv and not any(k in gv for k in ("국공유지", "합계", "총")):
+                    while len(r) <= ai:
+                        r.append("")
+                    r[ai] = appraisal
                     break
 
 
