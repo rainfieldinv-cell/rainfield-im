@@ -1816,16 +1816,6 @@ def build_invest_diagram_slide(prs, data: dict, *, section_label, subtitle,
     blue = RGBColor(0x00, 0x63, 0xA1)      # 0063A1
     maroon = RGBColor(0x8C, 0x4A, 0x59)    # 8C4A59
 
-    # ── 표 박스 배치 (in) — 크게(보기 편하게). 신탁사·차주 같은 행, 시공사 차주 아래, 대주 우측 ──
-    # 기본값은 범용 'T.B.D.'(대전 회사명 하드코딩 금지 — LLM 데이터 없을 때 대전이 새던 문제)
-    trustee = _dbox(slide, 0.70, 2.75, 2.05, "신탁사", _name("trustee", "T.B.D."),
-                    header_fill=blue)
-    borrower = _dbox(slide, 4.20, 2.75, 2.05, "차주", _name("borrower", "T.B.D."),
-                     header_fill=navy)
-    constructor = _dbox(slide, 4.20, 4.70, 2.05, "시공사", _name("constructor", "T.B.D."),
-                        header_fill=blue)
-
-    # 대주단(트랜치 다행) — 우측. v22 색: 적갈색 헤더 + 회색 본문
     tr_lines = []
     for tr in tranches:
         nm = tr.get("name", "") if isinstance(tr, dict) else str(tr)
@@ -1833,8 +1823,23 @@ def build_invest_diagram_slide(prs, data: dict, *, section_label, subtitle,
         tr_lines.append((nm + (f" {amt}" if amt else "")).strip())
     if not tr_lines:
         tr_lines = ["Tr.A", "Tr.B", "Tr.C"]
-    lenders = _dbox(slide, 7.90, 2.45, 2.20, "본건 PF 대주단", tr_lines,
-                    hdr_cm=0.9, body_cm=0.95, header_fill=maroon)
+
+    # ── 박스 배치는 딜별 원본 레이아웃대로(in). 기본값 'T.B.D.'(대전 회사명 하드코딩 금지) ──
+    is_dj = "터미널" in str(business_name)
+    if is_dj:
+        # 대전: 신탁사·차주 같은 행, 시공사 차주 아래, 대주 우측(승인 레이아웃)
+        trustee = _dbox(slide, 0.70, 2.75, 2.05, "신탁사", _name("trustee", "T.B.D."), header_fill=blue)
+        borrower = _dbox(slide, 4.20, 2.75, 2.05, "차주", _name("borrower", "T.B.D."), header_fill=navy)
+        constructor = _dbox(slide, 4.20, 4.70, 2.05, "시공사", _name("constructor", "T.B.D."), header_fill=blue)
+        lenders = _dbox(slide, 7.90, 2.45, 2.20, "본건 PF 대주단", tr_lines,
+                        hdr_cm=0.9, body_cm=0.95, header_fill=maroon)
+    else:
+        # 천안형(일반): 신탁사 상단중앙 / 시공사 좌 · 차주 중앙 · 대주 우 (한 행)
+        trustee = _dbox(slide, 4.20, 1.85, 2.05, "신탁사", _name("trustee", "T.B.D."), header_fill=blue)
+        constructor = _dbox(slide, 0.70, 3.95, 2.05, "시공사", _name("constructor", "T.B.D."), header_fill=blue)
+        borrower = _dbox(slide, 4.20, 3.95, 2.05, "차주/시행사", _name("borrower", "T.B.D."), header_fill=navy)
+        lenders = _dbox(slide, 7.90, 3.60, 2.20, "본건 PF 대주단", tr_lines,
+                        hdr_cm=0.9, body_cm=0.95, header_fill=maroon)
     # ★원본 구조도는 박스 4개(신탁사·차주·시공사·대주단)만 — SPC/사채권자 없음
 
     def cx(sh, fx=0.5):
@@ -1852,7 +1857,7 @@ def build_invest_diagram_slide(prs, data: dict, *, section_label, subtitle,
     # ── 연결선 라벨 = 딜별(원본대로). 대전(사업명에 '터미널')은 승인된 라벨 고정, 그 외 딜은
     #   LLM relationships에서 추출(예: 천안=공사도급계약/대출약정/담보신탁계약). 대전 라벨이 타 딜에
     #   복붙되던 문제 해결. 시공사→대주 '물상보증'은 대전 전용(천안 등 원본엔 없음 → 생략).
-    if "터미널" in str(business_name):
+    if is_dj:
         lab_tb, lab_bc, lab_bl = "사업부지 담보신탁 계약 체결", "공동사업약정 체결", "대출실행 / 원리금상환"
         lab_tl, lab_cl = "순위별 우선수익권 제공", "터미널 부지 물상보증"
     else:
@@ -1871,25 +1876,38 @@ def build_invest_diagram_slide(prs, data: dict, *, section_label, subtitle,
         lab_tl = _flbl("우선수익", default="담보신탁 우선수익권")
         lab_cl = None      # 시공사→대주(물상보증)는 대전 외 딜엔 없음
 
-    # 신탁사 → 차주
-    conn(cx(trustee, 1.0), cy(trustee), cx(borrower, 0.0), cy(borrower))
-    _dlabel(slide, 2.80, 3.12, 1.55, lab_tb)
-    # 차주 → 시공사
-    conn(cx(borrower), cy(borrower, 1.0), cx(constructor), cy(constructor, 0.0), begin=True)
-    _dlabel(slide, 6.30, 4.10, 1.5, lab_bc)
-    # 차주 ↔ 대주단
-    conn(cx(borrower, 1.0), cy(borrower), cx(lenders, 0.0), cy(lenders, 0.55), begin=True)
-    _dlabel(slide, 6.35, 3.02, 1.55, lab_bl)
-    # 시공사 → 대주단 (물상보증) — 대전 전용
-    if lab_cl:
-        conn(cx(constructor, 1.0), cy(constructor), cx(lenders, 0.0), cy(lenders, 0.9))
-        _dlabel(slide, 6.35, 4.95, 1.55, lab_cl)
-    # 신탁사 → 대주단 (우선수익권, 상단 아치 3구간)
-    ax = 2.30
-    conn(cx(trustee), cy(trustee, 0.0), cx(trustee), ax)            # 위로
-    conn(cx(trustee), ax, cx(lenders), ax)                          # 가로질러
-    conn(cx(lenders), ax, cx(lenders), cy(lenders, 0.0), end=True)  # 대주단으로 내려
-    _dlabel(slide, (cx(trustee) + cx(lenders)) / 2 - 1.0, ax - 0.22, 2.0, lab_tl)
+    if is_dj:
+        # 신탁사 → 차주(수평)
+        conn(cx(trustee, 1.0), cy(trustee), cx(borrower, 0.0), cy(borrower))
+        _dlabel(slide, 2.80, 3.12, 1.55, lab_tb)
+        # 차주 → 시공사(수직)
+        conn(cx(borrower), cy(borrower, 1.0), cx(constructor), cy(constructor, 0.0), begin=True)
+        _dlabel(slide, 6.30, 4.10, 1.5, lab_bc)
+        # 차주 ↔ 대주단(수평)
+        conn(cx(borrower, 1.0), cy(borrower), cx(lenders, 0.0), cy(lenders, 0.55), begin=True)
+        _dlabel(slide, 6.35, 3.02, 1.55, lab_bl)
+        # 시공사 → 대주단(물상보증, 대각)
+        if lab_cl:
+            conn(cx(constructor, 1.0), cy(constructor), cx(lenders, 0.0), cy(lenders, 0.9))
+            _dlabel(slide, 6.35, 4.95, 1.55, lab_cl)
+        # 신탁사 → 대주단(우선수익권, 상단 아치)
+        ax = 2.30
+        conn(cx(trustee), cy(trustee, 0.0), cx(trustee), ax)
+        conn(cx(trustee), ax, cx(lenders), ax)
+        conn(cx(lenders), ax, cx(lenders), cy(lenders, 0.0), end=True)
+        _dlabel(slide, (cx(trustee) + cx(lenders)) / 2 - 1.0, ax - 0.22, 2.0, lab_tl)
+    else:
+        # 천안형: 신탁사↓차주(수직) · 시공사↔차주(수평) · 차주↔대주(수평) · 신탁사→대주(상단 아치)
+        conn(cx(trustee), cy(trustee, 1.0), cx(borrower), cy(borrower, 0.0), begin=True, end=True)
+        _dlabel(slide, cx(trustee) + 0.12, (cy(trustee, 1.0) + cy(borrower, 0.0)) / 2 - 0.16, 1.5, lab_tb)
+        conn(cx(constructor, 1.0), cy(constructor), cx(borrower, 0.0), cy(borrower), begin=True, end=True)
+        _dlabel(slide, (cx(constructor, 1.0) + cx(borrower, 0.0)) / 2 - 0.75, cy(borrower) - 0.52, 1.5, lab_bc)
+        conn(cx(borrower, 1.0), cy(borrower), cx(lenders, 0.0), cy(lenders, 0.5), begin=True, end=True)
+        _dlabel(slide, (cx(borrower, 1.0) + cx(lenders, 0.0)) / 2 - 0.75, cy(borrower) - 0.52, 1.5, lab_bl)
+        ax = cy(trustee, 0.5)
+        conn(cx(trustee, 1.0), ax, cx(lenders, 0.5), ax)
+        conn(cx(lenders, 0.5), ax, cx(lenders, 0.5), cy(lenders, 0.0), end=True)
+        _dlabel(slide, (cx(trustee, 1.0) + cx(lenders, 0.5)) / 2 - 1.0, ax - 0.30, 2.2, lab_tl)
 
     _add_combined_footer(slide, business_name)
     return None
