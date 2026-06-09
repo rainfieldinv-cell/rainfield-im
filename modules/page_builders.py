@@ -688,13 +688,23 @@ def build_cover_slide(prs, business_name: str, year: str, month_en: str,
         align="left",
     )
 
-    # ── 7. [Disclaimer].png (고정 이미지 — 하단) ─────────────────
+    # ── 7. [Disclaimer] (글상자 — 하단) ─────────────────────────
     # 좌표: (1.71, 15.04)cm / 크기: 12.95 × 3.30cm
-    # 면책 문구 내용을 바꾸려면 templates/[Disclaimer].png 파일을 교체하세요
-    add_image(
-        slide, IMG_DISCLAIMER,
-        left_cm=1.71, top_cm=15.04,
-        width_cm=12.95, height_cm=3.30,
+    # ★저화질 이미지 대신 글상자로 렌더(모든 제안서 공통·고정). 내용은 DISCLAIMER_TEXT 상수에서 수정.
+    #   헤더 '[Disclaimer]'(작은 볼드) + 본문(7.5pt 회색, 양쪽정렬)
+    _disc = DISCLAIMER_TEXT.split("\n", 1)
+    _disc_head = _disc[0].strip()
+    _disc_body = _disc[1].strip() if len(_disc) > 1 else ""
+    add_text_box(
+        slide, text=_disc_head,
+        left_cm=1.71, top_cm=15.04, width_cm=12.95, height_cm=0.42,
+        font_name=FONT_BOLD, font_size_pt=9.0, font_color=COLOR_DARK, align="left",
+    )
+    add_text_box(
+        slide, text=_disc_body,
+        left_cm=1.71, top_cm=15.50, width_cm=12.95, height_cm=2.84,
+        font_size_pt=7.5, font_color=RGBColor(0x59, 0x59, 0x59),
+        align="justify", line_spacing_pt=10.0,
     )
 
     return slide
