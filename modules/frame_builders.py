@@ -1849,27 +1849,47 @@ def build_invest_diagram_slide(prs, data: dict, *, section_label, subtitle,
         _set_line_arrow(c, **kw)
         return c
 
-    # ── 연결선 + 라벨 (원본 라벨 그대로) ──
-    # 신탁사 → 차주 (사업부지 담보신탁 계약 체결, 수평)
+    # ── 연결선 라벨 = 딜별(원본대로). 대전(사업명에 '터미널')은 승인된 라벨 고정, 그 외 딜은
+    #   LLM relationships에서 추출(예: 천안=공사도급계약/대출약정/담보신탁계약). 대전 라벨이 타 딜에
+    #   복붙되던 문제 해결. 시공사→대주 '물상보증'은 대전 전용(천안 등 원본엔 없음 → 생략).
+    if "터미널" in str(business_name):
+        lab_tb, lab_bc, lab_bl = "사업부지 담보신탁 계약 체결", "공동사업약정 체결", "대출실행 / 원리금상환"
+        lab_tl, lab_cl = "순위별 우선수익권 제공", "터미널 부지 물상보증"
+    else:
+        _rels = data.get("relationships") or []
+
+        def _flbl(*kws, default=""):
+            for r in _rels:
+                s = str(r)
+                lab = (s.split(":", 1)[1].strip().split("(")[0].strip()) if ":" in s else ""
+                if lab and any(k in lab for k in kws):
+                    return lab
+            return default
+        lab_tb = _flbl("담보신탁", "신탁계약", default="담보신탁계약")
+        lab_bc = _flbl("공사도급", "도급", "공동사업", default="공사도급계약")
+        lab_bl = _flbl("대출약정", "대출", default="대출약정")
+        lab_tl = _flbl("우선수익", default="담보신탁 우선수익권")
+        lab_cl = None      # 시공사→대주(물상보증)는 대전 외 딜엔 없음
+
+    # 신탁사 → 차주
     conn(cx(trustee, 1.0), cy(trustee), cx(borrower, 0.0), cy(borrower))
-    _dlabel(slide, 2.80, 3.12, 1.55, "사업부지 담보신탁 계약 체결")
-    # 차주 → 시공사 (공동사업약정 체결, 수직)
+    _dlabel(slide, 2.80, 3.12, 1.55, lab_tb)
+    # 차주 → 시공사
     conn(cx(borrower), cy(borrower, 1.0), cx(constructor), cy(constructor, 0.0), begin=True)
-    _dlabel(slide, 6.30, 4.10, 1.5, "공동사업약정 체결")
-    # 차주 ↔ 대주단 (대출실행/원리금상환, 수평)
+    _dlabel(slide, 6.30, 4.10, 1.5, lab_bc)
+    # 차주 ↔ 대주단
     conn(cx(borrower, 1.0), cy(borrower), cx(lenders, 0.0), cy(lenders, 0.55), begin=True)
-    _dlabel(slide, 6.35, 3.02, 1.55, "대출실행 / 원리금상환")
-    # 시공사 → 대주단 (부지 물상보증, 대각) — 사업명에 '터미널' 있을 때만 '터미널 부지'(대전 전용),
-    #   그 외 딜은 '사업부지 물상보증'(천안 등 — 대전 라벨이 그대로 박히던 누수 방지)
-    _guar = "터미널 부지 물상보증" if "터미널" in str(business_name) else "사업부지 물상보증"
-    conn(cx(constructor, 1.0), cy(constructor), cx(lenders, 0.0), cy(lenders, 0.9))
-    _dlabel(slide, 6.35, 4.95, 1.55, _guar)
-    # 신탁사 → 대주단 (순위별 우선수익권 제공, 상단 아치 3구간)
+    _dlabel(slide, 6.35, 3.02, 1.55, lab_bl)
+    # 시공사 → 대주단 (물상보증) — 대전 전용
+    if lab_cl:
+        conn(cx(constructor, 1.0), cy(constructor), cx(lenders, 0.0), cy(lenders, 0.9))
+        _dlabel(slide, 6.35, 4.95, 1.55, lab_cl)
+    # 신탁사 → 대주단 (우선수익권, 상단 아치 3구간)
     ax = 2.30
     conn(cx(trustee), cy(trustee, 0.0), cx(trustee), ax)            # 위로
     conn(cx(trustee), ax, cx(lenders), ax)                          # 가로질러
     conn(cx(lenders), ax, cx(lenders), cy(lenders, 0.0), end=True)  # 대주단으로 내려
-    _dlabel(slide, (cx(trustee) + cx(lenders)) / 2 - 1.0, ax - 0.22, 2.0, "순위별 우선수익권 제공")
+    _dlabel(slide, (cx(trustee) + cx(lenders)) / 2 - 1.0, ax - 0.22, 2.0, lab_tl)
 
     _add_combined_footer(slide, business_name)
     return None
