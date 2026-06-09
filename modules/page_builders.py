@@ -700,6 +700,7 @@ def build_cover_slide(prs, business_name: str, year: str, month_en: str,
     _tf = _tb.text_frame
     _tf.word_wrap = True
     _p0 = _tf.paragraphs[0]
+    _p0.line_spacing = 1.5
     _r0 = _p0.add_run()
     _r0.text = _disc_head
     _r0.font.name = FONT_BOLD
@@ -708,6 +709,7 @@ def build_cover_slide(prs, business_name: str, year: str, month_en: str,
     _r0.font.color.rgb = COLOR_DARK
     _p1 = _tf.add_paragraph()
     _p1.alignment = _PP_ALIGN.JUSTIFY
+    _p1.line_spacing = 1.5
     _r1 = _p1.add_run()
     _r1.text = _disc_body
     _r1.font.name = FONT_LIGHT
