@@ -247,7 +247,8 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
 
     merged_tables = []
     if lv_rows:
-        _lvt = {"title": "", "kind": "label_value", "header": [], "rows": lv_rows}
+        # ★다른 본문 표처럼 미니 라벨('주요 금융조건')을 붙임 → 분할되면 (i/n)도 자동 표시
+        _lvt = {"title": "주요 금융조건", "kind": "label_value", "header": [], "rows": lv_rows}
         if all_notes:    # '본 금융조건은 당사자들간…' 등 남은 각주 → 표 바로 밑 9pt
             _lvt["_notes"] = list(all_notes)
         merged_tables.append(_lvt)
