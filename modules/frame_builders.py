@@ -1817,11 +1817,12 @@ def build_invest_diagram_slide(prs, data: dict, *, section_label, subtitle,
     maroon = RGBColor(0x8C, 0x4A, 0x59)    # 8C4A59
 
     # ── 표 박스 배치 (in) — 크게(보기 편하게). 신탁사·차주 같은 행, 시공사 차주 아래, 대주 우측 ──
-    trustee = _dbox(slide, 0.70, 2.75, 2.05, "신탁사", _name("trustee", "한국투자부동산신탁㈜"),
+    # 기본값은 범용 'T.B.D.'(대전 회사명 하드코딩 금지 — LLM 데이터 없을 때 대전이 새던 문제)
+    trustee = _dbox(slide, 0.70, 2.75, 2.05, "신탁사", _name("trustee", "T.B.D."),
                     header_fill=blue)
-    borrower = _dbox(slide, 4.20, 2.75, 2.05, "차주", _name("borrower", "㈜루시드"),
+    borrower = _dbox(slide, 4.20, 2.75, 2.05, "차주", _name("borrower", "T.B.D."),
                      header_fill=navy)
-    constructor = _dbox(slide, 4.20, 4.70, 2.05, "시공사", _name("constructor", "롯데건설㈜"),
+    constructor = _dbox(slide, 4.20, 4.70, 2.05, "시공사", _name("constructor", "T.B.D."),
                         header_fill=blue)
 
     # 대주단(트랜치 다행) — 우측. v22 색: 적갈색 헤더 + 회색 본문
