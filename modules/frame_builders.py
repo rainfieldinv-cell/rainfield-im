@@ -1093,9 +1093,16 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                 if ri in _tot:
                     continue
                 r = data[ri]
+                c0 = str((r[0] if len(r) > 0 else "") or "").strip()
                 c1 = str((r[1] if len(r) > 1 else "") or "").strip()
                 c2 = str((r[2] if len(r) > 2 else "") or "").strip()
-                if c1 and not c2:
+                if c0 and not c1 and not c2:
+                    # 본건 시행이익(A-B)·Equity 반영 시 = 라벨이 구분+세부항목+세대수내역에 걸침
+                    try:
+                        t.cell(ri, 0).merge(t.cell(ri, 2))
+                    except Exception:
+                        pass
+                elif c1 and not c2:        # 발코니 확장·상가 = 세부항목+세대수내역 가로병합
                     try:
                         t.cell(ri, 1).merge(t.cell(ri, 2))
                     except Exception:
