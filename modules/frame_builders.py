@@ -969,27 +969,29 @@ def _parse_tdef(tdef):
     return "grid", header, body, ncol
 
 
-def _set_header_fill_alpha(table, hex_color, alpha_pct):
-    """헤더행(row0) 셀 채움을 hex_color + 투명도(alpha_pct% 불투명)로. 글자=검정(밝은 배경)."""
-    M = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-    for cell in table.rows[0].cells:
-        tcPr = cell._tc.get_or_add_tcPr()
-        for tag in ("a:solidFill", "a:noFill", "a:gradFill", "a:pattFill"):
-            for el in tcPr.findall(qn(tag)):
-                tcPr.remove(el)
-        sf = tcPr.makeelement(qn("a:solidFill"), {})
-        clr = sf.makeelement(qn("a:srgbClr"), {"val": hex_color})
-        clr.append(clr.makeelement(qn("a:alpha"), {"val": str(int(alpha_pct * 1000))}))
-        sf.append(clr)
-        # 테두리(lnL/R/T/B) 뒤, fill은 그 다음에 와야 하므로 적절히 삽입
-        ins = 0
-        for i, ch in enumerate(tcPr):
-            if ch.tag.endswith(("lnL", "lnR", "lnT", "lnB")):
-                ins = i + 1
-        tcPr.insert(ins, sf)
-        for p in cell.text_frame.paragraphs:
-            for r in p.runs:
-                r.font.color.rgb = RGBColor(0, 0, 0)
+def _set_header_fill_alpha(table, hex_color, alpha_pct, header_rows=1):
+    """헤더행(0..header_rows-1) 셀 채움을 hex_color + 투명도(alpha_pct% 불투명)로. 글자=검정.
+       ★중첩표(표 안의 표)의 헤더는 다단(2줄)이어도 모두 같은 하늘 65% — 둘째 행(항목/금액)이
+         남색으로 남던 문제 해결(사용자: 표안의표 헤더는 항상 하늘 65%)."""
+    for ri in range(min(header_rows, len(table.rows))):
+        for cell in table.rows[ri].cells:
+            tcPr = cell._tc.get_or_add_tcPr()
+            for tag in ("a:solidFill", "a:noFill", "a:gradFill", "a:pattFill"):
+                for el in tcPr.findall(qn(tag)):
+                    tcPr.remove(el)
+            sf = tcPr.makeelement(qn("a:solidFill"), {})
+            clr = sf.makeelement(qn("a:srgbClr"), {"val": hex_color})
+            clr.append(clr.makeelement(qn("a:alpha"), {"val": str(int(alpha_pct * 1000))}))
+            sf.append(clr)
+            # 테두리(lnL/R/T/B) 뒤, fill은 그 다음에 와야 하므로 적절히 삽입
+            ins = 0
+            for i, ch in enumerate(tcPr):
+                if ch.tag.endswith(("lnL", "lnR", "lnT", "lnB")):
+                    ins = i + 1
+            tcPr.insert(ins, sf)
+            for p in cell.text_frame.paragraphs:
+                for r in p.runs:
+                    r.font.color.rgb = RGBColor(0, 0, 0)
 
 
 def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h, red_counts=None,
@@ -1108,8 +1110,9 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                     except Exception:
                         pass
     _compact_grid(t, font_pt, row_h, kind=kind, has_header=bool(header), header_rows=n_hdr)
-    if header and hdr_fill_hex:   # 중첩표 헤더 = 밝은색 + 투명도
-        _set_header_fill_alpha(t, hdr_fill_hex, hdr_alpha if hdr_alpha is not None else 35)
+    if header and hdr_fill_hex:   # 중첩표 헤더 = 밝은색 + 투명도(다단이면 모든 헤더행)
+        _set_header_fill_alpha(t, hdr_fill_hex, hdr_alpha if hdr_alpha is not None else 35,
+                               header_rows=n_hdr)
     hdr_rows = n_hdr
     # ★표 안의 표 앵커 행은 글씨를 위에 두고 그 아래 grid를 얹으므로 위 정렬(나머지는 가운데)
     if anchor_rows:

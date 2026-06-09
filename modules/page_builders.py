@@ -25,10 +25,11 @@ from pptx import Presentation as _LayoutPrs
 from pptx.dml.color import RGBColor
 from pptx.oxml.ns import qn as _qn
 from pptx.util import Cm as _Cm, Pt as _Pt
+from pptx.enum.text import PP_ALIGN as _PP_ALIGN
 from PIL import Image
 
 from modules.constants import (
-    FONT_BOLD,
+    FONT_BOLD, FONT_LIGHT,
     COLOR_DARK, COLOR_GRAY, COLOR_BG_LIGHT,
     COVER_IM_LABEL_COLOR, COVER_DATE_COLOR,
     OUTPUT_DIR, OUTPUT_FILENAME_FORMAT, TEMPLATES_DIR,
@@ -688,24 +689,32 @@ def build_cover_slide(prs, business_name: str, year: str, month_en: str,
         align="left",
     )
 
-    # ── 7. [Disclaimer] (글상자 — 하단) ─────────────────────────
-    # 좌표: (1.71, 15.04)cm / 크기: 12.95 × 3.30cm
-    # ★저화질 이미지 대신 글상자로 렌더(모든 제안서 공통·고정). 내용은 DISCLAIMER_TEXT 상수에서 수정.
-    #   헤더 '[Disclaimer]'(작은 볼드) + 본문(7.5pt 회색, 양쪽정렬)
+    # ── 7. [Disclaimer] (글상자 1개 — 하단) ─────────────────────
+    # ★저화질 이미지 대신 '하나의' 글상자로 렌더(모든 제안서 공통·고정). 내용=DISCLAIMER_TEXT 상수.
+    #   헤더 '[Disclaimer]'(볼드 진회색) + 본문(회색 양쪽정렬), 글씨 크기는 항상 7pt 고정.
+    #   글상자 테두리 = 밝은 파랑(테마 강조5 밝은 계열).
     _disc = DISCLAIMER_TEXT.split("\n", 1)
     _disc_head = _disc[0].strip()
     _disc_body = _disc[1].strip() if len(_disc) > 1 else ""
-    add_text_box(
-        slide, text=_disc_head,
-        left_cm=1.71, top_cm=15.04, width_cm=12.95, height_cm=0.42,
-        font_name=FONT_BOLD, font_size_pt=9.0, font_color=COLOR_DARK, align="left",
-    )
-    add_text_box(
-        slide, text=_disc_body,
-        left_cm=1.71, top_cm=15.50, width_cm=12.95, height_cm=2.84,
-        font_size_pt=7.5, font_color=RGBColor(0x59, 0x59, 0x59),
-        align="justify", line_spacing_pt=10.0,
-    )
+    _tb = slide.shapes.add_textbox(_Cm(1.71), _Cm(15.04), _Cm(12.95), _Cm(3.30))
+    _tf = _tb.text_frame
+    _tf.word_wrap = True
+    _p0 = _tf.paragraphs[0]
+    _r0 = _p0.add_run()
+    _r0.text = _disc_head
+    _r0.font.name = FONT_BOLD
+    _r0.font.bold = True
+    _r0.font.size = _Pt(7)
+    _r0.font.color.rgb = COLOR_DARK
+    _p1 = _tf.add_paragraph()
+    _p1.alignment = _PP_ALIGN.JUSTIFY
+    _r1 = _p1.add_run()
+    _r1.text = _disc_body
+    _r1.font.name = FONT_LIGHT
+    _r1.font.size = _Pt(7)
+    _r1.font.color.rgb = RGBColor(0x59, 0x59, 0x59)
+    _tb.line.color.rgb = RGBColor(0xBD, 0xD7, 0xEE)   # 밝은 파랑 테두리
+    _tb.line.width = _Pt(0.75)
 
     return slide
 
