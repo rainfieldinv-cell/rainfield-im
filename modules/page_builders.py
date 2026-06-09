@@ -1391,6 +1391,8 @@ def _build_toc_map(pages: list) -> dict:
     toc: dict = {}
     seen: dict = {}
     for page in pages:
+        if page.get("_no_toc"):          # 연락처/면책 등 고정 페이지 → 목차 제외
+            continue
         section_title = page.get("section_title", "").strip()
         subtitle      = page.get("subtitle", "").strip()
         m = _SEC_NUM_EXTRACT.match(section_title)

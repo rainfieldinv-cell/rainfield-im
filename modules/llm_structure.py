@@ -283,6 +283,85 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
               f"(label_value {len(lv_rows)}행 + grid {len(grids)}개)")
 
 
+_TOC_PLAN_SYS = """당신은 부동산 IM 제안서의 '목차'를 깔끔하게 압축·정리하는 편집자입니다.
+섹션3(본건 사업 개요)·섹션4(Appendix/차주개요)의 '원본 소제목 목록'(순서대로)을 받아,
+아래 규칙대로 큰 틀로 묶고 이름을 센스 있게 정리해 JSON으로만 출력하세요.
+
+[규칙]
+1. 원본 순서 유지(섞지 말 것). 단 Appendix의 '주주구성/주주역할'은 '기업개요/재무제표'와 함께 묶어도 됨.
+2. 서로 관련된 '연속' 소제목들을 하나의 큰 항목(group)으로 묶어 목차 항목 수를 줄인다.
+   예: '분양개요'+'사업수지표'→'분양 개요 및 사업수지' / '토지확보현황'+'토지수용재결 절차 진행일정'→'토지 확보현황 및 진행 일정'
+       '토지이용계획'+'사업지 전경'→'토지 이용계획 및 사업지 전경'.
+   '비교대상 분양사례 현황'은 직전 '주변 청약단지 시세비교' group 에, '비교대상 매매사례 현황'은 '인근 시세비교' group 에 함께 넣는다.
+3. toc_title 은 'A 및 B' 식으로 간결하게. 긴 제목/괄호 부가설명은 toc_title 에서 빼 짧게.
+   원본에 괄호 설명이 있으면 그 페이지의 label 엔 괄호 포함, toc_title 엔 제외.
+   예: '천안시 불당신도시 인근 시세비교'→ toc_title '인근 시세비교', 그 페이지 label '인근 시세비교 (천안시 불당 신도시)'.
+4. '면책고지/담당자/연락처' 류 소제목은 fixed 로(목차·번호 제외, 맨 끝 고정 페이지).
+5. 묶음 안 원본 소제목들은 각각 별도 페이지로 남고 label(미니 제목)을 가진다. label 은 보통 원본 소제목을 간결히.
+
+[출력 JSON]
+{
+ "groups": [
+   {"sec": 3, "toc_title": "...", "pages": [{"src": "원본소제목", "label": "페이지 미니제목"}]},
+   ...
+ ],
+ "fixed": ["원본소제목", ...]
+}"""
+
+
+def _consolidate_sections(pages: list, *, debug: bool = False) -> None:
+    """섹션3·4 소제목을 LLM으로 '큰 틀'로 압축(목차 간결화). 각 페이지에 태그를 단다:
+       p['_grp_title'](묶음 목차제목)·p['_grp_label'](페이지 미니라벨)·p['_grp_fixed'](연락처 등 제외).
+       실패하면 무시(페이지별 개별 제목 유지)."""
+    items = []
+    for p in pages:
+        st = p.get("_struct")
+        sec = p.get("_sec_int")
+        if sec in (3, 4) and isinstance(st, dict):
+            sub = str(st.get("subtitle") or "").strip()
+            if sub:
+                items.append((p, sec, sub))
+    if len(items) < 3:
+        return
+    listing = "\n".join(f"[섹션{sec}] {sub}" for _, sec, sub in items)
+    try:
+        res = call_claude(
+            system_prompt=_TOC_PLAN_SYS,
+            user_prompt="[원본 소제목 목록]\n" + listing + "\n\n위 규칙대로 묶어 JSON 출력.",
+            slide_num=900, pdf_context=listing, prompt_version="toc_consolidate_v1",
+        )
+    except Exception as exc:
+        if debug:
+            print(f"  [목차압축] LLM 실패: {exc}")
+        return
+    data = res.get("data") if res.get("ok") else None
+    if not isinstance(data, dict):
+        return
+
+    def _norm(s):
+        return re.sub(r"\s+", "", str(s or ""))
+
+    fixed = {_norm(x) for x in (data.get("fixed") or [])}
+    # src(원본 소제목) → (toc_title, label) 매핑
+    src_map = {}
+    for g in (data.get("groups") or []):
+        toc = str(g.get("toc_title") or "").strip()
+        for pg in (g.get("pages") or []):
+            src = _norm(pg.get("src"))
+            if src:
+                src_map[src] = (toc, str(pg.get("label") or pg.get("src") or "").strip())
+    for p, sec, sub in items:
+        key = _norm(sub)
+        if key in fixed:
+            p["_grp_fixed"] = True
+        elif key in src_map:
+            toc, label = src_map[key]
+            p["_grp_title"] = toc or sub
+            p["_grp_label"] = label or sub
+    if debug:
+        print(f"  [목차압축] groups={len(data.get('groups') or [])} fixed={len(fixed)}")
+
+
 def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None) -> list:
     """
     각 페이지를 LLM으로 구조화하고, 레인필드 4섹션 체계에 맞춰
@@ -349,18 +428,15 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
     except Exception as _exc:
         print(f"[enrich] 투자구조도 생성 실패: {_exc}")
 
-    # ── 2패스: 정렬된 순서로 x.y 번호 부여 ──
+    # ── 2패스: 정렬된 순서로 x.y 번호 부여 (연락처/면책 고지는 번호·목차에서 제외) ──
     counters = {1: 0, 2: 0, 3: 0, 4: 0}
     for p in pages:
         sec = p.get("_sec_int", 4)
-        counters[sec] += 1
-        k = counters[sec]
         st = p.get("_struct")
         name = (p.get("_invest_name")
                 or ((st.get("subtitle") if st else "") or "").strip()
                 or SECTION_NAMES[sec])
-        # ★섹션1 Executive Summary 페이지는 한글 소제목으로(목차·divider·내용 일관). 영어 'Executive
-        #   Summary' 가 그대로 박히면 안 됨 — 전용 고정 빌더가 '본 건 사모사채 개요'로 렌더하므로 맞춤.
+        # ★섹션1 Executive Summary → 한글 소제목('본 건 사모사채 개요')으로 일관.
         if "executive summary" in name.lower():
             name = "본 건 사모사채 개요"
             if st is not None:
@@ -369,7 +445,13 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
         p["section_name"] = SECTION_NAMES[sec]
         p["section_title"] = f"0{sec} {SECTION_NAMES[sec]}"
         p["section_label"] = f"0{sec} {SECTION_NAMES[sec]}"
-        p["subtitle"] = f"{sec}.{k} {name}"
+        # ★면책고지·담당자 연락처 = 고정 페이지: 번호 안 매기고 목차에서 제외(구분에 '연락처' 안 넣음)
+        if any(kw in name for kw in ("면책", "연락처", "담당자")):
+            p["subtitle"] = name
+            p["_no_toc"] = True
+        else:
+            counters[sec] += 1
+            p["subtitle"] = f"{sec}.{counters[sec]} {name}"
         if st is not None:
             st["_final_subtitle"] = p["subtitle"]
             st["_final_section_label"] = p["section_label"]
