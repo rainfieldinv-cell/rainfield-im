@@ -564,20 +564,21 @@ def _header_groups(header):
     if n < 4:
         return None
 
-    # ★'<그룹> 항목 | 금액… | <그룹> 항목 | 금액…'(자금용도 Cash-In/Cash-Out) → 2단 헤더로 분리.
-    #   원본: 윗행 Cash-In/Cash-Out(각 2칸 묶음), 아랫행 항목 | 금액(억원) | 항목 | 금액(억원).
-    #   '항목' 앞에 그룹명이 있을 때만(맨 '항목'/'금액' 단순 헤더는 건드리지 않음).
+    # ★'<그룹> 항목/구분 | <그룹> 금액 | …'(자금용도 Cash-In/Cash-Out) → 2단 헤더로 분리.
+    #   원본: 윗행 Cash-In/Cash-Out(각 2칸 묶음), 아랫행 항목(또는 구분) | 금액 | 항목 | 금액.
+    #   '항목/구분' 앞에 그룹명이 있을 때만(맨 '항목'/'구분'/'금액' 단순 헤더는 건드리지 않음).
     row0 = [""] * n
     row1 = [""] * n
     hmerges = []
     used = [False] * n
     i = 0
     while i < n:
-        lab = h[i].replace("항목", "").strip()
-        if "항목" in h[i] and lab and i + 1 < n and "금액" in h[i + 1]:
+        sub_kw = next((kw for kw in ("항목", "구분") if kw in h[i]), None)
+        lab = h[i].replace(sub_kw, "").strip() if sub_kw else ""
+        if sub_kw and lab and i + 1 < n and "금액" in h[i + 1]:
             row0[i] = lab
-            row1[i] = "항목"
-            row1[i + 1] = h[i + 1]
+            row1[i] = sub_kw
+            row1[i + 1] = h[i + 1].replace(lab, "").strip() or h[i + 1]   # 금액칸에서 그룹명 제거
             hmerges.append((i, i + 1, lab))
             used[i] = used[i + 1] = True
             i += 2
