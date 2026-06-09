@@ -270,6 +270,11 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
     base["_struct"]["subtitle"] = "기초자산 개요"
     base["_struct"]["bullets"] = all_notes   # grid에 안 붙은 일반 각주 → 표 바로 밑
     base["_struct"]["source"] = ""           # ★대전 원본엔 출처 없음 → 출처 제거
+    # ★기초자산(금융조건)은 표 전용 페이지 — PDF 투자구조도 이미지가 붙어 있으면 제거.
+    #   투자구조도는 2.1 페이지에 표·선·글상자로 직접 그리므로 원본 이미지는 불필요(중복).
+    base["images"] = []
+    for q in fin:
+        q["images"] = []
     # 나머지 금융 페이지는 제거(병합됨)
     drop = set(id(p) for p in fin[1:])
     pages[:] = [p for p in pages if id(p) not in drop]
