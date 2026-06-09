@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "data": {
+    "section_num": 4,
+    "subtitle": "도시개발사업 실시계획인가 고시",
+    "intro": "도시개발사업 실시계획인가 고시 첨부 문서입니다.",
+    "bullets": [],
+    "tables": [],
+    "source": ""
+  },
+  "raw_text": "```json\n{\n  \"section_num\": 4,\n  \"subtitle\": \"도시개발사업 실시계획인가 고시\",\n  \"intro\": \"도시개발사업 실시계획인가 고시 첨부 문서입니다.\",\n  \"bullets\": [],\n  \"tables\": [],\n  \"source\": \"\"\n}\n```",
+  "usage": {
+    "input_tokens": 2103,
+    "output_tokens": 95,
+    "estimated_cost_usd": 0.007734
+  },
+  "cached": false,
+  "error": null
+}

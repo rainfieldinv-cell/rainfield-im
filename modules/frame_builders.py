@@ -1857,9 +1857,11 @@ def build_invest_diagram_slide(prs, data: dict, *, section_label, subtitle,
     # 차주 ↔ 대주단 (대출실행/원리금상환, 수평)
     conn(cx(borrower, 1.0), cy(borrower), cx(lenders, 0.0), cy(lenders, 0.55), begin=True)
     _dlabel(slide, 6.35, 3.02, 1.55, "대출실행 / 원리금상환")
-    # 시공사 → 대주단 (터미널 부지 물상보증, 대각)
+    # 시공사 → 대주단 (부지 물상보증, 대각) — 사업명에 '터미널' 있을 때만 '터미널 부지'(대전 전용),
+    #   그 외 딜은 '사업부지 물상보증'(천안 등 — 대전 라벨이 그대로 박히던 누수 방지)
+    _guar = "터미널 부지 물상보증" if "터미널" in str(business_name) else "사업부지 물상보증"
     conn(cx(constructor, 1.0), cy(constructor), cx(lenders, 0.0), cy(lenders, 0.9))
-    _dlabel(slide, 6.35, 4.95, 1.55, "터미널 부지 물상보증")
+    _dlabel(slide, 6.35, 4.95, 1.55, _guar)
     # 신탁사 → 대주단 (순위별 우선수익권 제공, 상단 아치 3구간)
     ax = 2.30
     conn(cx(trustee), cy(trustee, 0.0), cx(trustee), ax)            # 위로

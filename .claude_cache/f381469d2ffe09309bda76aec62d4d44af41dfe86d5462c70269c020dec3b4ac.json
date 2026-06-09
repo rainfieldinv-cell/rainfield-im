@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "data": {
+    "section_num": 4,
+    "subtitle": "시공사 양해각서",
+    "intro": "시공사 양해각서(MOU) 첨부 문서입니다.",
+    "bullets": [],
+    "tables": [],
+    "source": ""
+  },
+  "raw_text": "```json\n{\n  \"section_num\": 4,\n  \"subtitle\": \"시공사 양해각서\",\n  \"intro\": \"시공사 양해각서(MOU) 첨부 문서입니다.\",\n  \"bullets\": [],\n  \"tables\": [],\n  \"source\": \"\"\n}\n```",
+  "usage": {
+    "input_tokens": 2095,
+    "output_tokens": 83,
+    "estimated_cost_usd": 0.00753
+  },
+  "cached": false,
+  "error": null
+}

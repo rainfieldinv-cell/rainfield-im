@@ -354,6 +354,12 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
         name = (p.get("_invest_name")
                 or ((st.get("subtitle") if st else "") or "").strip()
                 or SECTION_NAMES[sec])
+        # ★섹션1 Executive Summary 페이지는 한글 소제목으로(목차·divider·내용 일관). 영어 'Executive
+        #   Summary' 가 그대로 박히면 안 됨 — 전용 고정 빌더가 '본 건 사모사채 개요'로 렌더하므로 맞춤.
+        if "executive summary" in name.lower():
+            name = "본 건 사모사채 개요"
+            if st is not None:
+                st["subtitle"] = name
         p["section_num"] = f"0{sec}"
         p["section_name"] = SECTION_NAMES[sec]
         p["section_title"] = f"0{sec} {SECTION_NAMES[sec]}"

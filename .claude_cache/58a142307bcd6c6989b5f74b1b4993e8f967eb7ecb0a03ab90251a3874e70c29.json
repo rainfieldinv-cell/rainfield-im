@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "data": {
+    "section_num": 3,
+    "subtitle": "토지이용계획",
+    "intro": "본 페이지는 담보 토지에 대한 토지이용계획 내용을 담고 있습니다.",
+    "bullets": [],
+    "tables": [],
+    "source": ""
+  },
+  "raw_text": "```json\n{\n  \"section_num\": 3,\n  \"subtitle\": \"토지이용계획\",\n  \"intro\": \"본 페이지는 담보 토지에 대한 토지이용계획 내용을 담고 있습니다.\",\n  \"bullets\": [],\n  \"tables\": [],\n  \"source\": \"\"\n}\n```",
+  "usage": {
+    "input_tokens": 2088,
+    "output_tokens": 94,
+    "estimated_cost_usd": 0.007674
+  },
+  "cached": false,
+  "error": null
+}
