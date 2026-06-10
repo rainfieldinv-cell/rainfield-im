@@ -458,6 +458,10 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
                 sec = _guess_section(st)
         else:
             sec = 4   # 구조화 실패(이미지 첨부 등) → Appendix
+        # ★'[별첨 N]' 페이지는 무조건 Appendix(섹션4) — 별첨1(본 PF 주요조건)이 참여기관/금융조건을
+        #   담아 섹션2로 잘못 분류돼 기초자산에 흡수·누락되던 문제 방지(머리말에 '별첨'이 있을 때만).
+        if "별첨" in (raw[:45] if raw else ""):
+            sec = 4
         p["_sec_int"] = sec
         p["_orig_idx"] = idx
 
