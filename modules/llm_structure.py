@@ -239,29 +239,50 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
                 return all_notes.pop(i)
         return ""
 
-    nested = []   # [(anchor_label, grid_tdef, note), ...] note=그 grid 바로 밑에 붙일 주N)
+    def _insert_before(anchor, keys):
+        """앵커 행이 없으면, keys 중 처음 발견되는 행 앞에(없으면 맨 끝) 새 행 삽입."""
+        at = None
+        for _k in keys:
+            at = _find_row(_k)
+            if at is not None:
+                break
+        lv_rows.insert(at if at is not None else len(lv_rows), [anchor, ""])
+
+    def _insert_after(anchor, key):
+        at = _find_row(key)
+        lv_rows.insert((at + 1) if at is not None else len(lv_rows), [anchor, ""])
+
+    nested, _used = [], set()   # [(anchor_label, grid_tdef, note), ...]
     for g in grids:
         title = (g.get("title") or "")
         hdr = " ".join(str(h) for h in (g.get("header") or []))
         blob = title + " " + hdr
-        if any(k in blob for k in ("Cash", "cash", "자금", "Cash-In", "Cash-Out")):
-            anchor = "자금용도"
+        if "계좌" in blob and "용도" in hdr:
+            # 계좌명|계좌주|용도 → '자금관리' 행(원본: 자금관리 안의 표). 없으면 채무불이행 앞에 신설.
+            anchor, note = "자금관리", ""
+            if _find_row("자금관리") is None:
+                _insert_before("자금관리", ("채무불이행", "대주간"))
+        elif "자금사용" in blob or "자금 사용" in blob:
+            # 천안: 'Cash-in/out'을 담은 '자금사용용도' = 자금용도(텍스트)와 별개 행 → 대주간 의사결정 뒤 신설.
+            anchor, note = "자금사용용도", _take_note(("대여금", "정산 방법", "기투입비용 정산 방"))
+            if _find_row(anchor) is None:
+                _insert_after(anchor, "대주간 의사결정" if _find_row("대주간 의사결정") is not None else "대주")
+        elif any(k in blob for k in ("Cash", "cash", "Cash-In", "Cash-Out")):
+            # 대전: Cash-in/out은 기존 '자금용도' 행 안에.
+            anchor = next((str(r[0]).strip() for r in lv_rows
+                           if "자금" in str(r[0] if r else "") and "용도" in str(r[0])), "자금용도")
             note = _take_note(("대여금", "정산 방법", "기투입비용 정산 방"))
-        else:
-            anchor = "주요 대출조건"   # 트랜치별 대출금액·금리·LTV 등
-            note = _take_note(("탁상감정", "감정가", "감정평가"))
-        idx = _find_row(anchor)
-        if idx is None:
-            if anchor == "주요 대출조건":
-                # 참여기관 바로 뒤(상세 조건 앞)에 삽입 — 대전은 '대출기간', 천안은 '인출일정/이자지급' 앞
-                at = None
-                for _k in ("대출기간", "인출일정", "이자지급", "연체", "상환방"):
-                    at = _find_row(_k)
-                    if at is not None:
-                        break
-                lv_rows.insert(at if at is not None else len(lv_rows), [anchor, ""])
-            elif _find_row("자금용도") is None:
+            if _find_row(anchor) is None:
                 lv_rows.append([anchor, ""])
+        else:
+            # 구분|대출금액|금리|LTV → 주요 대출조건. 참여기관 바로 뒤(상세 조건 앞)에 신설.
+            anchor = "주요 대출조건"
+            note = _take_note(("탁상감정", "감정가", "감정평가", "경일감정"))
+            if _find_row(anchor) is None:
+                _insert_before(anchor, ("대출기간", "인출일정", "이자지급", "연체", "상환방"))
+        if anchor in _used:        # 같은 행에 표 중복(예 금융조건 표 2개) → 첫 표만
+            continue
+        _used.add(anchor)
         nested.append((anchor, g, note))
 
     merged_tables = []
