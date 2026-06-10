@@ -501,6 +501,28 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
     # ── 금융조건 = 하나의 표(여러 페이지로 쪼개진 것을 다시 합침) ──
     _merge_section2_financing(pages, debug=debug)
 
+    # ── 별첨1(본 PF 주요조건) = 기초자산처럼 통합 렌더: 참여기관(label_value) + '주요 금융조건'(중첩표) ──
+    #   금융조건 grid가 별도 표로 쪼개져 한 슬라이드에 (1/2)(2/2) 겹쳐 보이던 문제 해결.
+    for p in pages:
+        st = p.get("_struct")
+        if not isinstance(st, dict):
+            continue
+        if "PF 주요조건" not in str(st.get("subtitle") or "") and "본PF" not in str(st.get("subtitle") or ""):
+            continue
+        tabs = st.get("tables") or []
+        lv = next((t for t in tabs if (t.get("kind") or "") == "label_value"), None)
+        grid = next((t for t in tabs if (t.get("kind") or "") == "grid"
+                     and any("Tr" in str(h) for h in (t.get("header") or []))), None)
+        if lv and grid:
+            lv_rows = [list(r) for r in (lv.get("rows") or [])]
+            note = ""
+            for npart in list(grid.get("_notes") or []):
+                note = (note + "\n" + npart).strip() if note else npart
+            lv_rows.append(["주요 금융조건", ""])
+            st["tables"] = [{"kind": "label_value", "title": "본 PF 주요조건",
+                             "header": [], "rows": lv_rows}]
+            st["_nested_grids"] = [("주요 금융조건", grid, note)]
+
     # ── 각주 복원: raw_text의 '주N)' 각주를 살리고(글머리 X), '출처:' 아닌 표각주는 표 밑으로 ──
     _restore_page_notes(pages)
 
