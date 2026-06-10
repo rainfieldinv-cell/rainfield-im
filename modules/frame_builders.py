@@ -1785,8 +1785,19 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             t = _INTRO_T + h + 0.12
         # (본문 산문 bullets는 더 이상 표 위에 찍지 않음 — 표 아래로 이동, 아래 렌더 참조)
         # ★'그냥 사진'(지도 등)은 표 위에 전폭으로 (사람 제안서: 담보토지·인근시장)
+        #   ★단 시세/분양 비교 페이지는 지도 왼쪽 + 분석문 오른쪽(원본 16번처럼).
         if idx == 0 and top_bare:
-            _place_images_row(slide, big_imgs[:1], _TBL_L, t, _TBL_W, t + _IMG_TOP_H)
+            _side_text = (btext if (btext and idx == 0
+                          and any(k in str(subtitle) for k in ("시세", "분양", "입지"))) else "")
+            if _side_text:
+                _map_w = _TBL_W * 0.56
+                _place_images_row(slide, big_imgs[:1], _TBL_L, t, _map_w, t + _IMG_TOP_H)
+                _add_textbox(slide, _TBL_L + _map_w + 0.2, t, _TBL_W - _map_w - 0.2,
+                             _IMG_TOP_H, _side_text, size=9, bullet=True,
+                             red_set=red_set, ul_set=ul_set)
+                btext = ""   # 지도 옆에 이미 적었으니 표 아래엔 안 찍음
+            else:
+                _place_images_row(slide, big_imgs[:1], _TBL_L, t, _TBL_W, t + _IMG_TOP_H)
             t += _IMG_TOP_H + 0.12
         tbl_start = t   # 표가 시작되는 y(사진 옆배치 기준)
         for (lbl, kind, header, rows, ncol, fp, rh, anchors, tbl_notes) in plan["items"]:
