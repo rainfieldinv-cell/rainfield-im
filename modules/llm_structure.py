@@ -283,53 +283,49 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
               f"(label_value {len(lv_rows)}행 + grid {len(grids)}개)")
 
 
-_TOC_PLAN_SYS = """당신은 부동산 IM 제안서의 '목차'를 깔끔하게 압축·정리하는 편집자입니다.
-섹션3(본건 사업 개요)·섹션4(Appendix/차주개요)의 '원본 소제목 목록'(순서대로)을 받아,
-아래 규칙대로 큰 틀로 묶고 이름을 센스 있게 정리해 JSON으로만 출력하세요.
+_TOC_PLAN_SYS = """당신은 부동산 IM 제안서의 본문(섹션3 '본건 사업 개요' + 섹션4 'Appendix')의 목차를
+정리하는 편집자입니다. 본문 소제목 목록(번호=원본 순서)을 받아, 아래 규칙대로 섹션 배정 + 압축을
+하여 JSON으로만 출력하세요.
 
 [규칙]
-1. 원본 순서 유지(섞지 말 것). 단 Appendix의 '주주구성/주주역할'은 '기업개요/재무제표'와 함께 묶어도 됨.
-2. 서로 관련된 '연속' 소제목들을 하나의 큰 항목(group)으로 묶어 목차 항목 수를 줄인다.
-   예: '분양개요'+'사업수지표'→'분양 개요 및 사업수지' / '토지확보현황'+'토지수용재결 절차 진행일정'→'토지 확보현황 및 진행 일정'
-       '토지이용계획'+'사업지 전경'→'토지 이용계획 및 사업지 전경'.
-   '비교대상 분양사례 현황'은 직전 '주변 청약단지 시세비교' group 에, '비교대상 매매사례 현황'은 '인근 시세비교' group 에 함께 넣는다.
-3. toc_title 은 'A 및 B' 식으로 간결하게. 긴 제목/괄호 부가설명은 toc_title 에서 빼 짧게.
-   원본에 괄호 설명이 있으면 그 페이지의 label 엔 괄호 포함, toc_title 엔 제외.
-   예: '천안시 불당신도시 인근 시세비교'→ toc_title '인근 시세비교', 그 페이지 label '인근 시세비교 (천안시 불당 신도시)'.
-4. '면책고지/담당자/연락처' 류 소제목은 fixed 로(목차·번호 제외, 맨 끝 고정 페이지).
-5. 묶음 안 원본 소제목들은 각각 별도 페이지로 남고 label(미니 제목)을 가진다. label 은 보통 원본 소제목을 간결히.
+1. 각 소제목을 섹션3 또는 섹션4로 정확히 배정한다.
+   - 섹션3(본건 사업 개요): 사업개요·분양개요·사업수지·토지(확보/수용/이용)·사업지 전경·입지/조망 분석·시세/분양사례 비교 등.
+   - 섹션4(Appendix): 차주(기업)개요·주주구성/역할·재무제표·별첨·인허가 고시·사업계획승인·양해각서·산업단지 현황 등.
+2. 원본 순서를 유지(섞지 말 것). 단 섹션4의 주주구성/주주역할은 기업개요/재무제표와 묶어도 됨.
+3. 관련된 연속 소제목을 묶어 **각 섹션을 최대 7개 항목으로** 줄인다(7개 초과 금지). 가능하면 더 적게.
+4. 제목 형식 2가지: ① 'A 및 B'(둘을 묶을 때) ② 'X (부가설명)'(부가설명 괄호).
+   toc_title 은 짧게 — 괄호 부가설명은 toc_title 에서 빼고, 그 페이지 label 에만 괄호 포함.
+   예: '천안 불당신도시 시세결과' → toc_title '시세 결과', 페이지 label '시세 결과 (천안 불당신도시)'.
+5. '면책고지/담당자/연락처' 류는 fixed(목차·번호 제외).
+6. 묶음 안 원본 소제목들은 각각 별도 페이지로 남고 label(내용 페이지 미니제목)을 가진다.
 
 [출력 JSON]
 {
- "groups": [
-   {"sec": 3, "toc_title": "...", "pages": [{"src": "원본소제목", "label": "페이지 미니제목"}]},
-   ...
- ],
+ "section3": [{"toc_title": "...", "pages": [{"src": "원본소제목", "label": "페이지 미니제목"}]}],
+ "section4": [{"toc_title": "...", "pages": [{"src": "원본소제목", "label": "..."}]}],
  "fixed": ["원본소제목", ...]
 }"""
 
 
 def _consolidate_sections(pages: list, *, debug: bool = False) -> None:
-    """섹션3·4 소제목을 LLM으로 '큰 틀'로 압축(목차 간결화). 각 페이지에 태그를 단다:
-       p['_grp_title'](묶음 목차제목)·p['_grp_label'](페이지 미니라벨)·p['_grp_fixed'](연락처 등 제외).
-       실패하면 무시(페이지별 개별 제목 유지)."""
-    items = []
-    for p in pages:
-        st = p.get("_struct")
-        sec = p.get("_sec_int")
-        if sec in (3, 4) and isinstance(st, dict):
-            sub = str(st.get("subtitle") or "").strip()
-            if sub:
-                items.append((p, sec, sub))
-    if len(items) < 3:
+    """섹션3·4 항목이 7개를 넘으면(천안형) LLM으로 ①정확한 섹션 재배정 ②각 섹션 7개로 압축.
+       7개 이하면(대전형) 아무것도 안 함 → 기존 결과 그대로(대전 보호).
+       태그: _grp_sec(재배정 섹션)·_grp_seq(섹션 내 묶음 순번)·_grp_title(목차 제목)·
+             _grp_label(내용 페이지 미니라벨, 괄호 포함 가능)·_grp_fixed(연락처 등 제외)."""
+    cand = [p for p in pages if p.get("_sec_int") in (3, 4) and isinstance(p.get("_struct"), dict)]
+    if not cand:
         return
-    listing = "\n".join(f"[섹션{sec}] {sub}" for _, sec, sub in items)
+    n3 = sum(1 for p in cand if p.get("_sec_int") == 3)
+    n4 = sum(1 for p in cand if p.get("_sec_int") == 4)
+    if n3 <= 7 and n4 <= 7:
+        return   # 대전형(양 적음) — 손 안 댐
+    cand.sort(key=lambda p: p.get("_orig_idx", 0))
+    listing = "\n".join(f"{i + 1}. {str((p.get('_struct') or {}).get('subtitle') or '').strip()}"
+                        for i, p in enumerate(cand))
     try:
-        res = call_claude(
-            system_prompt=_TOC_PLAN_SYS,
-            user_prompt="[원본 소제목 목록]\n" + listing + "\n\n위 규칙대로 묶어 JSON 출력.",
-            slide_num=900, pdf_context=listing, prompt_version="toc_consolidate_v1",
-        )
+        res = call_claude(system_prompt=_TOC_PLAN_SYS,
+                          user_prompt="[본문 소제목(번호=원본순서)]\n" + listing + "\n\n규칙대로 JSON 출력.",
+                          slide_num=901, pdf_context=listing, prompt_version="toc_cap7_v1")
     except Exception as exc:
         if debug:
             print(f"  [목차압축] LLM 실패: {exc}")
@@ -341,25 +337,34 @@ def _consolidate_sections(pages: list, *, debug: bool = False) -> None:
     def _norm(s):
         return re.sub(r"\s+", "", str(s or ""))
 
-    fixed = {_norm(x) for x in (data.get("fixed") or [])}
-    # src(원본 소제목) → (toc_title, label) 매핑
-    src_map = {}
-    for g in (data.get("groups") or []):
-        toc = str(g.get("toc_title") or "").strip()
-        for pg in (g.get("pages") or []):
-            src = _norm(pg.get("src"))
-            if src:
-                src_map[src] = (toc, str(pg.get("label") or pg.get("src") or "").strip())
-    for p, sec, sub in items:
-        key = _norm(sub)
-        if key in fixed:
+    by_sub = {}
+    for p in cand:
+        by_sub.setdefault(_norm((p.get("_struct") or {}).get("subtitle")), []).append(p)
+    used = set()
+
+    def _take(src):
+        for p in by_sub.get(_norm(src), []):
+            if id(p) not in used:
+                used.add(id(p))
+                return p
+        return None
+    for secnum, key in ((3, "section3"), (4, "section4")):
+        for gi, g in enumerate(data.get(key) or [], start=1):
+            toc = str(g.get("toc_title") or "").strip()
+            for pg in (g.get("pages") or []):
+                p = _take(pg.get("src"))
+                if p is not None:
+                    p["_grp_sec"] = secnum
+                    p["_grp_seq"] = gi
+                    p["_grp_title"] = toc
+                    p["_grp_label"] = str(pg.get("label") or pg.get("src") or "").strip()
+    for src in (data.get("fixed") or []):
+        p = _take(src)
+        if p is not None:
             p["_grp_fixed"] = True
-        elif key in src_map:
-            toc, label = src_map[key]
-            p["_grp_title"] = toc or sub
-            p["_grp_label"] = label or sub
     if debug:
-        print(f"  [목차압축] groups={len(data.get('groups') or [])} fixed={len(fixed)}")
+        print(f"  [목차압축] 적용 sec3={len(data.get('section3') or [])} "
+              f"sec4={len(data.get('section4') or [])} fixed={len(data.get('fixed') or [])}")
 
 
 def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None) -> list:
@@ -428,10 +433,21 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
     except Exception as _exc:
         print(f"[enrich] 투자구조도 생성 실패: {_exc}")
 
-    # ── 2패스: 정렬된 순서로 x.y 번호 부여 (연락처/면책 고지는 번호·목차에서 제외) ──
+    # ── 섹션3·4가 7개 초과면(천안형) LLM으로 섹션 재배정+7개 압축. 7개 이하면(대전형) 손 안 댐 ──
+    _consolidate_sections(pages, debug=debug)
+    # 압축이 적용됐으면(_grp_seq 태그 존재) 묶음 순서대로 본문 재정렬(섹션1·2는 그대로)
+    if any(p.get("_grp_seq") or p.get("_grp_fixed") for p in pages):
+        def _ck(p):
+            if p.get("_grp_fixed"):
+                return (5, 0, p.get("_orig_idx", 0))
+            sec = p.get("_grp_sec") or p.get("_sec_int", 4)
+            return (sec, p.get("_grp_seq", 0), p.get("_orig_idx", 0))
+        pages.sort(key=_ck)
+
+    # ── 2패스: x.y 번호 부여 (묶음=한 번호 공유; 연락처/면책 고지는 번호·목차 제외) ──
     counters = {1: 0, 2: 0, 3: 0, 4: 0}
     for p in pages:
-        sec = p.get("_sec_int", 4)
+        sec = p.get("_grp_sec") or p.get("_sec_int", 4)
         st = p.get("_struct")
         name = (p.get("_invest_name")
                 or ((st.get("subtitle") if st else "") or "").strip()
@@ -445,10 +461,19 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
         p["section_name"] = SECTION_NAMES[sec]
         p["section_title"] = f"0{sec} {SECTION_NAMES[sec]}"
         p["section_label"] = f"0{sec} {SECTION_NAMES[sec]}"
-        # ★면책고지·담당자 연락처 = 고정 페이지: 번호 안 매기고 목차에서 제외(구분에 '연락처' 안 넣음)
-        if any(kw in name for kw in ("면책", "연락처", "담당자")):
+        if p.get("_grp_fixed") or any(kw in name for kw in ("면책", "연락처", "담당자")):
+            # 면책고지·담당자 연락처 = 고정 페이지: 번호 안 매기고 목차에서 제외
             p["subtitle"] = name
             p["_no_toc"] = True
+        elif p.get("_grp_seq"):
+            # 압축된 묶음: 'sec.묶음순번 묶음제목' (같은 묶음 페이지끼리 번호 공유)
+            grp = (p.get("_grp_title") or name).strip()
+            p["subtitle"] = f"{sec}.{p['_grp_seq']} {grp}"
+            lbl = (p.get("_grp_label") or "").strip()   # 내용 페이지 미니라벨(괄호 포함 가능)
+            if lbl and lbl != grp and st is not None and st.get("tables"):
+                t0 = st["tables"][0]
+                if isinstance(t0, dict) and not str(t0.get("title") or "").strip():
+                    t0["title"] = lbl
         else:
             counters[sec] += 1
             p["subtitle"] = f"{sec}.{counters[sec]} {name}"
