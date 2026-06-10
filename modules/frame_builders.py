@@ -393,7 +393,7 @@ def _emph_segments(line, red_set, ul_set=None):
 _BULLET_RE = re.compile(r"^\s*[•·▶◦●○■◆\-\*]\s+")
 
 
-def _set_para_bullet(p, char="•", *, marL=0.17):
+def _set_para_bullet(p, char="•", *, marL=0.17, font="Arial"):
     """문단에 '진짜' 글머리 기호(buChar) + 행잉 인덴트 적용 — 줄바꿈 시 텍스트가
        불릿 글자 아래가 아니라 첫 글자 위치에 정렬됨(원본처럼 깔끔). 글자 prefix 흉내 아님."""
     pPr = p._p.get_or_add_pPr()
@@ -404,7 +404,7 @@ def _set_para_bullet(p, char="•", *, marL=0.17):
                 "a:buFontTx", "a:buFont", "a:buNone", "a:buAutoNum", "a:buChar"):
         for el in pPr.findall(qn(tag)):
             pPr.remove(el)
-    buFont = pPr.makeelement(qn("a:buFont"), {"typeface": "Arial"})
+    buFont = pPr.makeelement(qn("a:buFont"), {"typeface": font})
     buChar = pPr.makeelement(qn("a:buChar"), {"char": char})
     anchor = None
     for tag in ("a:defRPr", "a:extLst"):
@@ -418,6 +418,32 @@ def _set_para_bullet(p, char="•", *, marL=0.17):
     else:
         pPr.append(buFont)
         pPr.append(buChar)
+
+
+_CELL_BULLET_RE = re.compile(r"^(\s*)([•·▶◦●○■◆◇]|[-])\s+")
+
+
+def _bulletize_text_frame(tf):
+    """표 셀 안에서 마커(▶/•/-)로 시작하는 문단을 '진짜' 글머리 기호로 바꿈(흉내 글자 제거).
+       ▶/• = 상위 항목(들여쓰기 0단), '-' = 하위 항목(1단 들여쓰기). 줄바꿈 시 정렬 깔끔."""
+    for p in tf.paragraphs:
+        m = _CELL_BULLET_RE.match(p.text)
+        if not m:
+            continue
+        ch = m.group(2)
+        sub = (ch == "-")
+        n = len(m.group(0))                      # 마커(+공백) 글자 수만큼 런에서 제거
+        for run in p.runs:
+            if n <= 0:
+                break
+            tx = run.text
+            if len(tx) <= n:
+                n -= len(tx)
+                run.text = ""
+            else:
+                run.text = tx[n:]
+                n = 0
+        _set_para_bullet(p, ch, marL=(0.36 if sub else 0.18), font=_FONT_LIGHT)
 
 
 def _add_textbox(slide, L, T, W, H, text, *, size=10.5, bold=False,
@@ -445,8 +471,13 @@ def _add_textbox(slide, L, T, W, H, text, *, size=10.5, bold=False,
         p.font.name = nm
         seg_line = line
         if bullet and line.strip():
-            seg_line = _BULLET_RE.sub("", line)      # 흉내용 마커 제거 후 진짜 불릿 부여
-            _set_para_bullet(p, "•", marL=min(0.18, 0.02 + size * 0.014))
+            m = _CELL_BULLET_RE.match(line)
+            if m:                                    # ▶/•/- 마커 보존(- = 하위 1단)
+                ch = m.group(2)
+                seg_line = line[len(m.group(0)):]
+                _set_para_bullet(p, ch, marL=(0.36 if ch == "-" else 0.18), font=_FONT_LIGHT)
+            else:                                    # 마커 없는 평문 → 기본 • 불릿
+                _set_para_bullet(p, "•", marL=0.18, font=_FONT_LIGHT)
         for seg, is_red, is_ul in _emph_segments(seg_line, red_set, ul_set):
             run = p.add_run()
             run.text = seg
@@ -1070,6 +1101,7 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
             if ri >= hdr_rows:   # 헤더행(구분|내용)은 가운데, 값행은 모든 줄 좌측정렬 통일
                 for p in vtf.paragraphs:
                     p.alignment = PP_ALIGN.LEFT
+                _bulletize_text_frame(vtf)   # 값 셀 안 ▶/•/- → 진짜 글머리 기호
         # 헤더행=네이비+흰색Bold, 구분열=회색Bold (분할 청크마다 헤더 반복)
         style_table(gf, has_header=bool(header), label_cols=(0,),
                     header_fill=PALETTE["navy_dark"], label_fill=PALETTE["label_gray"])
@@ -1079,9 +1111,11 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
             t.columns[c].width = Inches(widths[c])
         for ri, row in enumerate(data):
             for ci in range(ncol):
+                ctf = t.cell(ri, ci).text_frame
                 _replace_text_keep_runs(
-                    t.cell(ri, ci).text_frame,
-                    str((row[ci] if ci < len(row) else "") or ""))
+                    ctf, str((row[ci] if ci < len(row) else "") or ""))
+                if ri >= n_hdr:   # 데이터 셀 안 ▶/•/- → 진짜 글머리 기호(헤더 제외)
+                    _bulletize_text_frame(ctf)
         style_table(gf, has_header=bool(header), label_cols=(), header_fill=PALETTE["navy_dark"])
         # ★다단 헤더: 둘째 헤더행(세부)도 네이비+흰색 Bold, 그룹 병합(상위 가로 / 비그룹 세로)
         if hdr_grp:
@@ -1731,7 +1765,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                         _atext = _anchor_vals.get(li, "")
                         if _atext.strip():
                             _add_textbox(slide, val_x + 0.05, cur_y, val_w - 0.10, 0.2, _atext,
-                                         size=fp, red_set=red_set, ul_set=ul_set)
+                                         size=fp, red_set=red_set, ul_set=ul_set, bullet=True)
                     except Exception as _e:
                         print(f"[nested grid] 실패: {_e}")
             t += used
