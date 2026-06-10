@@ -462,7 +462,7 @@ def show_step3():
     toc_choice = st.radio(
         "목차 개수를 선택하세요",
         options=[4, 5],
-        index=0 if detected_toc <= 4 else 1,
+        index=0,                       # 기본 선택값 = '목차 4개 형식'(자동추천 문구는 위에 그대로 유지)
         format_func=lambda x: f"목차 {x}개 형식",
         horizontal=True,
         key="toc_radio",
@@ -530,43 +530,103 @@ def show_step3():
 
         st.caption(f"총 {len(images)}개 이미지 추출됨 — 가장 큰 이미지(#{default_idx})를 자동 추천합니다.")
 
-        # 이미지 미리보기 — 처음 8장 + 나머지는 expander
-        cols = st.columns(4)
-        for i, img_data in enumerate(images[:8]):
-            with cols[i % 4]:
-                st.image(img_data["pil_image"], use_container_width=True)
-                st.caption(f"#{img_data['index']+1} ({img_data['width']}×{img_data['height']})")
+        # ★섹션/목차 이미지 선택과 동일하게 expander(접기/펼치기)로 통일
+        with st.expander("표지 이미지 선택"):
+            # 이미지 미리보기 — 처음 8장 + 나머지는 expander
+            cols = st.columns(4)
+            for i, img_data in enumerate(images[:8]):
+                with cols[i % 4]:
+                    st.image(img_data["pil_image"], use_container_width=True)
+                    st.caption(f"#{img_data['index']+1} ({img_data['width']}×{img_data['height']})")
 
-        if len(images) > 8:
-            with st.expander(f"나머지 {len(images)-8}개 이미지 더 보기"):
-                _more_cols = st.columns(4)
-                for i, img_data in enumerate(images[8:]):
-                    with _more_cols[i % 4]:
-                        st.image(img_data["pil_image"], use_container_width=True)
-                        st.caption(f"#{img_data['index']+1} ({img_data['width']}×{img_data['height']})")
+            if len(images) > 8:
+                with st.expander(f"나머지 {len(images)-8}개 이미지 더 보기"):
+                    _more_cols = st.columns(4)
+                    for i, img_data in enumerate(images[8:]):
+                        with _more_cols[i % 4]:
+                            st.image(img_data["pil_image"], use_container_width=True)
+                            st.caption(f"#{img_data['index']+1} ({img_data['width']}×{img_data['height']})")
 
-        # 이미지 번호 입력
-        img_num = st.number_input(
-            "표지에 사용할 이미지 번호",
-            min_value=1,
-            max_value=len(images),
-            value=min(default_idx, len(images)),
-            step=1,
-            help="위 갤러리에서 원하는 이미지 번호를 입력하세요.",
-        )
-        st.session_state.cover_image_index = int(img_num) - 1
+            # 이미지 번호 입력
+            img_num = st.number_input(
+                "표지에 사용할 이미지 번호",
+                min_value=1,
+                max_value=len(images),
+                value=min(default_idx, len(images)),
+                step=1,
+                help="위 갤러리에서 원하는 이미지 번호를 입력하세요.",
+            )
+            st.session_state.cover_image_index = int(img_num) - 1
 
-        # 선택된 이미지 미리보기
-        selected = images[st.session_state.cover_image_index]
-        st.markdown("**선택된 표지 이미지:**")
-        st.image(selected["pil_image"], width=500)
+            # 선택된 이미지 미리보기
+            selected = images[st.session_state.cover_image_index]
+            st.markdown("**선택된 표지 이미지:**")
+            st.image(selected["pil_image"], width=500)
 
-        # PIL Image → bytes 변환 후 세션에 저장
+            # PIL Image → bytes 변환 후 세션에 저장
+            import io as _io
+            buf = _io.BytesIO()
+            selected["pil_image"].save(buf, format="PNG")
+            cover_image_bytes = buf.getvalue()
+            st.session_state.cover_image_bytes = cover_image_bytes
+
+    st.markdown("---")
+
+    # ────────────────────────────────────────
+    # (D-2) 목차 이미지 선택 (선택 사항)
+    # ────────────────────────────────────────
+    st.markdown("### 📌 목차 이미지 선택 (선택 사항)")
+    st.caption("목차 페이지의 원형 자리(1개)에 들어갈 이미지를 선택하세요.")
+
+    if not images:
+        st.info("추출된 이미지가 없어 목차 이미지를 선택할 수 없습니다.")
+    else:
         import io as _io
-        buf = _io.BytesIO()
-        selected["pil_image"].save(buf, format="PNG")
-        cover_image_bytes = buf.getvalue()
-        st.session_state.cover_image_bytes = cover_image_bytes
+        with st.expander("목차 이미지 선택 (원형 자리 1개)"):
+            _tgcols = st.columns(3)
+            for _i, _img in enumerate(images[:9]):
+                with _tgcols[_i % 3]:
+                    st.image(_img["pil_image"], use_container_width=True)
+                    st.caption(f"#{_img['index']+1}")
+            if len(images) > 9:
+                with st.expander(f"나머지 {len(images)-9}개 이미지 더 보기"):
+                    _more_tgcols = st.columns(3)
+                    for _i, _img in enumerate(images[9:]):
+                        with _more_tgcols[_i % 3]:
+                            st.image(_img["pil_image"], use_container_width=True)
+                            st.caption(f"#{_img['index']+1}")
+
+            st.markdown("")
+
+            st.image(_make_toc_miniature(),
+                     caption="원형 슬롯 위치 — ① 좌측 중앙",
+                     use_container_width=True)
+
+            st.markdown("")
+
+            _toc_prev = st.session_state.toc_img_idx
+            _toc_col, _ = st.columns([1, 2])
+            with _toc_col:
+                st.caption("원형 자리 1번 (좌측 중앙)")
+                _toc_sel_num = st.number_input(
+                    "이미지 번호 (0 = 선택 안 함)",
+                    min_value=0,
+                    max_value=len(images),
+                    value=_toc_prev,
+                    step=1,
+                    key="toc_oval_slot_0",
+                )
+                st.session_state.toc_img_idx = int(_toc_sel_num)
+                if _toc_sel_num > 0:
+                    _toc_sel = images[int(_toc_sel_num) - 1]
+                    st.image(_toc_sel["pil_image"], use_container_width=True)
+                    st.caption(f"선택됨: #{int(_toc_sel_num)}")
+                    _tbuf = _io.BytesIO()
+                    _toc_sel["pil_image"].save(_tbuf, format="PNG")
+                    st.session_state.toc_img_bytes = _tbuf.getvalue()
+                else:
+                    st.caption("(선택 안 함)")
+                    st.session_state.toc_img_bytes = None
 
     st.markdown("---")
 
@@ -637,64 +697,6 @@ def show_step3():
 
             st.session_state.section_img_idx_list   = _new_idx_list
             st.session_state.section_img_bytes_list = _new_bytes_list
-
-    st.markdown("---")
-
-    # ────────────────────────────────────────
-    # (D-2) 목차 이미지 선택 (선택 사항)
-    # ────────────────────────────────────────
-    st.markdown("### 📌 목차 이미지 선택 (선택 사항)")
-    st.caption("목차 페이지의 원형 자리(1개)에 들어갈 이미지를 선택하세요.")
-
-    if not images:
-        st.info("추출된 이미지가 없어 목차 이미지를 선택할 수 없습니다.")
-    else:
-        import io as _io
-        with st.expander("목차 이미지 선택 (원형 자리 1개)"):
-            _tgcols = st.columns(3)
-            for _i, _img in enumerate(images[:9]):
-                with _tgcols[_i % 3]:
-                    st.image(_img["pil_image"], use_container_width=True)
-                    st.caption(f"#{_img['index']+1}")
-            if len(images) > 9:
-                with st.expander(f"나머지 {len(images)-9}개 이미지 더 보기"):
-                    _more_tgcols = st.columns(3)
-                    for _i, _img in enumerate(images[9:]):
-                        with _more_tgcols[_i % 3]:
-                            st.image(_img["pil_image"], use_container_width=True)
-                            st.caption(f"#{_img['index']+1}")
-
-            st.markdown("")
-
-            st.image(_make_toc_miniature(),
-                     caption="원형 슬롯 위치 — ① 좌측 중앙",
-                     use_container_width=True)
-
-            st.markdown("")
-
-            _toc_prev = st.session_state.toc_img_idx
-            _toc_col, _ = st.columns([1, 2])
-            with _toc_col:
-                st.caption("원형 자리 1번 (좌측 중앙)")
-                _toc_sel_num = st.number_input(
-                    "이미지 번호 (0 = 선택 안 함)",
-                    min_value=0,
-                    max_value=len(images),
-                    value=_toc_prev,
-                    step=1,
-                    key="toc_oval_slot_0",
-                )
-                st.session_state.toc_img_idx = int(_toc_sel_num)
-                if _toc_sel_num > 0:
-                    _toc_sel = images[int(_toc_sel_num) - 1]
-                    st.image(_toc_sel["pil_image"], use_container_width=True)
-                    st.caption(f"선택됨: #{int(_toc_sel_num)}")
-                    _tbuf = _io.BytesIO()
-                    _toc_sel["pil_image"].save(_tbuf, format="PNG")
-                    st.session_state.toc_img_bytes = _tbuf.getvalue()
-                else:
-                    st.caption("(선택 안 함)")
-                    st.session_state.toc_img_bytes = None
 
     st.markdown("---")
 
