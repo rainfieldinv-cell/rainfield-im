@@ -1301,6 +1301,23 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
         # ★박스 위쪽 모서리 완성: 헤더('에쿼티 금액(원)') 아래선도 빨강(데이터 첫 칸 위와 공유)
         if hdr_rows > 0:
             _set_cell_red_border(t.cell(hdr_rows - 1, eq_col), ["B"])
+    # ★원본 정렬 재현(G2) — 모든 병합·색칠 뒤 맨 마지막에 적용(앞서 _compact_grid가 가운데로 리셋하므로).
+    #   grid 표에서 '숫자/비율 전용' 컬럼은 가운데, '텍스트가 섞인(긴) 컬럼'은 왼쪽 정렬(원본처럼).
+    #   (수용재결 진행일정·관계법령·단지명·비고·구분 라벨 등 → 왼쪽 / 금액·세대수·비율 → 가운데)
+    if kind != "label_value" and header:
+        _NUMERIC = re.compile(r"^[\d,.\-~%()\s원억평㎡천만원/]+$")
+        for ci in range(ncol):
+            vals = [str((data[ri][ci] if ci < len(data[ri]) else "") or "").strip()
+                    for ri in range(hdr_rows, nrow)]
+            vals = [v for v in vals if v]
+            if not vals:
+                continue
+            all_numeric = all(_NUMERIC.match(v) for v in vals)
+            longish = any(len(v) >= 10 for v in vals)
+            if (not all_numeric) and longish:
+                for ri in range(hdr_rows, nrow):
+                    for p in t.cell(ri, ci).text_frame.paragraphs:
+                        p.alignment = PP_ALIGN.LEFT
     return height
 
 
