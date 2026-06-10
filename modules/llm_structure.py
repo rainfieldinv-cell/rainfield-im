@@ -470,8 +470,33 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
         p["_sec_int"] = sec
         p["_orig_idx"] = idx
 
+    # ★Executive Summary = 금융(섹션2) 첫 페이지 '앞'의 연속 페이지 전부 → 섹션1로 묶음.
+    #   (천안: 인근분양사례·일몰/호수 조망 등 Exec 연속 페이지가 섹션3으로 새어 본문에 들어가던 문제.
+    #    대전: Exec가 1페이지뿐이라 무영향.)
+    _fin_idx = min((p.get("_orig_idx", 9999) for p in pages if p.get("_sec_int") == 2),
+                   default=None)
+    if _fin_idx is not None and _fin_idx > 0:
+        for p in pages:
+            if p.get("_orig_idx", 9999) < _fin_idx and p.get("_sec_int") != 2:
+                p["_sec_int"] = 1
+
     # ── 섹션 순서로 안정정렬 (섹션 내부는 원본 순서 유지) ──
     pages.sort(key=lambda p: (p.get("_sec_int", 4), p.get("_orig_idx", 0)))
+
+    # ★섹션1(Executive Summary) 여러 페이지 → 하나로 병합(원본: Exec Summary 1개 항목, 본문 아님).
+    #   bullets/표는 합치고, 큰 이미지는 제외(사용자: Exec Summary엔 사진 안 넣음).
+    _ex = [p for p in pages if p.get("_sec_int") == 1 and isinstance(p.get("_struct"), dict)]
+    if len(_ex) > 1:
+        base_ex = _ex[0]
+        bst = base_ex["_struct"]
+        for q in _ex[1:]:
+            qst = q.get("_struct") or {}
+            bst.setdefault("bullets", []).extend(qst.get("bullets") or [])
+            bst.setdefault("tables", []).extend(qst.get("tables") or [])
+            q["_struct"] = None
+            q["_drop"] = True           # 병합됐으니 별도 페이지로 렌더 안 함
+        base_ex["images"] = []          # Exec Summary는 사진 제외(일몰/호수 조감도 등)
+        pages[:] = [p for p in pages if not p.get("_drop")]
 
     # ── 금융조건 = 하나의 표(여러 페이지로 쪼개진 것을 다시 합침) ──
     _merge_section2_financing(pages, debug=debug)
