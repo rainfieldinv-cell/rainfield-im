@@ -1408,6 +1408,31 @@ def _place_images_row(slide, imgs, L, top, W, bottom, *, labels=None):
     return used
 
 
+def _place_images_grid(slide, imgs, L, top, W, bottom):
+    """사진 여러 장(사업지 전경 등): 첫 장 크게(상단) + 나머지 3열 그리드 — 원본 레이아웃 재현."""
+    imgs = [im for im in (imgs or []) if im.get("data")]
+    if not imgs:
+        return 0.0
+    if len(imgs) <= 2:
+        return _place_images_row(slide, imgs, L, top, W, bottom)
+    avail = bottom - top
+    gap = 0.14
+    rest = imgs[1:]
+    cols = 3
+    grows = (len(rest) + cols - 1) // cols
+    big_h = min(avail * 0.46, W * 0.48)
+    _place_images_row(slide, imgs[:1], L, top, W, top + big_h)
+    gy = top + big_h + gap
+    if grows > 0:
+        row_h = (bottom - gy - gap * (grows - 1)) / grows
+        if row_h > 0.5:
+            for r in range(grows):
+                chunk = rest[r * cols:(r + 1) * cols]
+                _place_images_row(slide, chunk, L, gy + r * (row_h + gap), W,
+                                  gy + r * (row_h + gap) + row_h)
+    return avail
+
+
 def _img_labels_for(subtitle, n):
     """소제목으로 이미지 라벨 추정(조감도/광역입지/현장사진/위치도 등)."""
     s = subtitle or ""
@@ -1856,9 +1881,12 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             _place_images_col(slide, big_imgs[:2], img_col_L, tbl_start,
                               _IMG_W, _BODY_BOTTOM, labels=labels)
         elif idx == n - 1 and big_imgs and not top_bare and not side_box and not has_tbl:
-            # 표 없는 부록(현장사진·승인서) → 표 없이 사진만 크게(위쪽부터)
-            _place_images_row(slide, big_imgs[:2], _TBL_L, tbl_start,
-                              _TBL_W, _BODY_BOTTOM)
+            # 표 없는 사진 페이지 → 4장 이상이면 그리드(첫장 크게+3열, 사업지 전경 6장 등), 아니면 한 줄
+            if len(big_imgs) >= 4:
+                _place_images_grid(slide, big_imgs, _TBL_L, tbl_start, _TBL_W, _BODY_BOTTOM)
+            else:
+                _place_images_row(slide, big_imgs[:2], _TBL_L, tbl_start,
+                                  _TBL_W, _BODY_BOTTOM)
         # ★순서(원본): 표 → 주N) 각주(표 바로 밑, 9pt 회색) → 본문 산문(10pt 검정).
         #   주N)는 표에 딱 붙고, 분석 프로즈는 그 아래(원본: 인근 주요…는 주N) 다음).
         if idx == n - 1 and notes_text:
