@@ -390,10 +390,41 @@ def _emph_segments(line, red_set, ul_set=None):
     return segs
 
 
+_BULLET_RE = re.compile(r"^\s*[•·▶◦●○■◆\-\*]\s+")
+
+
+def _set_para_bullet(p, char="•", *, marL=0.17):
+    """문단에 '진짜' 글머리 기호(buChar) + 행잉 인덴트 적용 — 줄바꿈 시 텍스트가
+       불릿 글자 아래가 아니라 첫 글자 위치에 정렬됨(원본처럼 깔끔). 글자 prefix 흉내 아님."""
+    pPr = p._p.get_or_add_pPr()
+    emu = int(marL * 914400)
+    pPr.set("marL", str(emu))
+    pPr.set("indent", str(-emu))
+    for tag in ("a:buClrTx", "a:buClr", "a:buSzTx", "a:buSzPct", "a:buSzPts",
+                "a:buFontTx", "a:buFont", "a:buNone", "a:buAutoNum", "a:buChar"):
+        for el in pPr.findall(qn(tag)):
+            pPr.remove(el)
+    buFont = pPr.makeelement(qn("a:buFont"), {"typeface": "Arial"})
+    buChar = pPr.makeelement(qn("a:buChar"), {"char": char})
+    anchor = None
+    for tag in ("a:defRPr", "a:extLst"):
+        el = pPr.find(qn(tag))
+        if el is not None:
+            anchor = el
+            break
+    if anchor is not None:
+        anchor.addprevious(buFont)
+        anchor.addprevious(buChar)
+    else:
+        pPr.append(buFont)
+        pPr.append(buChar)
+
+
 def _add_textbox(slide, L, T, W, H, text, *, size=10.5, bold=False,
-                 color=None, align=PP_ALIGN.LEFT, red_set=None, ul_set=None):
+                 color=None, align=PP_ALIGN.LEFT, red_set=None, ul_set=None, bullet=False):
     """글상자 생성 — 내부여백 0, 텍스트 내용에 딱 맞는 높이(군더더기 여백 없음). 반환=(shape, 높이in).
-       red_set/ul_set 지정 시 원본 빨간 글씨/밑줄에 해당하는 부분만 빨강·밑줄로 표시."""
+       red_set/ul_set 지정 시 원본 빨간 글씨/밑줄에 해당하는 부분만 빨강·밑줄로 표시.
+       bullet=True 면 각 줄을 '진짜' 글머리 기호(buChar)로 — 줄 맨 앞 마커(•/▶/-)는 떼고 적용."""
     text = str(text).rstrip("\n ")        # 끝의 빈 줄/공백 제거(빈 여백 방지)
     est_h = _est_text_height(text, W, size)
     tb = slide.shapes.add_textbox(Inches(L), Inches(T), Inches(W), Inches(est_h))
@@ -412,7 +443,11 @@ def _add_textbox(slide, L, T, W, H, text, *, size=10.5, bold=False,
         p.alignment = align
         p.font.size = Pt(size)                       # 문단 기본(빈 줄에도 적용)
         p.font.name = nm
-        for seg, is_red, is_ul in _emph_segments(line, red_set, ul_set):
+        seg_line = line
+        if bullet and line.strip():
+            seg_line = _BULLET_RE.sub("", line)      # 흉내용 마커 제거 후 진짜 불릿 부여
+            _set_para_bullet(p, "•", marL=min(0.18, 0.02 + size * 0.014))
+        for seg, is_red, is_ul in _emph_segments(seg_line, red_set, ul_set):
             run = p.add_run()
             run.text = seg
             run.font.name = nm
@@ -1422,7 +1457,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         return s.startswith(("주", "*", "※")) or s[:2] in ("1)", "2)", "3)", "4)", "5)")
     notes = [b for b in bullets if _is_note(b)]
     body_bullets = [b for b in bullets if b not in notes]
-    btext = "\n".join(f"• {b}" for b in body_bullets) if body_bullets else ""
+    btext = "\n".join(str(b) for b in body_bullets) if body_bullets else ""
 
     # ★출처 필드에 섞여 들어온 주N)/※ 각주 분리 — 출처 글상자는 '출처'만, 주N)는 표 밑 각주로
     def _looks_note(ln):
@@ -1730,7 +1765,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             bh = _est_text_height(btext, tw, 10)
             _, _bhh = _add_textbox(slide, _TBL_L, t + 0.06, tw, bh, btext,
                                    size=10, bold=False, color=RGBColor(0x00, 0x00, 0x00),
-                                   red_set=red_set, ul_set=ul_set)
+                                   red_set=red_set, ul_set=ul_set, bullet=True)
             t += _bhh + 0.10
         _add_combined_footer(slide, business_name)
         # ★출처는 항상 좌측 하단 고정(별도 글상자) — 원본에 있을 때만
