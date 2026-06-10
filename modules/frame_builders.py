@@ -1646,6 +1646,10 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             #   ★앵커 행(주요 대출조건·자금용도)은 grid 높이만큼 키워 그 안에 grid를 얹는다(표 안의 표).
             lab_w = min(1.7, tw * 0.24)
             val_w = tw - lab_w
+            # ★side_box(표 좁음, 입지분석 등): 폰트 줄여 한 페이지에 맞춤(원본도 작은 글씨로 한 장).
+            #   앵커(중첩표) 있는 표는 줄이지 않음(표 안의 표 가독성 유지).
+            if side_box and not any(_nested_for(r[0]) for r in body):
+                fp = max(8.0, fp - 2.0)
             hdr_h = _rowh(fp)
             avail = _BODY_BOTTOM - _INTRO_T - label_h - hdr_h
             rhs_all = []
