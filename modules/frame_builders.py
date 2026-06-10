@@ -1359,24 +1359,41 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
 
     # ★표 안의 표: 앵커 라벨 → grid 파싱 (해당 label_value 행 내용칸에 grid를 얹음)
     nested_grids = struct.get("_nested_grids") or []
-    nested_parsed = []   # (anchor_label, (kind,header,body,ncol), note)
+    nested_parsed = []   # (anchor_label, (kind,header,body,ncol), note, unit)
     for item in nested_grids:
         anchor, gdef = item[0], item[1]
         note = item[2] if len(item) > 2 else ""
         gk, gh, gb, gn = _parse_tdef(gdef)
+        # grid title의 '(단위 …)' → 표 위 캡션으로(원본: Cash 표 위 '(단위: 백만원)')
+        _gt = str((gdef.get("title") if isinstance(gdef, dict) else "") or "")
+        _ui = _gt.find("(단위")
+        unit = _gt[_ui:(_gt.find(")", _ui) + 1 or len(_gt))] if _ui != -1 else ""
         if gn > 0 and gb:
-            nested_parsed.append((anchor, (gk, gh, gb, gn), note))
+            nested_parsed.append((anchor, (gk, gh, gb, gn), note, unit))
+
+    def _grid_render_h(gh, gb, gn):
+        """중첩 grid 렌더 높이 — Cash-in/Cash-out 2행 헤더는 헤더 2줄로 계산."""
+        hdr_rows = 1 if gh else 0
+        if gh and any("Cash" in str(h) for h in gh):
+            hdr_rows = 2
+        return (hdr_rows + len(gb)) * _rowh(_grid_font(gn)) + 0.10
 
     def _nested_for(label):
-        for a, parsed, note in nested_parsed:
+        for a, parsed, note, unit in nested_parsed:
             if a and a in str(label):
                 return parsed
         return None
 
     def _nested_note_for(label):
-        for a, parsed, note in nested_parsed:
+        for a, parsed, note, unit in nested_parsed:
             if a and a in str(label):
                 return note
+        return ""
+
+    def _nested_unit_for(label):
+        for a, parsed, note, unit in nested_parsed:
+            if a and a in str(label):
+                return unit
         return ""
 
     red_set = set(red_texts or [])             # 산문(글상자) 부분 빨강용
@@ -1465,13 +1482,14 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                 ng = _nested_for(r[0])
                 if ng:
                     _, gh, gb, gn = ng
-                    grid_h = ((1 if gh else 0) + len(gb)) * _rowh(_grid_font(gn)) + 0.10
-                    # ★앵커 행 = (요약 글씨) + (grid) + (그 표 바로 밑 주N) 각주)
+                    grid_h = _grid_render_h(gh, gb, gn)
+                    # ★앵커 행 = (단위캡션) + (grid) + (주N) 각주) + (요약 글씨) — 표 먼저, 글 나중
                     txt_h = (_est_text_height(r[1], val_w - 0.08, fp) + 0.04
                              if str(r[1]).strip() else 0.0)
                     nt = _nested_note_for(r[0])
                     note_h = (_est_text_height(nt, val_w - 0.10, 9) + 0.04) if nt.strip() else 0.0
-                    rhs_all.append(grid_h + txt_h + note_h)
+                    unit_h = 0.22 if _nested_unit_for(r[0]) else 0.0
+                    rhs_all.append(grid_h + txt_h + note_h + unit_h)
                 else:
                     rhs_all.append(max(_est_text_height(r[0], lab_w - 0.08, fp),
                                        _est_text_height(r[1], val_w - 0.08, fp)) + 0.04)
@@ -1628,10 +1646,18 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             #   같은 슬라이드의 담보토지 빨강(루시드)이 번지지 않도록 red 억제
             _hdr_blob = " ".join(str(h) for h in (header or []))
             _rc = None if any(k in _hdr_blob for k in ("위탁자", "에쿼티")) else red_counts
+            # ★표 안의 표(앵커 행): 원본은 '표 먼저 → 글' 순서 → 본 표 셀에선 값 텍스트를 비워
+            #   위에 안 찍히게 하고, grid 아래에 따로 그린다(아래 overlay).
+            _anchor_vals = {}
+            if anchors and isinstance(rh, (list, tuple)):
+                for (li, alabel) in anchors:
+                    if _nested_for(alabel) and li < len(rows) and len(rows[li]) > 1:
+                        _anchor_vals[li] = str(rows[li][1] or "")
+                        rows[li][1] = ""
             used = _render_table_chunk(slide, kind, header, rows, ncol, _TBL_L, t, tw, fp, rh,
                                        red_counts=_rc, anchor_rows=_anchor_li,
                                        is_last_chunk=_is_last_chunk, fill_set=fill_set)
-            # ★표 안의 표: 앵커 행 내용칸 위에 grid를 얹음
+            # ★앵커 행 내용칸: (단위 캡션) → grid → 주N) 각주 → 요약 글씨 순으로 얹음(표 먼저, 글 나중)
             if anchors and isinstance(rh, (list, tuple)):
                 lab_w = min(1.7, tw * 0.24)
                 val_x = _TBL_L + lab_w
@@ -1642,22 +1668,32 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                     if not ng:
                         continue
                     gk, gh, gb, gn = ng
-                    # 앵커 행의 요약 글씨 높이만큼 내려서 grid를 얹음(글씨 위 + 표 아래)
-                    atext = str(rows[li][1] if li < len(rows) and len(rows[li]) > 1 else "")
-                    txt_h = (_est_text_height(atext, val_w - 0.08, fp) + 0.04) if atext.strip() else 0.0
-                    row_y = tbl_top + hh + sum(rh[:li]) + txt_h
-                    grid_h = ((1 if gh else 0) + len(gb)) * _rowh(_grid_font(gn)) + 0.10
+                    grid_h = _grid_render_h(gh, gb, gn)
+                    cur_y = tbl_top + hh + sum(rh[:li]) + 0.05
+                    # (단위: …) — grid 위 우측 캡션(원본: Cash 표 위 '(단위: 백만원)')
+                    _unit = _nested_unit_for(alabel)
+                    if _unit:
+                        _add_textbox(slide, val_x + 0.05, cur_y, val_w - 0.10, 0.18, _unit,
+                                     size=9, align=PP_ALIGN.RIGHT, color=PALETTE["gray_text"])
+                        cur_y += 0.22
                     try:
                         _render_table_chunk(slide, "grid", gh, gb, gn,
-                                            val_x + 0.05, row_y + 0.05, val_w - 0.10,
+                                            val_x + 0.05, cur_y, val_w - 0.10,
                                             _grid_font(gn), _rowh(_grid_font(gn)), red_counts=red_counts,
                                             hdr_fill_hex="3E95BE", hdr_alpha=35)
-                        # ★그 grid '바로 밑'에 주N) 각주(원본처럼)
+                        cur_y += grid_h + 0.02
+                        # grid 바로 밑 주N) 각주(원본처럼)
                         gnote = _nested_note_for(alabel)
                         if gnote.strip():
-                            _add_textbox(slide, val_x + 0.05, row_y + 0.05 + grid_h + 0.02,
-                                         val_w - 0.10, 0.2, gnote, size=9,
-                                         color=PALETTE["gray_text"], red_set=red_set, ul_set=ul_set)
+                            _, _gnh = _add_textbox(slide, val_x + 0.05, cur_y, val_w - 0.10, 0.2,
+                                                   gnote, size=9, color=PALETTE["gray_text"],
+                                                   red_set=red_set, ul_set=ul_set)
+                            cur_y += (_gnh or 0.18) + 0.02
+                        # ★표 다음에 요약 글씨(자금관리 ▶ 계좌 설명 등) — 표 먼저, 글 나중
+                        _atext = _anchor_vals.get(li, "")
+                        if _atext.strip():
+                            _add_textbox(slide, val_x + 0.05, cur_y, val_w - 0.10, 0.2, _atext,
+                                         size=fp, red_set=red_set, ul_set=ul_set)
                     except Exception as _e:
                         print(f"[nested grid] 실패: {_e}")
             t += used

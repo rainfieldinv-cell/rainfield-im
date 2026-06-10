@@ -299,6 +299,11 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
         _used.add(anchor)
         nested.append((anchor, g, note))
 
+    # ★금융과 무관한 각주(매출액·분양가 등 사업수지 주석)가 LLM 오류로 금융 페이지 bullets에 섞여
+    #   표 밑에 잘못 찍히던 문제 → 제외(원본 금융조건 표엔 그런 주석 없음).
+    all_notes = [n for n in all_notes
+                 if not any(k in str(n) for k in ("매출액", "매출 약", "분양가", "8,545", "8545"))]
+
     merged_tables = []
     if lv_rows:
         # ★다른 본문 표처럼 미니 라벨('주요 금융조건')을 붙임 → 분할되면 (i/n)도 자동 표시
@@ -319,6 +324,9 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
     base["_filled_texts"] = list(dict.fromkeys(fills))
     base["_struct"]["tables"] = merged_tables
     base["_struct"]["_nested_grids"] = nested
+    # ★금융조건은 표로만 구성 — 떠다니는 불릿/각주 제거(각주는 표 _notes·grid note로 이미 귀속).
+    #   매출액 등 오각주가 표 밑에 한 번 더 찍히던 중복 방지.
+    base["_struct"]["bullets"] = []
     base["_struct"]["subtitle"] = "기초자산 개요"
     base["_struct"]["bullets"] = all_notes   # grid에 안 붙은 일반 각주 → 표 바로 밑
     base["_struct"]["source"] = ""           # ★대전 원본엔 출처 없음 → 출처 제거
