@@ -1277,6 +1277,8 @@ def _img_labels_for(subtitle, n):
         base = ["현장사진", "위치도"]
     elif "건축" in s or "조감" in s:
         base = ["조감도", "광역입지"]
+    elif "사업 개요" in s or "사업개요" in s:
+        base = ["조감도", "위치도"]
     elif "입지" in s or "시세" in s or "분양" in s or "토지" in s:
         base = ["위치도", "조감도"]
     else:
@@ -1443,7 +1445,8 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
     #   • 표 없는 부록(현장사진·승인서) → 표 없이 크게 중앙
     big_imgs = _big_images(images)
     has_tbl = any(_parse_tdef(t)[3] > 0 and _parse_tdef(t)[2] for t in tables)
-    labeled_img = bool(big_imgs) and any(k in subtitle for k in ("건축", "입지", "조감", "위치"))
+    labeled_img = bool(big_imgs) and any(k in subtitle for k in
+                                         ("건축", "입지", "조감", "위치", "사업 개요", "사업개요"))
     side_box = bool(big_imgs) and has_tbl and labeled_img
     top_bare = bool(big_imgs) and has_tbl and not labeled_img
     _IMG_W, _IMG_GAP_LR = 4.0, 0.25
