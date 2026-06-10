@@ -1646,28 +1646,36 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             #   ★앵커 행(주요 대출조건·자금용도)은 grid 높이만큼 키워 그 안에 grid를 얹는다(표 안의 표).
             lab_w = min(1.7, tw * 0.24)
             val_w = tw - lab_w
-            # ★side_box(표 좁음, 입지분석 등): 폰트 줄여 한 페이지에 맞춤(원본도 작은 글씨로 한 장).
-            #   앵커(중첩표) 있는 표는 줄이지 않음(표 안의 표 가독성 유지).
-            if side_box and not any(_nested_for(r[0]) for r in body):
-                fp = max(8.0, fp - 2.0)
+
+            def _calc_rhs(fp_):
+                out = []
+                for r in body:
+                    ng = _nested_for(r[0])
+                    if ng:
+                        _, gh, gb, gn = ng
+                        grid_h = _grid_render_h(gh, gb, gn)
+                        # ★앵커 행 = (단위캡션)+(grid)+(주N) 각주)+(요약 글씨) — 표 먼저, 글 나중
+                        txt_h = (_est_text_height(r[1], val_w - 0.08, fp_) + 0.04
+                                 if str(r[1]).strip() else 0.0)
+                        nt = _nested_note_for(r[0])
+                        note_h = (_est_text_height(nt, val_w - 0.10, 9) + 0.04) if nt.strip() else 0.0
+                        unit_h = 0.22 if _nested_unit_for(r[0]) else 0.0
+                        out.append(grid_h + txt_h + note_h + unit_h)
+                    else:
+                        out.append(max(_est_text_height(r[0], lab_w - 0.08, fp_),
+                                       _est_text_height(r[1], val_w - 0.08, fp_)) + 0.04)
+                return out
+
             hdr_h = _rowh(fp)
             avail = _BODY_BOTTOM - _INTRO_T - label_h - hdr_h
-            rhs_all = []
-            for r in body:
-                ng = _nested_for(r[0])
-                if ng:
-                    _, gh, gb, gn = ng
-                    grid_h = _grid_render_h(gh, gb, gn)
-                    # ★앵커 행 = (단위캡션) + (grid) + (주N) 각주) + (요약 글씨) — 표 먼저, 글 나중
-                    txt_h = (_est_text_height(r[1], val_w - 0.08, fp) + 0.04
-                             if str(r[1]).strip() else 0.0)
-                    nt = _nested_note_for(r[0])
-                    note_h = (_est_text_height(nt, val_w - 0.10, 9) + 0.04) if nt.strip() else 0.0
-                    unit_h = 0.22 if _nested_unit_for(r[0]) else 0.0
-                    rhs_all.append(grid_h + txt_h + note_h + unit_h)
-                else:
-                    rhs_all.append(max(_est_text_height(r[0], lab_w - 0.08, fp),
-                                       _est_text_height(r[1], val_w - 0.08, fp)) + 0.04)
+            rhs_all = _calc_rhs(fp)
+            # ★side_box: 기본 10.5 유지. '10.5에서 넘칠 때만' 폰트 축소(입지분석). 사업개요는 10.5 그대로.
+            _no_anchor = not any(_nested_for(r[0]) for r in body)
+            if side_box and _no_anchor and sum(rhs_all) > avail:
+                fp = max(8.0, fp - 2.0)
+                hdr_h = _rowh(fp)
+                avail = _BODY_BOTTOM - _INTRO_T - label_h - hdr_h
+                rhs_all = _calc_rhs(fp)
             chunks, cr, crh, cacc = [], [], [], 0.0
             for r, h in zip(body, rhs_all):
                 if cr and cacc + h > avail:
@@ -1675,6 +1683,12 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                 cr.append(r); crh.append(h); cacc += h
             if cr:
                 chunks.append((cr, crh))
+            # ★side_box 단일 청크: 우측 이미지표 높이에 맞춰 행 높이를 늘림(좌우 표 길이 맞춤 — 사업개요).
+            if side_box and _no_anchor and len(chunks) == 1:
+                _csum = sum(chunks[0][1])
+                if 0 < _csum < avail:
+                    _sc = avail / _csum
+                    chunks[0] = (chunks[0][0], [h * _sc for h in chunks[0][1]])
             m = len(chunks)
             for k, (rows, rhs) in enumerate(chunks):
                 lbl = (f"{title}({k + 1}/{m})" if (title and m > 1) else title)
