@@ -563,6 +563,33 @@ def _restore_page_notes(pages: list) -> None:
         if not isinstance(st, dict):
             continue
         raw = p.get("raw_text", "") or ""
+
+        # ★분석 불릿('✓ …') verbatim 복원 — LLM이 요약·축약하던 문제(산업단지·시세·입지 등 분석문 전문 유지).
+        #   원문은 intro 없이 ✓ 불릿만이므로, 복원 시 중복되는 LLM 요약 intro는 제거.
+        if "✓" in raw and isinstance(st.get("bullets"), list):
+            _checks, _cur = [], None
+            for ln in raw.splitlines():
+                s = ln.strip()
+                if s.startswith("✓"):
+                    if _cur:
+                        _checks.append(_cur.strip())
+                    _cur = s.lstrip("✓ ").strip()
+                elif _cur is not None:
+                    if (not s) or s[:1] in "[■▶●▪*(" or s.startswith("구분") or re.match(r"^주\s*\d", s):
+                        _checks.append(_cur.strip())
+                        _cur = None
+                    else:
+                        _cur += " " + s
+            if _cur:
+                _checks.append(_cur.strip())
+            _checks = [c for c in _checks if len(c) >= 12]
+            if _checks:
+                _notes_keep = [b for b in st["bullets"]
+                               if str(b).lstrip()[:1] in ("주", "*", "※")
+                               or re.match(r"^\s*주\s*\d", str(b))]
+                st["bullets"] = _checks + _notes_keep
+                st["intro"] = ""        # 요약 intro 제거(원본엔 없음 — ✓ 불릿이 본문)
+
         raw_notes = []
         for ln in raw.splitlines():
             s = ln.strip()
