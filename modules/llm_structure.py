@@ -174,6 +174,18 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
             else:
                 grids.append(t)
 
+    # ★구분(c0) 라벨 중복 제거 — 여러 금융 페이지에 같은 참여기관(차주/연대보증인/대주/시공사/신탁사)이
+    #   반복 수록돼 기초자산 표에 두 번 나오던 문제(천안). 첫 등장만 유지(빈 라벨 행은 보존).
+    _seen_lab, _dedup = set(), []
+    for r in lv_rows:
+        lab = str(r[0] if r else "").strip()
+        if lab and lab in _seen_lab:
+            continue
+        if lab:
+            _seen_lab.add(lab)
+        _dedup.append(r)
+    lv_rows = _dedup
+
     # ★사업명/시행사·차주 행을 표 맨 위에(원본: 구조도 밑부터 기초자산 표 = 사업명부터 시작).
     #   구조도 페이지(fin에서 제외됨)의 label_value 표에서 값을 가져와 신탁사 앞에 prepend.
     biz_top, _seen = [], set()
@@ -241,7 +253,12 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
         idx = _find_row(anchor)
         if idx is None:
             if anchor == "주요 대출조건":
-                at = _find_row("대출기간")
+                # 참여기관 바로 뒤(상세 조건 앞)에 삽입 — 대전은 '대출기간', 천안은 '인출일정/이자지급' 앞
+                at = None
+                for _k in ("대출기간", "인출일정", "이자지급", "연체", "상환방"):
+                    at = _find_row(_k)
+                    if at is not None:
+                        break
                 lv_rows.insert(at if at is not None else len(lv_rows), [anchor, ""])
             elif _find_row("자금용도") is None:
                 lv_rows.append([anchor, ""])

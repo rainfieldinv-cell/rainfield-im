@@ -160,13 +160,15 @@ def clone_slide_layout(prs, slide_type: str, skip_graphic_frames: bool = False):
     # → 레이아웃이 같으므로 로고·삼각형 등이 자동으로 포함됨
     new_slide = prs.slides.add_slide(source.slide_layout)
 
-    # ★레이아웃의 슬라이드번호 placeholder('‹#›') 제거 — 페이지 번호는 우리 푸터(사업명｜N)가 담당.
-    #   안 그러면 모든 본문 슬라이드 우하단에 번호가 '한 번 더'(예: 26) 중복으로 찍힘.
+    # ★슬라이드번호 placeholder('‹#›') 제거 — 페이지 번호는 우리 푸터(사업명｜N)가 담당.
+    #   레이아웃 + '마스터' 둘 다 제거해야 함(마스터 placeholder가 모든 슬라이드에 '26'으로 찍히던 문제).
     try:
         _lay = source.slide_layout
-        for _ph in list(_lay.placeholders):
-            if int(_ph.placeholder_format.type) == 13:   # 13 = SLIDE_NUMBER
-                _ph._element.getparent().remove(_ph._element)
+        _containers = [_lay, _lay.slide_master]
+        for _cont in _containers:
+            for _ph in list(_cont.placeholders):
+                if int(_ph.placeholder_format.type) == 13:   # 13 = SLIDE_NUMBER
+                    _ph._element.getparent().remove(_ph._element)
     except Exception:
         pass
 

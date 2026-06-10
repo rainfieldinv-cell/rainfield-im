@@ -1147,7 +1147,8 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                     cl.fill.fore_color.rgb = PALETTE["gray"]                 # 중간 소계/합계 = D9D9D9
     # ★구분열은 항상 밝은 회색 F2F2F2(합계 음영보다 우선). 단 '합계행'(total로 분류된 행)은 합계 음영 유지.
     #   행이 합계가 아니면 라벨에 '총'이 들어가도(자산총계·부채총계 등 항목명) 전부 F2F2F2 — 일관되게.
-    if gubun_cols:
+    #   ★표 안의 표(중첩 grid)는 예외 — 헤더만 하늘 65%, 구분열 데이터칸은 색칠 안 함(사용자 지시).
+    if gubun_cols and not is_nested:
         _g_sub, _g_grand = _classify_total_rows(data, ncol)
         _g_totrows = _g_sub | _g_grand
         for ri in range(hdr_rows, nrow):
