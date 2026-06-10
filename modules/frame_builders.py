@@ -1107,6 +1107,9 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
         header, rows, gsub = _split_grouped_gubun(header, rows)
         if gsub:
             ncol = len(header)
+        elif (len(header) >= 3 and "구분" in str(header[0] or "")
+              and not str(header[1] or "").strip()):
+            gsub = True   # 이미 2열 구분(구분|빈 부구분헤더, 예 토지확보) → 헤더/빈SUB행 가로병합 적용
     # ★다단(그룹) 헤더(시세표 등): 헤더를 2줄(상위 그룹 + 하위 세부)로 구성
     hdr_grp = None if gsub else (_header_groups(header) if (kind != "label_value" and header) else None)
     if hdr_grp:
