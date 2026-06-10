@@ -223,15 +223,26 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
         for b in (p["_struct"].get("bullets") or []):
             if str(b).strip() and b not in all_notes:
                 all_notes.append(str(b).strip())
-        # ★LLM이 bullets로 안 뺀 경우 대비 — raw_text 에서 '주N) <내용>' 각주 정의 직접 추출
-        #   (탁상감정가 980억…, 대여금 상환 방법… 등이 누락되던 문제)
-        for ln in (p.get("raw_text", "") or "").splitlines():
+        # ★LLM이 bullets로 안 뺀 경우 대비 — raw_text 에서 각주 정의 직접 추출:
+        #   '주N) …', '*…'(별표 주석), 'N) …'(주 없는 번호각주, 다음 연속줄 합침 — 천안 LTV 주1) 2줄).
+        _lines = (p.get("raw_text", "") or "").splitlines()
+        for li, ln in enumerate(_lines):
             s = ln.strip()
+            note = None
             if s.startswith("주") and ")" in s:
                 head = s[:s.index(")")].replace("주", "").strip()
                 after = s[s.index(")") + 1:].strip()
-                if head.isdigit() and len(after) >= 3 and s not in all_notes:
-                    all_notes.append(s)
+                if head.isdigit() and len(after) >= 3:
+                    note = s
+            elif s.startswith("*") and len(s) >= 6:
+                note = s
+            elif re.match(r"^\d+\)\s*\S", s) and len(s) >= 8:
+                note = "주" + s        # 'N)' → '주N)' 로 통일
+                nxt = _lines[li + 1].strip() if li + 1 < len(_lines) else ""
+                if nxt and not re.match(r"^[\*\d주■▶•]", nxt) and any(k in nxt for k in ("LTV", "기준", "수용", "탁감")):
+                    note += " " + nxt
+            if note and note not in all_notes:
+                all_notes.append(note)
 
     def _take_note(keys):
         for i, nt in enumerate(all_notes):
@@ -278,6 +289,9 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
             # 구분|대출금액|금리|LTV → 주요 대출조건. 참여기관 바로 뒤(상세 조건 앞)에 신설.
             anchor = "주요 대출조건"
             note = _take_note(("탁상감정", "감정가", "감정평가", "경일감정"))
+            _star = _take_note(("자문수수료", "제반비용 별도", "수수료 및 대출"))   # *…별도 주석
+            if _star:
+                note = (_star + "\n" + note).strip() if note else _star
             if _find_row(anchor) is None:
                 _insert_before(anchor, ("대출기간", "인출일정", "이자지급", "연체", "상환방"))
         if anchor in _used:        # 같은 행에 표 중복(예 금융조건 표 2개) → 첫 표만
