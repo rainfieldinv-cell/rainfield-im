@@ -1061,6 +1061,39 @@ def _set_header_fill_alpha(table, hex_color, alpha_pct, header_rows=1):
                     r.font.color.rgb = RGBColor(0, 0, 0)
 
 
+def _split_grouped_gubun(header, rows):
+    """grid 구분(col0)이 'MAIN (SUB)' 형태로 같은 MAIN이 2행 이상 연속이면, 구분을
+       [MAIN | SUB] 2열로 분리(MAIN 세로병합·SUB 없는 행은 구분 가로병합 대상).
+       예: '인출금액 (일시)'/'인출금액 (한도)' → 구분='인출금액'(병합), 부구분='일시'/'한도'.
+       반환 (new_header, new_rows, split). split=False면 원본 유지."""
+    if not rows or not header or len(header) < 2:
+        return header, rows, False
+    pat = re.compile(r"^(.+?)\s*\(([^()]+)\)\s*$")
+    mains = []
+    for r in rows:
+        c0 = str((r[0] if r else "") or "").strip()
+        m = pat.match(c0)
+        mains.append(m.group(1).strip() if m else None)
+    if not any(mains[i] and mains[i] == mains[i + 1] for i in range(len(mains) - 1)):
+        return header, rows, False
+    grouped = set()
+    for i in range(len(mains)):
+        if mains[i] and ((i > 0 and mains[i - 1] == mains[i])
+                         or (i + 1 < len(mains) and mains[i + 1] == mains[i])):
+            grouped.add(i)
+    new_header = [header[0], ""] + list(header[1:])
+    new_rows = []
+    for i, r in enumerate(rows):
+        c0 = str((r[0] if r else "") or "").strip()
+        rest = list(r[1:])
+        if i in grouped:
+            m = pat.match(c0)
+            new_rows.append([m.group(1).strip(), m.group(2).strip()] + rest)
+        else:
+            new_rows.append([c0, ""] + rest)
+    return new_header, new_rows, True
+
+
 def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h, red_counts=None,
                         hdr_fill_hex=None, hdr_alpha=None, anchor_rows=None, is_last_chunk=True,
                         fill_set=None):
@@ -1068,8 +1101,14 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
        row_h: 스칼라(그리드 통일 행높이) 또는 본문행별 높이 리스트(label_value 가변).
        red_set: 원본 빨간 글씨 집합 — 매칭 셀은 빨간 글씨+빨간 테두리.
        hdr_fill_hex/hdr_alpha: 헤더행 특수 색(중첩표용 3E95BE+투명도)."""
+    # ★구분 다단('MAIN (SUB)' 연속 동일 MAIN) → [MAIN|SUB] 2열 분리(MAIN 세로병합). 예 인출금액 일시/한도
+    gsub = False
+    if kind != "label_value" and header:
+        header, rows, gsub = _split_grouped_gubun(header, rows)
+        if gsub:
+            ncol = len(header)
     # ★다단(그룹) 헤더(시세표 등): 헤더를 2줄(상위 그룹 + 하위 세부)로 구성
-    hdr_grp = _header_groups(header) if (kind != "label_value" and header) else None
+    hdr_grp = None if gsub else (_header_groups(header) if (kind != "label_value" and header) else None)
     if hdr_grp:
         _g_row0, _g_row1, _g_vmerge, _g_hmerges = hdr_grp
         header_list = [_g_row0, _g_row1]
@@ -1144,6 +1183,19 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
         if not is_corp4:
             _merge_vertical_runs(t, data, ncol, header_rows=n_hdr)  # 반복값 세로병합
         _merge_total_rows(t, data, ncol)                                     # 합계행 가로병합
+        if gsub:
+            # 구분 다단: 헤더의 구분은 부구분칸까지 가로병합 / SUB 빈 데이터행은 구분이 부구분칸까지 가로병합
+            try:
+                t.cell(0, 0).merge(t.cell(0, 1))
+            except Exception:
+                pass
+            for ri in range(n_hdr, nrow):
+                sub = str((data[ri][1] if ri < len(data) and len(data[ri]) > 1 else "") or "").strip()
+                if not sub:
+                    try:
+                        t.cell(ri, 0).merge(t.cell(ri, 1))
+                    except Exception:
+                        pass
         if is_corp4:
             for ri in range(n_hdr, nrow):
                 r = data[ri]
@@ -1194,6 +1246,8 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
     is_content = (kind != "label_value")
     gubun_cols = ([c for c in range(ncol) if c < len(header) and "구분" in str(header[c] or "")]
                   if (is_content and header) else [])
+    if gsub and 0 in gubun_cols and 1 not in gubun_cols:
+        gubun_cols.append(1)   # 구분 다단: 부구분칸(일시/한도 등)도 구분열 회색으로
     # ★합계행 음영(원본 규칙, 사용자 재확인):
     #   - 표 안의 표(중첩 grid, hdr_fill_hex 지정) → 합계 색칠 '무조건 안 함'
     #   - 그 외 표: 표의 '맨 밑' 합계/총합계(마지막 청크의 최하단 합계행) 1개만 하늘 민트(3E95BE 65%).
