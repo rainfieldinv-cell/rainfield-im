@@ -420,18 +420,23 @@ def _set_para_bullet(p, char="•", *, marL=0.17, font="Arial"):
         pPr.append(buChar)
 
 
-_CELL_BULLET_RE = re.compile(r"^(\s*)([•·▶◦●○■◆◇]|[-])\s+")
+_CELL_BULLET_RE = re.compile(r"^(\s*)([•·▶◦●○■▪◆◇]|[-])\s+")
+
+
+def _norm_bullet_char(ch):
+    """네모·점 계열(■▪●○◆◇◦·) → 작은 동그라미 '•'로 통일. ▶(상위)·-(하위)는 유지."""
+    return "•" if ch in "·●○■▪◆◇◦" else ch
 
 
 def _bulletize_text_frame(tf):
     """표 셀 안에서 마커(▶/•/-)로 시작하는 문단을 '진짜' 글머리 기호로 바꿈(흉내 글자 제거).
-       ▶/• = 상위 항목(들여쓰기 0단), '-' = 하위 항목(1단 들여쓰기). 줄바꿈 시 정렬 깔끔."""
+       ▶/• = 상위 항목(들여쓰기 0단), '-' = 하위 항목(1단 들여쓰기). 네모(■▪)는 •로 통일."""
     for p in tf.paragraphs:
         m = _CELL_BULLET_RE.match(p.text)
         if not m:
             continue
-        ch = m.group(2)
-        sub = (ch == "-")
+        ch = _norm_bullet_char(m.group(2))
+        sub = (m.group(2) == "-")
         n = len(m.group(0))                      # 마커(+공백) 글자 수만큼 런에서 제거
         for run in p.runs:
             if n <= 0:
@@ -1673,13 +1678,8 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             hdr_h = _rowh(fp)
             avail = _BODY_BOTTOM - _INTRO_T - label_h - hdr_h
             rhs_all = _calc_rhs(fp)
-            # ★side_box: 기본 10.5 유지. '10.5에서 넘칠 때만' 폰트 축소(입지분석). 사업개요는 10.5 그대로.
+            # ★표 글씨는 항상 10.5(사용자 지시: 예외 없음). 길어도 폰트 줄이지 말고 페이지 분할.
             _no_anchor = not any(_nested_for(r[0]) for r in body)
-            if side_box and _no_anchor and sum(rhs_all) > avail:
-                fp = max(8.0, fp - 2.0)
-                hdr_h = _rowh(fp)
-                avail = _BODY_BOTTOM - _INTRO_T - label_h - hdr_h
-                rhs_all = _calc_rhs(fp)
             chunks, cr, crh, cacc = [], [], [], 0.0
             for r, h in zip(body, rhs_all):
                 if cr and cacc + h > avail:
