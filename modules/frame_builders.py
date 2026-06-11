@@ -452,12 +452,14 @@ def _bulletize_text_frame(tf):
 
 
 def _add_textbox(slide, L, T, W, H, text, *, size=10.5, bold=False,
-                 color=None, align=PP_ALIGN.LEFT, red_set=None, ul_set=None, bullet=False):
+                 color=None, align=PP_ALIGN.LEFT, red_set=None, ul_set=None, bullet=False,
+                 line_spacing=None):
     """글상자 생성 — 내부여백 0, 텍스트 내용에 딱 맞는 높이(군더더기 여백 없음). 반환=(shape, 높이in).
        red_set/ul_set 지정 시 원본 빨간 글씨/밑줄에 해당하는 부분만 빨강·밑줄로 표시.
-       bullet=True 면 각 줄을 '진짜' 글머리 기호(buChar)로 — 줄 맨 앞 마커(•/▶/-)는 떼고 적용."""
+       bullet=True 면 각 줄을 '진짜' 글머리 기호(buChar)로 — 줄 맨 앞 마커(•/▶/-)는 떼고 적용.
+       line_spacing 지정 시 문단 줄간격(예 1.5)."""
     text = str(text).rstrip("\n ")        # 끝의 빈 줄/공백 제거(빈 여백 방지)
-    est_h = _est_text_height(text, W, size)
+    est_h = _est_text_height(text, W, size) * (line_spacing if line_spacing else 1.0)
     tb = slide.shapes.add_textbox(Inches(L), Inches(T), Inches(W), Inches(est_h))
     tf = tb.text_frame
     tf.word_wrap = True
@@ -474,13 +476,15 @@ def _add_textbox(slide, L, T, W, H, text, *, size=10.5, bold=False,
         p.alignment = align
         p.font.size = Pt(size)                       # 문단 기본(빈 줄에도 적용)
         p.font.name = nm
+        if line_spacing:
+            p.line_spacing = line_spacing
         seg_line = line
         if bullet and line.strip():
             m = _CELL_BULLET_RE.match(line)
-            if m:                                    # ▶/•/- 마커 보존(- = 하위 1단)
-                ch = m.group(2)
+            if m:                                    # ▶/•/- 마커 보존(- = 하위 1단, ■▪ → •)
+                ch = _norm_bullet_char(m.group(2))
                 seg_line = line[len(m.group(0)):]
-                _set_para_bullet(p, ch, marL=(0.36 if ch == "-" else 0.18), font=_FONT_LIGHT)
+                _set_para_bullet(p, ch, marL=(0.36 if m.group(2) == "-" else 0.18), font=_FONT_LIGHT)
             else:                                    # 마커 없는 평문 → 기본 • 불릿
                 _set_para_bullet(p, "•", marL=0.18, font=_FONT_LIGHT)
         for seg, is_red, is_ul in _emph_segments(seg_line, red_set, ul_set):
@@ -1244,7 +1248,14 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
         _set_header_fill_alpha(t, hdr_fill_hex, hdr_alpha if hdr_alpha is not None else 35,
                                header_rows=n_hdr)
     hdr_rows = n_hdr
-    # ★표 안의 표 앵커 행은 글씨를 위에 두고 그 아래 grid를 얹으므로 위 정렬(나머지는 가운데)
+    # ★표 안 모든 셀 세로 중간 정렬(원본대로 — 사용자 지시 "표안에 다 중간 정렬").
+    for _ri in range(nrow):
+        for _ci in range(ncol):
+            try:
+                t.cell(_ri, _ci).vertical_anchor = MSO_ANCHOR.MIDDLE
+            except Exception:
+                pass
+    # ★표 안의 표 앵커 행은 글씨를 위에 두고 그 아래 grid를 얹으므로 위 정렬(예외)
     if anchor_rows:
         for li in anchor_rows:
             r = hdr_rows + li
@@ -1811,8 +1822,8 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                 _map_w = _TBL_W * 0.56
                 _place_images_row(slide, big_imgs[:1], _TBL_L, t, _map_w, t + _IMG_TOP_H)
                 _add_textbox(slide, _TBL_L + _map_w + 0.2, t, _TBL_W - _map_w - 0.2,
-                             _IMG_TOP_H, _side_text, size=9, bullet=True,
-                             red_set=red_set, ul_set=ul_set)
+                             _IMG_TOP_H, _side_text, size=10.5, bullet=True,
+                             line_spacing=1.5, red_set=red_set, ul_set=ul_set)
                 btext = ""   # 지도 옆에 이미 적었으니 표 아래엔 안 찍음
             else:
                 _place_images_row(slide, big_imgs[:1], _TBL_L, t, _TBL_W, t + _IMG_TOP_H)
@@ -1931,10 +1942,10 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                                    size=9, color=PALETTE["gray_text"], red_set=red_set, ul_set=ul_set)
             t += _nhh + 0.10
         if idx == n - 1 and btext:
-            bh = _est_text_height(btext, tw, 10)
+            bh = _est_text_height(btext, tw, 10.5) * 1.5
             _, _bhh = _add_textbox(slide, _TBL_L, t + 0.06, tw, bh, btext,
-                                   size=10, bold=False, color=RGBColor(0x00, 0x00, 0x00),
-                                   red_set=red_set, ul_set=ul_set, bullet=True)
+                                   size=10.5, bold=False, color=RGBColor(0x00, 0x00, 0x00),
+                                   red_set=red_set, ul_set=ul_set, bullet=True, line_spacing=1.5)
             t += _bhh + 0.10
         _add_combined_footer(slide, business_name)
         # ★출처는 항상 좌측 하단 고정(별도 글상자) — 원본에 있을 때만
