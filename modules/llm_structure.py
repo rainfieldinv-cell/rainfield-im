@@ -768,6 +768,11 @@ def _restore_page_notes(pages: list) -> None:
                         fin_t = t
                         break
                 for npart in note_parts:
+                    # ★LLM이 출처에서 '주1)' prefix를 떼고 '금융감독원…'만 넣은 경우 원문(raw_text)서 prefix 복원
+                    if not re.match(r"^\*?\s*주\s*\d+\s*\)", npart):
+                        _rn = _match_raw(npart)
+                        if _rn:
+                            npart = _rn
                     tgt = (fin_t if (fin_t and any(k in npart for k in ("재무", "감독원", "전자공시")))
                            else tabs[-1])
                     tgt.setdefault("_notes", [])
@@ -908,6 +913,25 @@ def _restore_page_notes(pages: list) -> None:
                         _mm = "- " + _mm
                         if _mm not in _t["_notes"]:
                             _t["_notes"].append(_mm)
+
+        # ⑥-3 표 _notes 정리: '주 N)'→'주N)' 정규화 후 같은 번호 중복 제거(긴 본문 유지)·번호순 정렬.
+        #     (분양사례 표의 셀줄바꿈 잔재 '주 3)'가 '주3)'와 따로 잡혀 중복·역순으로 뜨던 문제)
+        for _t in (st.get("tables") or []):
+            _nts = _t.get("_notes") or []
+            if len(_nts) < 2:
+                continue
+            _other, _byn = [], {}
+            for _n in _nts:
+                _s = re.sub(r"^(\*?)\s*주\s*(\d+)\s*\)", r"\1주\2)", str(_n).strip())
+                _mn = re.match(r"^\*?주(\d+)\)", _s)
+                if not _mn:
+                    if _s not in _other:
+                        _other.append(_s)
+                    continue
+                _k = _mn.group(1)
+                if _k not in _byn or len(_s) > len(_byn[_k]):
+                    _byn[_k] = _s
+            _t["_notes"] = _other + [_byn[k] for k in sorted(_byn, key=int)]
 
         # ⑦ 주N) 각주 중복 제거: bullets(좌하단)와 표 _notes 양쪽에 같은 번호가 있으면, 더 긴 버전을
         #    표 _notes에 남기고 bullets에서는 제거(원본처럼 표 밑에만 1번 — 토지확보 주1/2/3 중복 방지).
