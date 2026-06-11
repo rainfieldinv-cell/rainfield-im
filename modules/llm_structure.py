@@ -542,6 +542,26 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
     # ── 각주 복원: raw_text의 '주N)' 각주를 살리고(글머리 X), '출처:' 아닌 표각주는 표 밑으로 ──
     _restore_page_notes(pages)
 
+    # ── 같은 표(grid)가 '분석 페이지(지도 있음)'와 '전용 표 페이지(지도 없음)' 양쪽에 중복되면,
+    #    분석 페이지에선 표 제거(글+지도만 남김). (천안: 인근시세비교=글/지도, 비교대상 매매사례현황=표) ──
+    _grid_loc = {}
+    for p in pages:
+        for t in ((p.get("_struct") or {}).get("tables") or []):
+            if (t.get("kind") or "") == "grid" and str(t.get("title") or "").strip():
+                _grid_loc.setdefault((str(t["title"]).strip(), len(t.get("rows") or [])), []).append(p)
+    for _plist in _grid_loc.values():
+        if len(_plist) < 2:
+            continue
+        _with_img = [p for p in _plist if p.get("images")]
+        _no_img = [p for p in _plist if not p.get("images")]
+        if _with_img and _no_img:        # 지도 있는 분석 페이지에서 중복 표 제거(전용 표 페이지엔 유지)
+            _keys = {(str(t.get("title") or "").strip(), len(t.get("rows") or []))
+                     for q in _no_img for t in ((q.get("_struct") or {}).get("tables") or [])}
+            for p in _with_img:
+                st = p["_struct"]
+                st["tables"] = [t for t in (st.get("tables") or [])
+                                if (str(t.get("title") or "").strip(), len(t.get("rows") or [])) not in _keys]
+
     # ── 투자구조도(2.1): 도형으로 직접 그림. 섹션2 맨 앞에 삽입 → 금융조건은 2.2로 밀림 ──
     try:
         from modules.ai_slide_builders import generate_investment_structure
