@@ -1195,6 +1195,27 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
         if not is_corp4:
             _merge_vertical_runs(t, data, ncol, header_rows=n_hdr)  # 반복값 세로병합
         _merge_total_rows(t, data, ncol)                                     # 합계행 가로병합
+        # ★숫자 컬럼에 텍스트 값(예 '2028년 완료예정')이 오고 다음 칸이 비면 가로 병합(원본처럼 spanning).
+        _NUMonly = re.compile(r"^[\d,.\-~%원억\s]+$")
+        for ri in range(n_hdr, nrow):
+            for ci in range(1, ncol - 1):
+                v = str((data[ri][ci] if ci < len(data[ri]) else "") or "").strip()
+                nxt = str((data[ri][ci + 1] if ci + 1 < len(data[ri]) else "") or "").strip()
+                if not v or nxt or _NUMonly.match(v) or not re.search(r"[가-힣A-Za-z]", v):
+                    continue
+                _col_other = [str((data[rj][ci] if ci < len(data[rj]) else "") or "").strip()
+                              for rj in range(n_hdr, nrow) if rj != ri]
+                if any(o and _NUMonly.match(o) for o in _col_other):   # 숫자 컬럼인데 이 칸만 텍스트 → spanning
+                    _end = ci
+                    for cj in range(ci + 1, ncol):
+                        if str((data[ri][cj] if cj < len(data[ri]) else "") or "").strip():
+                            break
+                        _end = cj
+                    if _end > ci:
+                        try:
+                            t.cell(ri, ci).merge(t.cell(ri, _end))
+                        except Exception:
+                            pass
         if gsub:
             # 구분 다단: 헤더의 구분은 부구분칸까지 가로병합 / SUB 빈 데이터행은 구분이 부구분칸까지 가로병합
             try:
