@@ -1364,6 +1364,8 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
     if kind != "label_value" and header:
         _NUMERIC = re.compile(r"^[\d,.\-~%()\s원억평㎡천만원/]+$")
         for ci in range(ncol):
+            if ci in gubun_cols:   # ★구분/부구분 라벨열은 항상 가운데(원본대로) — 길어도 왼쪽 안 함
+                continue
             vals = [str((data[ri][ci] if ci < len(data[ri]) else "") or "").strip()
                     for ri in range(hdr_rows, nrow)]
             vals = [v for v in vals if v]

@@ -779,6 +779,26 @@ def _restore_page_notes(pages: list) -> None:
             if ok:
                 tr[ei] = f"{ssum:,}"
 
+        # ④-2 수용재결 진행일정(구분|진행일정|관계법령): 진행일정 칸에 섞인 '(…)' 조건문은
+        #     관계법령 칸 소속(원본). 진행일정 칸의 '(' 로 시작하는 줄을 관계법령 칸으로 이동.
+        for t in (st.get("tables") or []):
+            hdr = [str(h or "") for h in (t.get("header") or [])]
+            pi = next((i for i, h in enumerate(hdr) if "진행일정" in h), None)
+            li = next((i for i, h in enumerate(hdr) if "관계법령" in h), None)
+            if pi is None or li is None:
+                continue
+            for r in (t.get("rows") or []):
+                if pi >= len(r):
+                    continue
+                lines = str(r[pi] or "").split("\n")
+                moved = [ln for ln in lines if ln.strip().startswith("(")]
+                if not moved:
+                    continue
+                r[pi] = "\n".join(ln for ln in lines if not ln.strip().startswith("(")).strip()
+                while len(r) <= li:
+                    r.append("")
+                r[li] = (str(r[li] or "").strip() + "\n" + "\n".join(moved)).strip()
+
         # ⑤ 사업수지(구분|세부항목|세대수/내역|…) 표 정규화 — 사람 제안서 구조와 맞춤
         #   · '총 매출/총 비용' 같은 섹션 합계 라벨이 구분(c0)에 있으면 세부항목(c1)으로 옮김
         #     → 구분(매출/비용)은 그 합계행까지 세로로 한 칸, 합계 라벨은 세부항목+세대수내역만 가로병합
