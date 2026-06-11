@@ -1089,7 +1089,8 @@ def _recover_dropped_comparison_tables(pages: list, pdf_path: str) -> None:
         doc = fitz.open(pdf_path)
     except Exception:
         return
-    for p in pages:
+    _inserts = []   # (원본 index, 새 표 전용 페이지) — 분석/지도 페이지면 표를 별도 슬라이드로
+    for idx, p in enumerate(pages):
         st = p.get("_struct")
         if not isinstance(st, dict):
             continue
@@ -1120,8 +1121,21 @@ def _recover_dropped_comparison_tables(pages: list, pdf_path: str) -> None:
             continue
         m = re.search(r"비교대상\s*(분양사례|매매사례)\s*현황", raw)
         title = "비교대상 " + (m.group(1) if m else "분양사례") + " 현황"
-        st.setdefault("tables", []).append(
-            {"kind": "grid", "title": title, "header": hdr, "rows": body})
+        new_tbl = {"kind": "grid", "title": title, "header": hdr, "rows": body}
+        # ★분석문/지도가 같이 있는 페이지면 표는 '별도 슬라이드'로(원본처럼 표 안 짤리게 — 이어서 한 장에).
+        if st.get("bullets") or p.get("images"):
+            _inserts.append((idx, {
+                "page_num": p.get("page_num"),
+                "raw_text": "", "images": [], "_sec_int": p.get("_sec_int"),
+                "_struct": {"subtitle": st.get("subtitle"),
+                            "section_label": st.get("section_label"),
+                            "intro": "", "bullets": [], "source": "",
+                            "tables": [new_tbl]},
+            }))
+        else:
+            st.setdefault("tables", []).append(new_tbl)
+    for _off, (idx, np_) in enumerate(_inserts):
+        pages.insert(idx + 1 + _off, np_)
 
 
 def _landuse_3level(pages: list) -> None:

@@ -1484,7 +1484,18 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
     # ★원본 정렬 재현(G2) — 모든 병합·색칠 뒤 맨 마지막에 적용(앞서 _compact_grid가 가운데로 리셋하므로).
     #   원본처럼: '숫자/비율 전용' 컬럼 = 오른쪽 / '텍스트 섞인 긴(≥10자)' 컬럼 = 왼쪽 / 그 외(짧은) = 가운데.
     #   (금액·세대수·면적·비율·매매대금 → 오른쪽 / 진행일정·관계법령·단지명·구분 라벨 → 왼쪽)
-    if kind != "label_value" and header:
+    # ★비교대상 사례표(조감도 사진 or 전세가율/도급순위 행)는 원본처럼 데이터칸 전부 가운데 정렬.
+    _is_comp = bool(thumb_imgs) or any(
+        any(k in str((data[ri][0] if data[ri] else "") or "") for k in ("전세가율", "도급순위"))
+        for ri in range(hdr_rows, nrow))
+    if kind != "label_value" and header and _is_comp:
+        for ci in range(ncol):
+            if ci in gubun_cols:
+                continue
+            for ri in range(hdr_rows, nrow):
+                for p in t.cell(ri, ci).text_frame.paragraphs:
+                    p.alignment = PP_ALIGN.CENTER
+    elif kind != "label_value" and header:
         # 숫자/금액 컬럼 판정: 대괄호([1,200] 억원)·TBD([TBD]%)·단위(억/원/평/%)도 숫자로 봄 → 오른쪽 정렬.
         _NUMERIC = re.compile(r"^[\d,.\-~%()\[\]\s원억평㎡천만개월/TBDtbd]+$")
         for ci in range(ncol):
