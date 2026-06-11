@@ -1385,21 +1385,24 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
     #   원본처럼: '숫자/비율 전용' 컬럼 = 오른쪽 / '텍스트 섞인 긴(≥10자)' 컬럼 = 왼쪽 / 그 외(짧은) = 가운데.
     #   (금액·세대수·면적·비율·매매대금 → 오른쪽 / 진행일정·관계법령·단지명·구분 라벨 → 왼쪽)
     if kind != "label_value" and header:
-        _NUMERIC = re.compile(r"^[\d,.\-~%()\s원억평㎡천만원/]+$")
+        # 숫자/금액 컬럼 판정: 대괄호([1,200] 억원)·TBD([TBD]%)·단위(억/원/평/%)도 숫자로 봄 → 오른쪽 정렬.
+        _NUMERIC = re.compile(r"^[\d,.\-~%()\[\]\s원억평㎡천만개월/TBDtbd]+$")
         for ci in range(ncol):
-            if ci in gubun_cols:   # ★구분/부구분 라벨열은 항상 가운데(원본대로) — 길어도 왼쪽 안 함
+            if ci in gubun_cols:   # ★구분/부구분 라벨열은 항상 가운데(원본대로)
                 continue
-            vals = [str((data[ri][ci] if ci < len(data[ri]) else "") or "").strip()
-                    for ri in range(hdr_rows, nrow)]
-            vals = [v for v in vals if v]
-            if not vals:
-                continue
-            all_numeric = all(_NUMERIC.match(v) for v in vals)
-            longish = any(len(v) >= 10 for v in vals)
-            _al = (PP_ALIGN.RIGHT if all_numeric
-                   else (PP_ALIGN.LEFT if longish else None))
-            if _al is not None:
-                for ri in range(hdr_rows, nrow):
+            # ★셀 단위 정렬: 숫자/금액칸=오른쪽, 긴 텍스트칸(≥10자)=왼쪽, 짧은 텍스트=가운데.
+            #   (한 컬럼에 금액 행 + 긴 설명 행이 섞여도 각각 맞게 — 별첨1 주요채권보전 등)
+            for ri in range(hdr_rows, nrow):
+                ct = str((data[ri][ci] if ci < len(data[ri]) else "") or "").strip()
+                if not ct:
+                    continue
+                if _NUMERIC.match(ct):
+                    _al = PP_ALIGN.RIGHT
+                elif len(ct) >= 10:
+                    _al = PP_ALIGN.LEFT
+                else:
+                    _al = None
+                if _al is not None:
                     for p in t.cell(ri, ci).text_frame.paragraphs:
                         p.alignment = _al
     return height
