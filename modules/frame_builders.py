@@ -1105,7 +1105,7 @@ def _split_grouped_gubun(header, rows):
 
 def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h, red_counts=None,
                         hdr_fill_hex=None, hdr_alpha=None, anchor_rows=None, is_last_chunk=True,
-                        fill_set=None):
+                        fill_set=None, thumb_imgs=None):
     """헤더(있으면)+행들을 렌더 → 높이(in).
        row_h: 스칼라(그리드 통일 행높이) 또는 본문행별 높이 리스트(label_value 가변).
        red_set: 원본 빨간 글씨 집합 — 매칭 셀은 빨간 글씨+빨간 테두리.
@@ -1405,6 +1405,38 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                 if _al is not None:
                     for p in t.cell(ri, ci).text_frame.paragraphs:
                         p.alignment = _al
+    # ★조감도 행: 단지별 작은 사진을 첫 데이터 행 셀에 배치(비교대상 분양/매매 사례표).
+    if thumb_imgs and kind != "label_value" and hdr_rows < nrow:
+        _THUMB_H = 0.62
+        try:
+            t.rows[hdr_rows].height = Inches(_THUMB_H)
+        except Exception:
+            pass
+        _row_y = T
+        for _r in range(hdr_rows):
+            try:
+                _row_y += t.rows[_r].height / 914400.0
+            except Exception:
+                _row_y += _rowh(font_pt)
+        _col_x = [L]
+        for _ci in range(ncol):
+            try:
+                _col_x.append(_col_x[-1] + t.columns[_ci].width / 914400.0)
+            except Exception:
+                _col_x.append(_col_x[-1] + W / max(1, ncol))
+        _ph = _THUMB_H - 0.10
+        for _ci in range(1, ncol):
+            _img = thumb_imgs[_ci - 1] if (_ci - 1) < len(thumb_imgs) else None
+            if not _img:
+                continue
+            _cw = _col_x[_ci + 1] - _col_x[_ci]
+            _iw = max(0.2, min(_cw - 0.06, _ph * 1.85))
+            try:
+                slide.shapes.add_picture(io.BytesIO(_img), Inches(_col_x[_ci] + (_cw - _iw) / 2),
+                                         Inches(_row_y + 0.05), Inches(_iw), Inches(_ph))
+            except Exception:
+                pass
+        height += max(0.0, _THUMB_H - _rowh(font_pt))   # 조감도 행이 커진 만큼 표 높이 보정
     return height
 
 
@@ -1722,7 +1754,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                 lbl = (f"{title}({k + 1}/{m})" if (title and m > 1) else title)
                 anchors = [(i, rows[i][0]) for i in range(len(rows)) if _nested_for(rows[i][0])]
                 _bn = tnotes if k == m - 1 else []   # 표 각주는 마지막 청크 밑에만
-                blocks.append((lbl, kind, header, rows, ncol, fp, rhs, anchors, _bn))
+                blocks.append((lbl, kind, header, rows, ncol, fp, rhs, anchors, _bn, None))
         else:
             rh = _rowh(fp)
             cap_full = max(1, int((_BODY_BOTTOM - _INTRO_T - label_h) / rh) - (1 if has_h else 0))
@@ -1772,7 +1804,8 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                                 break
                 lbl = (f"{title}({k + 1}/{m})" if (title and m > 1) else title)
                 _bn = tnotes if k == m - 1 else []   # 표 각주는 마지막 청크 밑에만
-                blocks.append((lbl, kind, header, chunk, ncol, fp, rh, None, _bn))
+                blocks.append((lbl, kind, header, chunk, ncol, fp, rh, None, _bn,
+                               (tdef.get("_thumb_imgs") if k == 0 else None)))
 
     # ── 블록을 슬라이드에 채움 (각 청크는 빈 슬라이드 1장에 반드시 들어감) ──
     #   ★제목의 내용(인트로)이 없으면 본문을 인트로 자리(_INTRO_T)부터 시작 = 전체적으로 위로.
@@ -1797,7 +1830,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         top = _INTRO_T          # 연속 슬라이드(인트로 없음)는 인트로 자리부터 = 위로
 
     for blk in blocks:
-        lbl, kind, header, rows, ncol, fp, rh, _anchors, _tn = blk
+        lbl, kind, header, rows, ncol, fp, rh, _anchors, _tn, _thumb = blk
         label_h = _LABEL_H if lbl else 0.0
         _tn_h = (_est_text_height("\n".join(_tn), tw, 9) + 0.10) if _tn else 0.0
         if isinstance(rh, (list, tuple)):
@@ -1842,7 +1875,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                 _place_images_row(slide, big_imgs[:1], _TBL_L, t, _TBL_W, t + _IMG_TOP_H)
             t += _IMG_TOP_H + 0.12
         tbl_start = t   # 표가 시작되는 y(사진 옆배치 기준)
-        for (lbl, kind, header, rows, ncol, fp, rh, anchors, tbl_notes) in plan["items"]:
+        for (lbl, kind, header, rows, ncol, fp, rh, anchors, tbl_notes, thumb_imgs) in plan["items"]:
             if lbl:
                 # ★'(단위 …)'는 표 우측 위에 Light 9pt 별도 글상자로(원본처럼), 라벨에선 분리
                 unit = ""
@@ -1884,7 +1917,8 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                         rows[li][1] = ""
             used = _render_table_chunk(slide, kind, header, rows, ncol, _TBL_L, t, tw, fp, rh,
                                        red_counts=_rc, anchor_rows=_anchor_li,
-                                       is_last_chunk=_is_last_chunk, fill_set=fill_set)
+                                       is_last_chunk=_is_last_chunk, fill_set=fill_set,
+                                       thumb_imgs=thumb_imgs)
             # ★앵커 행 내용칸: (단위 캡션) → grid → 주N) 각주 → 요약 글씨 순으로 얹음(표 먼저, 글 나중)
             if anchors and isinstance(rh, (list, tuple)):
                 lab_w = min(1.7, tw * 0.24)

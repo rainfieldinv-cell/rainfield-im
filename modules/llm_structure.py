@@ -562,6 +562,9 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
                 st["tables"] = [t for t in (st.get("tables") or [])
                                 if (str(t.get("title") or "").strip(), len(t.get("rows") or [])) not in _keys]
 
+    # ── 비교대상 분양/매매 사례표에 '조감도' 행(단지별 사진) 추가 ──
+    _inject_comparison_thumbnails(pages, pdf_path)
+
     # ── 투자구조도(2.1): 도형으로 직접 그림. 섹션2 맨 앞에 삽입 → 금융조건은 2.2로 밀림 ──
     try:
         from modules.ai_slide_builders import generate_investment_structure
@@ -907,6 +910,77 @@ def _restore_page_notes(pages: list) -> None:
                                  and len(str(_bl_by[_jnum(_n)])) > len(str(_n))) else _n)
                                 for _n in _nts]
             st["bullets"] = [_b for _b in _bl if _jnum(_b) is None]
+
+
+def _inject_comparison_thumbnails(pages: list, pdf_path: str) -> None:
+    """비교대상 분양사례/매매사례 현황 표에 '조감도' 행(단지별 작은 사진)을 추가.
+       PyMuPDF로 페이지 썸네일들을 y행 그룹·x정렬로 추출 → 표의 데이터 열 수와 매칭해
+       g['_thumb_imgs'](왼→오 순서 png bytes)로 저장하고 맨 위에 '조감도' 빈 행을 넣는다."""
+    if not pdf_path:
+        return
+    try:
+        import fitz
+    except Exception:
+        return
+    from collections import defaultdict
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return
+    for p in pages:
+        st = p.get("_struct")
+        if not isinstance(st, dict):
+            continue
+        grids = [t for t in (st.get("tables") or [])
+                 if (t.get("kind") or "") == "grid"
+                 and any(k in str(t.get("title") or "") for k in ("분양사례 현황", "매매사례 현황"))]
+        if not grids:
+            continue
+        pi = (p.get("page_num") or 0) - 1
+        if pi < 0 or pi >= doc.page_count:
+            continue
+        try:
+            info = doc[pi].get_image_info(xrefs=True)
+        except Exception:
+            continue
+        rows = defaultdict(list)
+        for im in info:
+            b = im.get("bbox") or (0, 0, 0, 0)
+            rows[round(b[1] / 20)].append((b[0], im.get("xref")))
+        photo_rows = []
+        for y in sorted(rows):
+            cells = sorted(rows[y])
+            if len(cells) < 3:                  # 조감도 행으로 볼 만한 것(사진 3장+)
+                continue
+            imgs = []
+            for _x, xref in cells:
+                try:
+                    pix = fitz.Pixmap(doc, xref)
+                    if (pix.n - pix.alpha) > 3:
+                        pix = fitz.Pixmap(fitz.csRGB, pix)
+                    imgs.append(pix.tobytes("png"))
+                except Exception:
+                    imgs.append(None)
+            photo_rows.append(imgs)
+        if not photo_rows:
+            continue
+        used = set()
+        for g in grids:
+            ncol = max([len(g.get("header") or [])]
+                       + [len(r) for r in (g.get("rows") or [])] + [0])
+            if ncol < 2:
+                continue
+            data_cols = ncol - 1
+            mi = next((i for i, pr in enumerate(photo_rows)
+                       if i not in used and len(pr) == data_cols), None)
+            if mi is None:
+                mi = next((i for i in range(len(photo_rows)) if i not in used), None)
+            if mi is None:
+                continue
+            used.add(mi)
+            g["rows"] = ([["조감도"] + ["" for _ in range(ncol - 1)]]
+                         + [list(r) for r in (g.get("rows") or [])])
+            g["_thumb_imgs"] = photo_rows[mi]
 
 
 def _pack_short_pages(pages: list, *, debug: bool = False) -> None:
