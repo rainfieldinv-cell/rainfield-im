@@ -347,7 +347,7 @@ def _est_text_height(text, W, size):
     """글상자 높이(in) 추정 — 자동줄바꿈 고려. 빈 줄 군더더기 없이 내용에 딱 맞춤."""
     char_w = size * 0.78 / 72.0           # 한글 기준 글자폭 근사
     cpl = max(1, int(W / char_w))
-    line_h = size * 1.32 / 72.0           # 한 줄 높이(여유 최소화)
+    line_h = size * 1.20 / 72.0           # 한 줄 높이 — 셀 줄간격 100%(spcBef/aft 0)에 맞춰 촘촘
     lines = 0
     for ln in str(text).split("\n"):
         lines += max(1, -(-len(ln) // cpl))   # ceil
@@ -1979,6 +1979,14 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
     if notes_text:
         reserve_bottom += _est_text_height(notes_text, _TBL_W, 9) + 0.10
     pack_bottom = _BODY_BOTTOM - reserve_bottom
+    # ★차주개요(기업개요+주주구성및역할+재무제표)는 원본처럼 한 페이지에 — 패킹 하한을 살짝 늘려 분할 방지
+    _blk_blob = " ".join(
+        str(h) for blk in blocks for h in (blk[2] or [])
+    ) + " " + " ".join(
+        str(c) for blk in blocks for r in (blk[3] or []) for c in r)
+    if ("회사명" in _blk_blob and "주주명" in _blk_blob
+            and "자산" in _blk_blob and "부채" in _blk_blob):
+        pack_bottom = _BODY_BOTTOM + 0.6 - reserve_bottom   # 차주개요 3표 한 페이지
 
     def flush():
         nonlocal cur, top

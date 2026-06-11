@@ -78,6 +78,8 @@ if "cover_image_bytes" not in st.session_state:
     st.session_state.cover_image_bytes = None  # 선택된 표지 이미지 bytes
 if "parsed_pages" not in st.session_state:
     st.session_state.parsed_pages = []         # content_parser 결과
+if "pdf_bytes" not in st.session_state:
+    st.session_state.pdf_bytes = None          # PDF 원본 bytes(좌표기반 사진/표복원용)
 
 # 섹션 이미지 관련 세션 상태 — 원형 슬롯 3개 (4개 섹션 divider 공통 적용)
 if "section_img_idx_list" not in st.session_state:
@@ -187,6 +189,8 @@ def show_step1():
                 # 추출 결과 저장
                 st.session_state.extracted_data = result
                 st.session_state.uploaded_file  = uploaded.name
+                # ★PDF 원본 bytes 보관 — enrich 단계에서 좌표기반 사진/표복원(조감도·매매사례)에 사용
+                st.session_state.pdf_bytes = file_bytes if file_type == "pdf" else None
 
                 # 사업명 자동 감지
                 detected = detect_business_name(result["pages_text"])
@@ -847,7 +851,14 @@ def show_step4():
                 exec_summary_data = None
                 try:
                     from modules.llm_structure import enrich_and_number
-                    enrich_and_number(final_pages)
+                    # ★PDF 원본을 임시파일로 넘겨 좌표기반 사진(조감도)·표복원(매매사례)·썸네일 활성화
+                    _pdf_b = st.session_state.get("pdf_bytes")
+                    _pdf_path = None
+                    if _pdf_b:
+                        import tempfile
+                        _tf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+                        _tf.write(_pdf_b); _tf.close(); _pdf_path = _tf.name
+                    enrich_and_number(final_pages, pdf_path=_pdf_path)
                     from modules.ai_slide_builders import generate_executive_summary
                     _es_text = "\n".join(
                         (p.get("raw_text", "") or "") for p in final_pages
