@@ -557,6 +557,9 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
     # ── 차주개요: '주주구성' + '주주 역할' → '주주구성 및 역할' 한 표(업무분담 열, 그룹 세로병합) ──
     _merge_shareholder_role(pages)
 
+    # ── 토지 확보현황: 확보 > 사유지 > {계약,협의} + 국공유지 3단 구분으로 재구성(원본) ──
+    _landuse_3level(pages)
+
     # ── 같은 표(grid)가 '분석 페이지(지도 있음)'와 '전용 표 페이지(지도 없음)' 양쪽에 중복되면,
     #    분석 페이지에선 표 제거(글+지도만 남김). (천안: 인근시세비교=글/지도, 비교대상 매매사례현황=표) ──
     _grid_loc = {}
@@ -1114,6 +1117,39 @@ def _recover_dropped_comparison_tables(pages: list, pdf_path: str) -> None:
         title = "비교대상 " + (m.group(1) if m else "분양사례") + " 현황"
         st.setdefault("tables", []).append(
             {"kind": "grid", "title": title, "header": hdr, "rows": body})
+
+
+def _landuse_3level(pages: list) -> None:
+    """토지 확보현황 표를 원본처럼 3단 구분으로 재구성:
+       확보 > 사유지 > {계약 체결, 협의 완료} + 국공유지 / 소계·수용·합계는 구분 전체 가로병합.
+       (현재는 확보 > {계약,협의,국공유지} 2단 → 사유지 중간단 삽입)."""
+    for p in pages:
+        st = p.get("_struct")
+        if not isinstance(st, dict):
+            continue
+        for t in (st.get("tables") or []):
+            hdr = [str(h or "") for h in (t.get("header") or [])]
+            if not (any("확보비율" in h for h in hdr) and any("구역면적" in h for h in hdr)):
+                continue
+            if len(hdr) < 3 or hdr[1].strip() or not hdr[2].strip():
+                continue                       # 2단 구분(구분|빈|구역면적…)만 대상(이미 3단이면 skip)
+            new_rows, saw_private = [], False
+            for r in (t.get("rows") or []):
+                c0 = str(r[0] or "").strip()
+                c1 = str(r[1] or "").strip()
+                rest = list(r[2:])
+                if any(k in c1 for k in ("계약", "협의")):       # 사유지 멤버
+                    sa = "" if saw_private else "사유지"
+                    saw_private = True
+                    new_rows.append([c0, sa, c1] + rest)
+                elif "국공유지" in c1:                          # 사유지와 동급(col1), 계약칸까지 가로병합
+                    new_rows.append([c0, c1, ""] + rest)
+                elif "소계" in c1:                              # 소계 → 구분 col0(전체 가로병합)
+                    new_rows.append([c1, "", ""] + rest)
+                else:                                           # 수용/합계(라벨 c0) 등
+                    new_rows.append([c0, "", ""] + rest)
+            t["header"] = [hdr[0], "", ""] + hdr[2:]
+            t["rows"] = new_rows
 
 
 def _merge_shareholder_role(pages: list) -> None:

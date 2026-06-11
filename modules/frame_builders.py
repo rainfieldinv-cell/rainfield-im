@@ -1137,6 +1137,11 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
         elif (len(header) >= 3 and "구분" in str(header[0] or "")
               and not str(header[1] or "").strip()):
             gsub = True   # 이미 2열 구분(구분|빈 부구분헤더, 예 토지확보) → 헤더/빈SUB행 가로병합 적용
+    # 구분(병합) 열 개수 = '구분' + 뒤이은 연속 빈 헤더 칸 수(2열=2, 토지확보 3단=3)
+    n_gub = 1
+    if gsub and header:
+        while n_gub < len(header) and not str(header[n_gub] or "").strip():
+            n_gub += 1
     # ★다단(그룹) 헤더(시세표 등): 헤더를 2줄(상위 그룹 + 하위 세부)로 구성
     hdr_grp = None if gsub else (_header_groups(header) if (kind != "label_value" and header) else None)
     if hdr_grp:
@@ -1211,9 +1216,10 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
         is_corp4 = (ncol == 4 and len(header) == 4
                     and "구분" in str(header[0]) and "구분" in str(header[2]))
         if not is_corp4:
-            # gsub면 SUB열(col1)은 세로병합 제외(단일라벨 빈칸이 SUB값을 끌고 내려가는 것 방지)
+            # gsub면 최하위 SUB열(마지막 구분열)만 세로병합 제외 — 단일라벨 빈칸이 SUB값을 끌고
+            #   내려가는 것 방지. 단 상위 구분열(예 토지확보 사유지=col1)은 세로병합돼야 함.
             _merge_vertical_runs(t, data, ncol, header_rows=n_hdr,
-                                 skip_cols=({1} if gsub else None))  # 반복값 세로병합
+                                 skip_cols=({n_gub - 1} if gsub else None))  # 반복값 세로병합
         _merge_total_rows(t, data, ncol)                                     # 합계행 가로병합
         # ★숫자 컬럼에 텍스트 값(예 '2028년 완료예정')이 오고 다음 칸이 비면 가로 병합(원본처럼 spanning).
         _NUMonly = re.compile(r"^[\d,.\-~%원억\s]+$")
@@ -1237,18 +1243,34 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                         except Exception:
                             pass
         if gsub:
-            # 구분 다단: 헤더의 구분은 부구분칸까지 가로병합 / SUB 빈 데이터행은 구분이 부구분칸까지 가로병합
+            # 구분 다단: 헤더의 구분은 전 구분칸까지 가로병합 / 데이터행은 구분영역 안에서
+            #   '값 뒤 빈칸'을 가로병합(2단: 단일라벨이 부구분칸 차지 / 3단 토지확보: 국공유지가
+            #   사유지+계약칸, 소계·합계가 확보+사유지+계약칸 차지). 합계행은 _merge_total_rows가 처리.
             try:
-                t.cell(0, 0).merge(t.cell(0, 1))
+                t.cell(0, 0).merge(t.cell(0, n_gub - 1))
             except Exception:
                 pass
+            _gsub_sub, _gsub_grand = _classify_total_rows(data, ncol)
+            _gsub_tot = _gsub_sub | _gsub_grand
             for ri in range(n_hdr, nrow):
-                sub = str((data[ri][1] if ri < len(data) and len(data[ri]) > 1 else "") or "").strip()
-                if not sub:
-                    try:
-                        t.cell(ri, 0).merge(t.cell(ri, 1))
-                    except Exception:
-                        pass
+                if ri in _gsub_tot:          # 합계/소계행은 _merge_total_rows 담당
+                    continue
+                gv = [str((data[ri][c] if c < len(data[ri]) else "") or "").strip()
+                      for c in range(n_gub)]
+                c = 0
+                while c < n_gub:
+                    if gv[c]:
+                        e = c
+                        while e + 1 < n_gub and not gv[e + 1]:
+                            e += 1
+                        if e > c:
+                            try:
+                                t.cell(ri, c).merge(t.cell(ri, e))
+                            except Exception:
+                                pass
+                        c = e + 1
+                    else:
+                        c += 1
         if is_corp4:
             for ri in range(n_hdr, nrow):
                 r = data[ri]
