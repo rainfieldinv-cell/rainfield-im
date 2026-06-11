@@ -237,7 +237,7 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
             elif s.startswith("*") and len(s) >= 6:
                 note = s
             elif (re.match(r"^\d+\)\s*\S", s) and len(s) >= 8
-                  and any(k in s for k in ("감정", "탁감", "LTV", "기준", "매출액", "별도", "포함", "수용재결", "예정"))):
+                  and any(k in s for k in ("감정", "탁감", "LTV", "매출액", "별도", "수용재결 필지", "탁상감정"))):
                 # ★'N) …'는 '값 각주'(감정가/LTV/매출액 등)일 때만 — 본문 목록('1) 당연 기한이익…')은 제외.
                 note = "주" + s        # 'N)' → '주N)' 로 통일
                 nxt = _lines[li + 1].strip() if li + 1 < len(_lines) else ""
@@ -891,6 +891,23 @@ def _restore_page_notes(pages: list) -> None:
                         r.append("")
                     r[ai] = appraisal
                     break
+
+        # ⑥-2 '본 금융조건은 당사자들간 협의과정…(변경 가능)' 문구는 표 밑 각주(원본). 셀(기타 등) 안에 있으면 _notes로.
+        for _t in (st.get("tables") or []):
+            for _r in (_t.get("rows") or []):
+                for _ci in range(len(_r)):
+                    _v = str(_r[_ci] or "")
+                    if "당사자들간 협의" not in _v and "심의 과정에서 변경" not in _v:
+                        continue
+                    _ls = _v.split("\n")
+                    _mv = [x for x in _ls if ("당사자들간 협의" in x or "심의 과정에서 변경" in x)]
+                    _r[_ci] = "\n".join(x for x in _ls if x not in _mv).strip()
+                    _t.setdefault("_notes", [])
+                    for _m in _mv:
+                        _mm = _m.strip().lstrip("•·-").strip()
+                        _mm = "- " + _mm
+                        if _mm not in _t["_notes"]:
+                            _t["_notes"].append(_mm)
 
         # ⑦ 주N) 각주 중복 제거: bullets(좌하단)와 표 _notes 양쪽에 같은 번호가 있으면, 더 긴 버전을
         #    표 _notes에 남기고 bullets에서는 제거(원본처럼 표 밑에만 1번 — 토지확보 주1/2/3 중복 방지).
