@@ -1261,7 +1261,8 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
             for ci in range(1, ncol - 1):
                 v = str((data[ri][ci] if ci < len(data[ri]) else "") or "").strip()
                 nxt = str((data[ri][ci + 1] if ci + 1 < len(data[ri]) else "") or "").strip()
-                if not v or nxt or _NUMonly.match(v) or not re.search(r"[가-힣A-Za-z]", v):
+                # ★숫자/금액값([1,640]억원 등 대괄호 포함)은 spanning 대상 아님 — _numish로 판정해 제외
+                if not v or nxt or _numish(v) or not re.search(r"[가-힣A-Za-z]", v):
                     continue
                 _col_other = [str((data[rj][ci] if ci < len(data[rj]) else "") or "").strip()
                               for rj in range(n_hdr, nrow) if rj != ri]
