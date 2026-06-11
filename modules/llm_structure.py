@@ -1016,47 +1016,45 @@ def _recover_comparison_table_by_pos(page):
             rows.append(cur); cur = [w]; cy = w[1]
     if cur:
         rows.append(cur)
-    hi = next((i for i, r in enumerate(rows) if any(x[4] == "구분" for x in r)), 0)
-    col_nm = [w for j in (hi, hi + 1) if 0 <= j < len(rows) for w in rows[j] if w[0] > 150]
-    if not col_nm:
+    def _rl(r):
+        return "".join(w[4] for w in r if w[0] < 150)
+    # 칸 중심 = '세대수' 행(칸당 순수 숫자 1개)의 값 x → 지도 라벨 오염 없이 정확. 없으면 숫자 최다 행.
+    def _numw(r):
+        return [w for w in r if w[0] > 150 and re.match(r"^[\d,]+$", w[4])]
+    ref = next((r for r in rows if "세대수" in _rl(r)), None)
+    if ref is None:
+        ref = max(rows, key=lambda r: len(_numw(r))) if rows else []
+    cen = sorted(w[0] for w in _numw(ref))
+    if len(cen) < 2:
         return None
-    xs = sorted(round(w[0]) for w in col_nm)
-    centers = []
-    for x in xs:
-        if not centers or x - centers[-1][-1] > 40:
-            centers.append([x])
-        else:
-            centers[-1].append(x)
-    col_x = [min(c) for c in centers]
-    ncol = len(col_x)
-    if ncol < 2:
-        return None
-    b0 = col_x[0] - 25
-    bounds = [b0] + [(col_x[i] + col_x[i + 1]) / 2 for i in range(ncol - 1)] + [1e9]
+    ncol = len(cen)
+    b0 = min(cen) - 30
 
     def colof(x):
-        for i in range(len(bounds) - 1):
-            if bounds[i] <= x < bounds[i + 1]:
-                return i
-        return ncol - 1
+        return min(range(ncol), key=lambda i: abs(x - cen[i]))   # 최근접 칸(밴드 경계 오배치 방지)
 
+    bstart = next((i for i, r in enumerate(rows) if any(k in _rl(r) for k in ("조감도", "주소"))), 1)
+    # 헤더(단지명): 제목~본문 사이 모든 줄(줄바꿈된 이름 전부)을 칸별 결합(최근접)
     hdr = ["구분"] + [""] * ncol
-    hdr_nm = [w for j in (hi - 1, hi, hi + 1) if 0 <= j < len(rows) for w in rows[j] if w[0] > 150]
-    for w in sorted(hdr_nm, key=lambda w: (w[1], w[0])):
+    for w in sorted([w for r in rows[:bstart] for w in r if w[0] >= b0], key=lambda w: (w[1], w[0])):
         ci = 1 + colof(w[0]); hdr[ci] = (hdr[ci] + " " + w[4]).strip()
-    hdr = [_clean(h) for h in hdr]
+    hdr = [_clean(re.sub(r"(써밋)\s+(플레이스)", r"\1\2", h)) for h in hdr]
     AP, APc, PX = ["유닛 구성", "평형"], ["유닛", "평형"], ["매매시세", "전세시세"]
     ap_i = px_i = 0
     out = []
-    for r in rows[hi + 1:]:
+    for r in rows[bstart:]:
         rs = sorted(r, key=lambda w: w[0])
-        if not any(w[0] < b0 for w in rs):       # 단지명 줄바꿈 줄 → skip
-            continue
-        sub = " ".join(w[4] for w in rs if 76 <= w[0] < b0).strip()
         vals = {}
         for w in rs:
             if w[0] >= b0:
                 vals.setdefault(colof(w[0]), []).append(w[4])
+        if not any(w[0] < b0 for w in rs):       # 라벨 없는 줄 = 값 줄바꿈 연속 → 직전 행에 병합
+            if out:
+                for i in range(ncol):
+                    if vals.get(i):
+                        out[-1][1 + i] = _clean((out[-1][1 + i] + " " + " ".join(vals[i])).strip())
+            continue
+        sub = " ".join(w[4] for w in rs if 70 <= w[0] < b0).strip()
         vlist = [_clean(" ".join(vals.get(i, []))) for i in range(ncol)]
         if "조감도" in sub:                       # 조감도 행은 썸네일 주입기가 추가
             continue
@@ -1098,9 +1096,10 @@ def _recover_dropped_comparison_tables(pages: list, pdf_path: str) -> None:
         raw = p.get("raw_text", "") or ""
         if "비교대상" not in raw or "현황" not in raw:
             continue
-        if any(("사례" in str(t.get("title") or "") and "현황" in str(t.get("title") or ""))
-               for t in (st.get("tables") or [])):
-            continue
+        _exist = [t for t in (st.get("tables") or [])
+                  if ("사례" in str(t.get("title") or "") and "현황" in str(t.get("title") or ""))]
+        if len(_exist) >= 2:
+            continue                    # 한 페이지 표 2개(분양 신규/기준공)는 좌표매칭 모호 → 건너뜀
         pi = (p.get("page_num") or 0) - 1
         if pi < 0 or pi >= doc.page_count:
             continue
@@ -1112,6 +1111,12 @@ def _recover_dropped_comparison_tables(pages: list, pdf_path: str) -> None:
             continue
         hdr, body = rec
         if len(hdr) < 3 or len(body) < 4:
+            continue
+        if _exist:
+            # 표는 있으나 LLM이 단지명(헤더)을 뒤섞어 추출 → 좌표복원 헤더로 이름만 교체(본문 유지)
+            t = _exist[0]
+            if len(t.get("header") or []) == len(hdr):
+                t["header"] = hdr
             continue
         m = re.search(r"비교대상\s*(분양사례|매매사례)\s*현황", raw)
         title = "비교대상 " + (m.group(1) if m else "분양사례") + " 현황"

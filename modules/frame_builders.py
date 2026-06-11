@@ -420,6 +420,22 @@ def _set_para_bullet(p, char="•", *, marL=0.17, font="Arial"):
         pPr.append(buChar)
 
 
+def _set_tight_para_spacing(p):
+    """문단 줄간격 100%·앞뒤 여백 0 강제 — 표 셀 글머리 간격이 벌어지지 않게(원본처럼 촘촘).
+       (표 셀 기본 상속 spcBef/spcAft 때문에 글머리 사이가 넓어 보이던 문제)."""
+    pPr = p._p.get_or_add_pPr()
+    for tag in ("a:lnSpc", "a:spcBef", "a:spcAft"):
+        for el in pPr.findall(qn(tag)):
+            pPr.remove(el)
+    ln = pPr.makeelement(qn("a:lnSpc"), {})
+    ln.append(pPr.makeelement(qn("a:spcPct"), {"val": "100000"}))
+    bef = pPr.makeelement(qn("a:spcBef"), {})
+    bef.append(pPr.makeelement(qn("a:spcPts"), {"val": "0"}))
+    aft = pPr.makeelement(qn("a:spcAft"), {})
+    aft.append(pPr.makeelement(qn("a:spcPts"), {"val": "0"}))
+    pPr.insert(0, aft); pPr.insert(0, bef); pPr.insert(0, ln)   # 순서: lnSpc, spcBef, spcAft
+
+
 _CELL_BULLET_RE = re.compile(r"^(\s*)([•·▶◦●○■▪◆◇]|[-])\s+")
 
 
@@ -449,6 +465,7 @@ def _bulletize_text_frame(tf):
                 run.text = tx[n:]
                 n = 0
         _set_para_bullet(p, ch, marL=(0.36 if sub else 0.18), font=_FONT_LIGHT)
+        _set_tight_para_spacing(p)        # 글머리 사이 간격 촘촘(상속 spcBef/spcAft 제거)
 
 
 def _add_textbox(slide, L, T, W, H, text, *, size=10.5, bold=False,
@@ -1233,8 +1250,13 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
             _merge_vertical_runs(t, data, ncol, header_rows=n_hdr,
                                  skip_cols=({n_gub - 1} if gsub else None))  # 반복값 세로병합
         _merge_total_rows(t, data, ncol)                                     # 합계행 가로병합
-        # ★숫자 컬럼에 텍스트 값(예 '2028년 완료예정')이 오고 다음 칸이 비면 가로 병합(원본처럼 spanning).
+        # ★숫자/트랜치 컬럼에 텍스트 값(예 '2028년 완료예정'·주요채권보전)이 오고 다음 칸이 비면 가로병합.
         _NUMonly = re.compile(r"^[\d,.\-~%원억\s]+$")
+
+        def _numish(o):   # 괄호·대괄호 제거 후 숫자성([3,450]억원·[TBD]% 등 트랜치 표) 판정
+            o2 = re.sub(r"[\[\]()\s]", "", o)
+            return bool(o2) and (bool(_NUMonly.match(o2)) or o2 in ("TBD", "-"))
+        _last_bigo = "비고" in str(header[-1] if header else "")
         for ri in range(n_hdr, nrow):
             for ci in range(1, ncol - 1):
                 v = str((data[ri][ci] if ci < len(data[ri]) else "") or "").strip()
@@ -1243,12 +1265,15 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                     continue
                 _col_other = [str((data[rj][ci] if ci < len(data[rj]) else "") or "").strip()
                               for rj in range(n_hdr, nrow) if rj != ri]
-                if any(o and _NUMonly.match(o) for o in _col_other):   # 숫자 컬럼인데 이 칸만 텍스트 → spanning
+                if any(o and _numish(o) for o in _col_other):   # 숫자/트랜치 컬럼인데 이 칸만 텍스트 → spanning
                     _end = ci
                     for cj in range(ci + 1, ncol):
                         if str((data[ri][cj] if cj < len(data[ri]) else "") or "").strip():
                             break
                         _end = cj
+                    # 비고(마지막 열)는 짧은 값이면 별도 유지(대출기간 등 Tr.A+Tr.B만)·긴 값(주요채권보전)은 포함
+                    if _last_bigo and _end == ncol - 1 and len(v) < 25 and "\n" not in v:
+                        _end -= 1
                     if _end > ci:
                         try:
                             t.cell(ri, ci).merge(t.cell(ri, _end))
