@@ -565,6 +565,10 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
                 st["tables"] = [t for t in (st.get("tables") or [])
                                 if (str(t.get("title") or "").strip(), len(t.get("rows") or [])) not in _keys]
 
+    # ── 비교대상 사례표 구분열 정규화: 'MAIN SUB'(공백압축형)·'MAIN – SUB' → 'MAIN – SUB' 통일 ──
+    #    렌더러 _split_grouped_gubun이 대시(–)로 2단 구분(유닛·평형·가격·매매시세·전세시세)을 병합하게 함.
+    _normalize_comparison_gubun(pages)
+
     # ── 비교대상 분양/매매 사례표에 '조감도' 행(단지별 사진) 추가 ──
     _inject_comparison_thumbnails(pages, pdf_path)
 
@@ -970,6 +974,33 @@ def _restore_page_notes(pages: list) -> None:
                 _hdr = " ".join(str(h) for h in (_t.get("header") or []))
                 if "확보비율" in _hdr and "구역면적" in _hdr:
                     _t["_notes"] = list(_star)
+
+
+_COMP_MAINS = ["유닛 구성", "매매시세", "전세시세", "유닛", "평형", "가격"]
+
+
+def _normalize_comparison_gubun(pages: list) -> None:
+    """비교대상 분양/매매사례 현황 표 구분열(c0)을 'MAIN – SUB' 형으로 통일.
+       LLM이 '유닛 공급'(공백압축)·'유닛 구성 – 공급면적'(대시) 등 제각각으로 줘서 2단 병합이 안 되던 문제.
+       알려진 MAIN(유닛/평형/가격/매매시세/전세시세)으로 시작하면 대시로 분리 → 렌더러가 세로병합."""
+    for p in pages:
+        st = p.get("_struct")
+        if not isinstance(st, dict):
+            continue
+        for t in (st.get("tables") or []):
+            title = str(t.get("title") or "")
+            if "사례" not in title or "현황" not in title:
+                continue
+            for r in (t.get("rows") or []):
+                if not r:
+                    continue
+                c0 = str(r[0] or "").strip()
+                if not c0 or any(d in c0 for d in ("–", "—")):
+                    continue            # 이미 대시형
+                for mn in _COMP_MAINS:
+                    if c0 != mn and c0.startswith(mn + " "):
+                        r[0] = f"{mn} – {c0[len(mn):].strip()}"
+                        break
 
 
 def _inject_comparison_thumbnails(pages: list, pdf_path: str) -> None:

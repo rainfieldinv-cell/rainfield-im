@@ -699,7 +699,7 @@ def _header_groups(header):
     return row0, row1, vmerge, hmerges
 
 
-def _merge_vertical_runs(table, data, ncol, header_rows=0):
+def _merge_vertical_runs(table, data, ncol, header_rows=0, skip_cols=None):
     """열에서 값 있는 칸 아래로 이어지는 빈 칸들을 세로 병합(반복값=첫 칸만, 아래 빈칸 → 병합).
 
     ★그룹(병합)열 자동판정: 비-합계 행에서 '값 뒤에 빈칸'이 나오는 열만 세로 그룹열로 본다.
@@ -737,6 +737,8 @@ def _merge_vertical_runs(table, data, ncol, header_rows=0):
     # 숫자 측정열·비고열은 세로병합 대상에서 제외(Equity 표는 예외)
     no_merge = (set() if _allow_num
                 else {ci for ci in range(ncol) if _is_numeric_col(ci) or _is_remark_col(ci)})
+    if skip_cols:                       # ★gsub의 SUB열(col1) 등 — 단일라벨 빈칸으로 잘못 세로병합되는 것 방지
+        no_merge |= set(skip_cols)
 
     # 그룹(세로 병합) 열 = 비-합계 행에서 '값 뒤 빈칸' 패턴이 있는 열(연번/숫자 측정열 제외)
     def _is_group_col(ci):
@@ -1077,12 +1079,23 @@ def _split_grouped_gubun(header, rows):
        반환 (new_header, new_rows, split). split=False면 원본 유지."""
     if not rows or not header or len(header) < 2:
         return header, rows, False
-    pat = re.compile(r"^(.+?)\s*\(([^()]+)\)\s*$")
+    pat_paren = re.compile(r"^(.+?)\s*\(([^()]+)\)\s*$")
+    pat_dash = re.compile(r"^(.+?)\s*[–—\-]\s*(.+)$")   # 'MAIN – SUB'(시세표 유닛/평형/매매시세 등)
+
+    def _split_c0(c0):
+        """구분 셀을 (MAIN, SUB)로 분해. 대시(–/—/-) 우선, 없으면 끝 괄호. 둘 다 없으면 (None, None)."""
+        m = pat_dash.match(c0)
+        if m and len(m.group(1).strip()) >= 2 and len(m.group(2).strip()) >= 1:
+            return m.group(1).strip(), m.group(2).strip()
+        m = pat_paren.match(c0)
+        if m:
+            return m.group(1).strip(), m.group(2).strip()
+        return None, None
+
     mains = []
     for r in rows:
         c0 = str((r[0] if r else "") or "").strip()
-        m = pat.match(c0)
-        mains.append(m.group(1).strip() if m else None)
+        mains.append(_split_c0(c0)[0])
     if not any(mains[i] and mains[i] == mains[i + 1] for i in range(len(mains) - 1)):
         return header, rows, False
     grouped = set()
@@ -1092,14 +1105,18 @@ def _split_grouped_gubun(header, rows):
             grouped.add(i)
     new_header = [header[0], ""] + list(header[1:])
     new_rows = []
+    _prev_main = None
     for i, r in enumerate(rows):
         c0 = str((r[0] if r else "") or "").strip()
         rest = list(r[1:])
         if i in grouped:
-            m = pat.match(c0)
-            new_rows.append([m.group(1).strip(), m.group(2).strip()] + rest)
+            mn, sb = _split_c0(c0)
+            # ★같은 MAIN 연속이면 둘째 행부터 MAIN 칸을 비워 _merge_vertical_runs가 세로병합하게 함
+            new_rows.append(["" if mn == _prev_main else mn, sb] + rest)
+            _prev_main = mn
         else:
             new_rows.append([c0, ""] + rest)
+            _prev_main = None
     return new_header, new_rows, True
 
 
@@ -1193,7 +1210,9 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
         is_corp4 = (ncol == 4 and len(header) == 4
                     and "구분" in str(header[0]) and "구분" in str(header[2]))
         if not is_corp4:
-            _merge_vertical_runs(t, data, ncol, header_rows=n_hdr)  # 반복값 세로병합
+            # gsub면 SUB열(col1)은 세로병합 제외(단일라벨 빈칸이 SUB값을 끌고 내려가는 것 방지)
+            _merge_vertical_runs(t, data, ncol, header_rows=n_hdr,
+                                 skip_cols=({1} if gsub else None))  # 반복값 세로병합
         _merge_total_rows(t, data, ncol)                                     # 합계행 가로병합
         # ★숫자 컬럼에 텍스트 값(예 '2028년 완료예정')이 오고 다음 칸이 비면 가로 병합(원본처럼 spanning).
         _NUMonly = re.compile(r"^[\d,.\-~%원억\s]+$")
