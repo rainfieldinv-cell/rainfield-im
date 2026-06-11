@@ -577,6 +577,10 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
                 st["tables"] = [t for t in (st.get("tables") or [])
                                 if (str(t.get("title") or "").strip(), len(t.get("rows") or [])) not in _keys]
 
+    # ── LLM이 통째 누락한 '비교대상 분양/매매사례 현황' 표를 PDF 좌표로 복원(분석문에 묻힌 표).
+    #    ★중복표 제거(위) 뒤에 실행 — 불당/호반 매매사례는 제목·행수가 같지만 다른 표이므로 제거 대상 아님.
+    _recover_dropped_comparison_tables(pages, pdf_path)
+
     # ── 비교대상 사례표 구분열 정규화: 'MAIN SUB'(공백압축형)·'MAIN – SUB' → 'MAIN – SUB' 통일 ──
     #    렌더러 _split_grouped_gubun이 대시(–)로 2단 구분(유닛·평형·가격·매매시세·전세시세)을 병합하게 함.
     _normalize_comparison_gubun(pages)
@@ -986,6 +990,130 @@ def _restore_page_notes(pages: list) -> None:
                 _hdr = " ".join(str(h) for h in (_t.get("header") or []))
                 if "확보비율" in _hdr and "구역면적" in _hdr:
                     _t["_notes"] = list(_star)
+
+
+def _recover_comparison_table_by_pos(page):
+    """PDF 좌표로 '비교대상 분양/매매사례 현황' 표를 복원(LLM이 통째 누락한 경우).
+       단지명(헤더 줄바꿈) 결합, 2단 구분(유닛/평형/매매시세/전세시세)을 'MAIN – SUB'로 재구성."""
+    def _clean(s):
+        s = re.sub(r"\s+", " ", s).strip()
+        return re.sub(r"(\d)\s+(위|층|개동|단지|억원|억|평|%)", r"\1\2", s)
+    words = page.get_text("words")
+    ty = next((w[1] for w in words if "현황]" in w[4] or "비교대상" in w[4]), None)
+    if ty is None:
+        return None
+    fy = next((w[1] for w in words if w[4] == "페이지" and w[1] > ty + 100), ty + 440)
+    tw = [w for w in words if ty + 3 < w[1] < fy - 2]
+    tw.sort(key=lambda w: w[1])
+    rows, cur, cy = [], [], None
+    for w in tw:
+        if cy is None or abs(w[1] - cy) <= 4:
+            cur.append(w); cy = cy or w[1]
+        else:
+            rows.append(cur); cur = [w]; cy = w[1]
+    if cur:
+        rows.append(cur)
+    hi = next((i for i, r in enumerate(rows) if any(x[4] == "구분" for x in r)), 0)
+    col_nm = [w for j in (hi, hi + 1) if 0 <= j < len(rows) for w in rows[j] if w[0] > 150]
+    if not col_nm:
+        return None
+    xs = sorted(round(w[0]) for w in col_nm)
+    centers = []
+    for x in xs:
+        if not centers or x - centers[-1][-1] > 40:
+            centers.append([x])
+        else:
+            centers[-1].append(x)
+    col_x = [min(c) for c in centers]
+    ncol = len(col_x)
+    if ncol < 2:
+        return None
+    b0 = col_x[0] - 25
+    bounds = [b0] + [(col_x[i] + col_x[i + 1]) / 2 for i in range(ncol - 1)] + [1e9]
+
+    def colof(x):
+        for i in range(len(bounds) - 1):
+            if bounds[i] <= x < bounds[i + 1]:
+                return i
+        return ncol - 1
+
+    hdr = ["구분"] + [""] * ncol
+    hdr_nm = [w for j in (hi - 1, hi, hi + 1) if 0 <= j < len(rows) for w in rows[j] if w[0] > 150]
+    for w in sorted(hdr_nm, key=lambda w: (w[1], w[0])):
+        ci = 1 + colof(w[0]); hdr[ci] = (hdr[ci] + " " + w[4]).strip()
+    hdr = [_clean(h) for h in hdr]
+    AP, APc, PX = ["유닛 구성", "평형"], ["유닛", "평형"], ["매매시세", "전세시세"]
+    ap_i = px_i = 0
+    out = []
+    for r in rows[hi + 1:]:
+        rs = sorted(r, key=lambda w: w[0])
+        if not any(w[0] < b0 for w in rs):       # 단지명 줄바꿈 줄 → skip
+            continue
+        sub = " ".join(w[4] for w in rs if 76 <= w[0] < b0).strip()
+        vals = {}
+        for w in rs:
+            if w[0] >= b0:
+                vals.setdefault(colof(w[0]), []).append(w[4])
+        vlist = [_clean(" ".join(vals.get(i, []))) for i in range(ncol)]
+        if "조감도" in sub:                       # 조감도 행은 썸네일 주입기가 추가
+            continue
+        if not sub and not any(vlist):
+            continue
+        if sub in ("공급면적", "공급"):
+            ap_i += 1; main = (AP if sub == "공급면적" else APc)[min(ap_i - 1, 1)]
+        elif sub in ("전용면적", "전용"):
+            main = (AP if sub == "전용면적" else APc)[min(max(ap_i - 1, 0), 1)]
+        elif sub == "세대당가격":
+            px_i += 1; main = PX[min(px_i - 1, 1)]
+        elif sub in ("공급평당가", "가격출처"):
+            main = PX[min(max(px_i - 1, 0), 1)]
+        elif sub in ("세대", "평당"):
+            main = "가격"
+        else:
+            main = ""
+        out.append([(main + " – " + sub) if main else sub] + vlist)
+    return hdr, out
+
+
+def _recover_dropped_comparison_tables(pages: list, pdf_path: str) -> None:
+    """raw_text엔 '[비교대상 …현황]'이 있는데 구조화 결과엔 그 표가 없는(LLM 누락) 페이지를
+       PDF 좌표로 복원해 추가(천안 불당 매매사례표 — 분석문에 묻혀 통째 누락되던 문제)."""
+    if not pdf_path:
+        return
+    try:
+        import fitz
+    except Exception:
+        return
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return
+    for p in pages:
+        st = p.get("_struct")
+        if not isinstance(st, dict):
+            continue
+        raw = p.get("raw_text", "") or ""
+        if "비교대상" not in raw or "현황" not in raw:
+            continue
+        if any(("사례" in str(t.get("title") or "") and "현황" in str(t.get("title") or ""))
+               for t in (st.get("tables") or [])):
+            continue
+        pi = (p.get("page_num") or 0) - 1
+        if pi < 0 or pi >= doc.page_count:
+            continue
+        try:
+            rec = _recover_comparison_table_by_pos(doc[pi])
+        except Exception:
+            rec = None
+        if not rec:
+            continue
+        hdr, body = rec
+        if len(hdr) < 3 or len(body) < 4:
+            continue
+        m = re.search(r"비교대상\s*(분양사례|매매사례)\s*현황", raw)
+        title = "비교대상 " + (m.group(1) if m else "분양사례") + " 현황"
+        st.setdefault("tables", []).append(
+            {"kind": "grid", "title": title, "header": hdr, "rows": body})
 
 
 def _merge_shareholder_role(pages: list) -> None:
