@@ -1308,12 +1308,19 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
             skip_cols = {0}
         elif header:
             skip_cols = {c for c in range(ncol) if c < len(header) and "구분" in str(header[c] or "")}
+        # ★같은 값이 여러 칸에 있으면 어느 칸이 원본 색인지 알 수 없음 → '유일한 값'만 색칠(과다 색칠 방지).
+        _fcnt = Counter()
+        for ri in range(hdr_rows, nrow):
+            for ci in range(ncol):
+                _ct = t.cell(ri, ci).text.strip()
+                if _ct:
+                    _fcnt[_ct] += 1
         for ri in range(hdr_rows, nrow):
             for ci in range(ncol):
                 if ci in skip_cols:
                     continue
                 ct = t.cell(ri, ci).text.strip()
-                if ct and ct in fill_set:
+                if ct and ct in fill_set and _fcnt[ct] == 1:
                     _set_one_cell_fill_alpha(t.cell(ri, ci), "3E95BE", 35)
     # ★원본 빨간 글씨 재현: '모든 동일텍스트 칸이 빨강이었을 때만' 칠함(과다 방지) + 빨간 테두리
     if red_counts:
@@ -1511,7 +1518,7 @@ def _place_images_col(slide, imgs, L, top, W, bottom, *, labels=None):
         for p in c.text_frame.paragraphs:
             p.alignment = PP_ALIGN.CENTER
             for r in p.runs:
-                r.font.size = Pt(10)
+                r.font.size = Pt(10.5)
         # '내용' 칸에 사진 얹기(셀 안쪽 여백 0.06)
         im = imgs[i]
         cw, ch = content_w - 0.12, row_h - 0.12

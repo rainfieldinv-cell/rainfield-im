@@ -851,6 +851,27 @@ def _restore_page_notes(pages: list) -> None:
                     r[ai] = appraisal
                     break
 
+        # ⑦ 주N) 각주 중복 제거: bullets(좌하단)와 표 _notes 양쪽에 같은 번호가 있으면, 더 긴 버전을
+        #    표 _notes에 남기고 bullets에서는 제거(원본처럼 표 밑에만 1번 — 토지확보 주1/2/3 중복 방지).
+        def _jnum(s):
+            m = re.match(r"^\*?\s*주\s*(\d+)", str(s).lstrip())
+            return m.group(1) if m else None
+        _bl = st.get("bullets") or []
+        _bl_by = {}
+        for _b in _bl:
+            _k = _jnum(_b)
+            if _k:
+                _bl_by[_k] = _b
+        if _bl_by:
+            for _t in (st.get("tables") or []):
+                _nts = _t.get("_notes") or []
+                if not _nts:
+                    continue
+                _t["_notes"] = [(_bl_by[_jnum(_n)] if (_jnum(_n) in _bl_by
+                                 and len(str(_bl_by[_jnum(_n)])) > len(str(_n))) else _n)
+                                for _n in _nts]
+            st["bullets"] = [_b for _b in _bl if _jnum(_b) is None]
+
 
 def _pack_short_pages(pages: list, *, debug: bool = False) -> None:
     """연속된 섹션3/4 '짧은' 페이지를 한 슬라이드로 합쳐 페이지 수를 줄인다.
