@@ -1411,21 +1411,28 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
         for ci in range(ncol):
             if ci in gubun_cols:   # ★구분/부구분 라벨열은 항상 가운데(원본대로)
                 continue
-            # ★셀 단위 정렬: 숫자/금액칸=오른쪽, 긴 텍스트칸(≥10자)=왼쪽, 짧은 텍스트=가운데.
-            #   (한 컬럼에 금액 행 + 긴 설명 행이 섞여도 각각 맞게 — 별첨1 주요채권보전 등)
-            for ri in range(hdr_rows, nrow):
-                ct = str((data[ri][ci] if ci < len(data[ri]) else "") or "").strip()
-                if not ct:
-                    continue
-                if _NUMERIC.match(ct):
-                    _al = PP_ALIGN.RIGHT
-                elif len(ct) >= 10:
-                    _al = PP_ALIGN.LEFT
-                else:
-                    _al = None
-                if _al is not None:
+            # ★컬럼 단위 일관 정렬(원본대로) — 셀마다 다르면 '뒤죽박죽'이라 컬럼 전체를 한 정렬로.
+            _vals = [str((data[ri][ci] if ci < len(data[ri]) else "") or "").strip()
+                     for ri in range(hdr_rows, nrow)]
+            _vals = [v for v in _vals if v]
+            if not _vals:
+                continue
+            _numcnt = sum(1 for v in _vals if _NUMERIC.match(v))
+            if _numcnt >= len(_vals) * 0.5:
+                # 숫자/금액 컬럼 = 오른쪽. 단, 긴 문단(≥22자, 한글 섞임)만 왼쪽(별첨1 주요채권보전 등).
+                for ri in range(hdr_rows, nrow):
+                    ct = str((data[ri][ci] if ci < len(data[ri]) else "") or "").strip()
+                    if not ct:
+                        continue
+                    _al = (PP_ALIGN.LEFT if (len(ct) >= 22 and re.search(r"[가-힣]", ct))
+                           else PP_ALIGN.RIGHT)
                     for p in t.cell(ri, ci).text_frame.paragraphs:
                         p.alignment = _al
+            elif any(len(v) >= 8 for v in _vals):
+                # 긴 텍스트 컬럼(비고·진행일정·관계법령·단지명 등) = 왼쪽 일관
+                for ri in range(hdr_rows, nrow):
+                    for p in t.cell(ri, ci).text_frame.paragraphs:
+                        p.alignment = PP_ALIGN.LEFT
     # ★조감도 행: 단지별 작은 사진을 첫 데이터 행 셀에 배치(비교대상 분양/매매 사례표).
     if thumb_imgs and kind != "label_value" and hdr_rows < nrow:
         _THUMB_H = 0.62
