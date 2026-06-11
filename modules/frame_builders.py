@@ -609,7 +609,8 @@ def _classify_total_rows(data, ncol):
        ★'라벨 셀'(짧은 칸 ≤12자)에 키워드가 있을 때만 인정 — 긴 값 속 '합계'(예: 연면적
          '지상…/지하…/합계 172,…')는 제외. 소계는 '소계'만, 합계/총계/총합계는 grand-total."""
     # ★재무상태표 항목(자산총계/부채총계/자본총계)은 합계행 아님 — 원본도 색칠 안 함 → 분류 제외
-    _FIN_EXCLUDE = ("자산총계", "부채총계", "자본총계", "자 산 총 계", "부 채 총 계", "자 본 총 계")
+    _FIN_EXCLUDE = ("자산총계", "부채총계", "자본총계", "자 산 총 계", "부 채 총 계", "자 본 총 계",
+                    "총자산", "총부채", "총자본", "총 자산", "총 부채", "총 자본")  # 재무제표 항목 — 합계행 아님(색칠X)
     subtotal, grandtotal = set(), set()
     for i, row in enumerate(data):
         cells = [str((row[c] if c < len(row) else "") or "").strip() for c in range(ncol)]

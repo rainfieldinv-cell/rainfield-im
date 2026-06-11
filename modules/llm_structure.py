@@ -554,6 +554,9 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
     # ── 각주 복원: raw_text의 '주N)' 각주를 살리고(글머리 X), '출처:' 아닌 표각주는 표 밑으로 ──
     _restore_page_notes(pages)
 
+    # ── 차주개요: '주주구성' + '주주 역할' → '주주구성 및 역할' 한 표(업무분담 열, 그룹 세로병합) ──
+    _merge_shareholder_role(pages)
+
     # ── 같은 표(grid)가 '분석 페이지(지도 있음)'와 '전용 표 페이지(지도 없음)' 양쪽에 중복되면,
     #    분석 페이지에선 표 제거(글+지도만 남김). (천안: 인근시세비교=글/지도, 비교대상 매매사례현황=표) ──
     _grid_loc = {}
@@ -983,6 +986,58 @@ def _restore_page_notes(pages: list) -> None:
                 _hdr = " ".join(str(h) for h in (_t.get("header") or []))
                 if "확보비율" in _hdr and "구역면적" in _hdr:
                     _t["_notes"] = list(_star)
+
+
+def _merge_shareholder_role(pages: list) -> None:
+    """차주개요: '주주구성'(주주명·주식수·지분율·투입금·비고) + '주주 역할'(SI/CI/FI 업무분담)
+       → '주주구성 및 역할' 한 표로 병합. 업무분담 열을 비고 앞에 삽입, 주주명→그룹 매칭으로 채움
+       (그룹 첫 주주만 채워 나머지는 빈칸 → 렌더러가 세로병합). 주주역할 표는 제거(사용자 지시)."""
+    def _norm(s):
+        return re.sub(r"[㈜()\s,./]", "", str(s or ""))
+    for p in pages:
+        st = p.get("_struct")
+        if not isinstance(st, dict):
+            continue
+        tabs = st.get("tables") or []
+
+        def _hblob(t):
+            return " ".join(str(h) for h in (t.get("header") or []))
+        comp = next((t for t in tabs if t.get("kind") == "grid"
+                     and "주주명" in _hblob(t) and "업무" not in _hblob(t)), None)
+        role = next((t for t in tabs if ("역할" in str(t.get("title") or ""))
+                     or ("업무" in _hblob(t) or "분담" in _hblob(t))), None)
+        if not comp or not role or comp is role:
+            continue
+        rhdr = [str(h) for h in (role.get("header") or [])]
+        mi = next((i for i, h in enumerate(rhdr) if "주주" in h), 1 if len(rhdr) >= 3 else 0)
+        di = next((i for i, h in enumerate(rhdr) if ("업무" in h or "분담" in h)), len(rhdr) - 1)
+        groups = []
+        for r in (role.get("rows") or []):
+            if di < len(r):
+                members = [_norm(m) for m in re.split(r"[,/]", str(r[mi] if mi < len(r) else "")) if m.strip()]
+                groups.append((members, str(r[di])))
+        chdr = [str(h) for h in (comp.get("header") or [])]
+        bi = next((i for i, h in enumerate(chdr) if "비고" in h), len(chdr))
+        new_hdr = chdr[:bi] + ["업무분담"] + chdr[bi:]
+        used, new_rows = set(), []
+        for r in (comp.get("rows") or []):
+            name = _norm(r[0] if r else "")
+            duty = ""
+            if any(k in str(r[0] if r else "") for k in ("합계", "소계", "총계")):
+                duty = "-"          # 합계행은 '-'(위 그룹 업무분담이 합계까지 세로병합되는 것 방지)
+            else:
+                for gi, (members, dtext) in enumerate(groups):
+                    if gi in used:
+                        continue
+                    if any(m and (m in name or name in m) for m in members):
+                        duty = dtext
+                        used.add(gi)
+                        break
+            new_rows.append(list(r[:bi]) + [duty] + list(r[bi:]))
+        comp["header"] = new_hdr
+        comp["rows"] = new_rows
+        comp["title"] = "주주구성 및 역할"
+        st["tables"] = [t for t in tabs if t is not role]
 
 
 _COMP_MAINS = ["유닛 구성", "매매시세", "전세시세", "유닛", "평형", "가격"]
