@@ -236,7 +236,9 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
                     note = s
             elif s.startswith("*") and len(s) >= 6:
                 note = s
-            elif re.match(r"^\d+\)\s*\S", s) and len(s) >= 8:
+            elif (re.match(r"^\d+\)\s*\S", s) and len(s) >= 8
+                  and any(k in s for k in ("감정", "탁감", "LTV", "기준", "매출액", "별도", "포함", "수용재결", "예정"))):
+                # ★'N) …'는 '값 각주'(감정가/LTV/매출액 등)일 때만 — 본문 목록('1) 당연 기한이익…')은 제외.
                 note = "주" + s        # 'N)' → '주N)' 로 통일
                 nxt = _lines[li + 1].strip() if li + 1 < len(_lines) else ""
                 if nxt and not re.match(r"^[\*\d주■▶•]", nxt) and any(k in nxt for k in ("LTV", "기준", "수용", "탁감")):
@@ -902,14 +904,20 @@ def _restore_page_notes(pages: list) -> None:
             if _k:
                 _bl_by[_k] = _b
         if _bl_by:
+            _tab_nums = set()        # 표 _notes에 이미 있는 주N) 번호(여기 있는 것만 bullets에서 제거)
             for _t in (st.get("tables") or []):
                 _nts = _t.get("_notes") or []
                 if not _nts:
                     continue
+                for _n in _nts:
+                    _k2 = _jnum(_n)
+                    if _k2:
+                        _tab_nums.add(_k2)
                 _t["_notes"] = [(_bl_by[_jnum(_n)] if (_jnum(_n) in _bl_by
                                  and len(str(_bl_by[_jnum(_n)])) > len(str(_n))) else _n)
                                 for _n in _nts]
-            st["bullets"] = [_b for _b in _bl if _jnum(_b) is None]
+            # ★표 _notes에 '있는 번호'만 bullets에서 제거(중복). 표에 없는 주N)는 bullets에 그대로 유지.
+            st["bullets"] = [_b for _b in _bl if _jnum(_b) is None or _jnum(_b) not in _tab_nums]
 
 
 def _inject_comparison_thumbnails(pages: list, pdf_path: str) -> None:
