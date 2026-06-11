@@ -498,6 +498,22 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
         base_ex["images"] = []          # Exec Summary는 사진 제외(일몰/호수 조감도 등)
         pages[:] = [p for p in pages if not p.get("_drop")]
 
+    # ── 입지분석 페이지에 '사업개요의 위치도'까지 함께(같은 위치 지도 — 사용자 요청) ──
+    #   사업개요 위치도 이미지를 입지분석 페이지 images에 추가(복사) → 입지 = 자기 SITE지도 + 사업개요 위치도.
+    _ov_loc = None
+    for p in pages:
+        sub = str((p.get("_struct") or {}).get("subtitle") or "")
+        if ("사업 개요" in sub or "사업개요" in sub) and len(p.get("images") or []) >= 2:
+            _ov_loc = (p["images"])[-1]      # 위치도(조감도 다음 = 마지막)
+            break
+    if _ov_loc is not None:
+        for p in pages:
+            sub = str((p.get("_struct") or {}).get("subtitle") or "")
+            if "입지" in sub and (p.get("images")):
+                if _ov_loc not in p["images"]:
+                    p["images"] = list(p["images"]) + [_ov_loc]
+                break
+
     # ── 금융조건 = 하나의 표(여러 페이지로 쪼개진 것을 다시 합침) ──
     _merge_section2_financing(pages, debug=debug)
 
