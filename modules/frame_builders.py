@@ -1960,6 +1960,16 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                     gk, gh, gb, gn = ng
                     grid_h = _grid_render_h(gh, gb, gn)
                     cur_y = tbl_top + hh + sum(rh[:li]) + 0.05
+                    # ★짧은 intro 글(예 대전 자금용도 '기투입비용 정산…')은 표 '위'에(글→표→주N),
+                    #   긴 설명(천안 자금관리 ▶계좌 설명)은 표 '아래'에(표→글). 길이/마커로 구분.
+                    _atext = _anchor_vals.get(li, "")
+                    _atext_above = bool(_atext.strip()) and len(_atext) <= 30 \
+                        and "\n" not in _atext and "▶" not in _atext
+                    if _atext_above:
+                        _, _aah = _add_textbox(slide, val_x + 0.05, cur_y, val_w - 0.10, 0.2,
+                                               _atext, size=fp, red_set=red_set, ul_set=ul_set,
+                                               bullet=True)
+                        cur_y += (_aah or _rowh(fp)) + 0.04
                     # (단위: …) — grid 위 우측 캡션(원본: Cash 표 위 '(단위: 백만원)')
                     _unit = _nested_unit_for(alabel)
                     if _unit:
@@ -1979,9 +1989,8 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                                                    gnote, size=9, color=PALETTE["gray_text"],
                                                    red_set=red_set, ul_set=ul_set)
                             cur_y += (_gnh or 0.18) + 0.02
-                        # ★표 다음에 요약 글씨(자금관리 ▶ 계좌 설명 등) — 표 먼저, 글 나중
-                        _atext = _anchor_vals.get(li, "")
-                        if _atext.strip():
+                        # ★긴 설명 글(자금관리 ▶ 계좌 설명 등)은 표 아래(표 먼저, 글 나중). 짧은 intro는 위에서 처리됨.
+                        if _atext.strip() and not _atext_above:
                             _add_textbox(slide, val_x + 0.05, cur_y, val_w - 0.10, 0.2, _atext,
                                          size=fp, red_set=red_set, ul_set=ul_set, bullet=True)
                     except Exception as _e:
