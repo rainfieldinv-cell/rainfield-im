@@ -1753,7 +1753,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
 
     # ★별첨1(다이어그램 행 + 금융조건 중첩표 동거)는 중첩 금융조건표만 8pt로 축소해 한 페이지 fit
     #   (사용자 확정: 일반표 10.5pt 유지, 이 중첩표만 예외).
-    _force_ng_fp = 8 if struct.get("_nested_imgs") else None
+    _force_ng_fp = 9 if struct.get("_nested_imgs") else None
 
     def _ng_font(gn):
         return _force_ng_fp if _force_ng_fp else _grid_font(gn)

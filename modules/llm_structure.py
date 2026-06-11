@@ -537,6 +537,17 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
             note = ""
             for npart in list(grid.get("_notes") or []):
                 note = (note + "\n" + npart).strip() if note else npart
+            # ★raw_text의 '*주N)/주N) …' 각주 중, grid가 참조(비고 등에 '주N)')하는 번호의 정의를 표 밑 각주로.
+            #   (LLM이 'LTV 비고=주1)'만 남기고 '주1) 매출액 약 8,545억원 기준' 정의를 누락하던 문제)
+            _gblob = (" ".join(str(h) for h in (grid.get("header") or []))
+                      + " " + " ".join(str(c) for r in (grid.get("rows") or []) for c in r)).replace(" ", "")
+            for _ln in (p.get("raw_text", "") or "").splitlines():
+                _s = _ln.strip()
+                _m = re.match(r"^\*?\s*주\s*(\d+)\s*\)\s*(.+)$", _s)
+                if _m and len(_m.group(2).strip()) >= 3:
+                    _defn = _s.lstrip("*").strip()
+                    if (f"주{_m.group(1)})" in _gblob) and (_defn not in note):
+                        note = (note + "\n" + _defn).strip() if note else _defn
             # ★금융구조도 다이어그램(원본은 표 안 그림) → '금융구조도' 행을 참여기관 뒤·금융조건 앞에
             #   삽입하고 페이지 이미지를 그 행 내용칸에 넣음(표안 사진). p['images']서 빼 중복배치 방지.
             _imgs = p.get("images") or []
