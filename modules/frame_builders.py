@@ -1996,12 +1996,20 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             _place_images_col(slide, big_imgs[:2], img_col_L, tbl_start,
                               _IMG_W, _BODY_BOTTOM, labels=labels)
         elif idx == n - 1 and big_imgs and not top_bare and not side_box and not has_tbl:
-            # 표 없는 사진 페이지 → 4장 이상이면 그리드(첫장 크게+3열, 사업지 전경 6장 등), 아니면 한 줄
+            # 표 없는 사진 페이지 → (분석 글이 있으면 글을 위에 먼저 쓰고 지도는 그 아래 = 겹침 방지),
+            #   사진 4장 이상이면 그리드(사업지전경 6장 등), 아니면 한 줄.
+            _img_top = tbl_start
+            if btext:
+                _bh = _est_text_height(btext, _TBL_W, 10.5) * 1.5
+                _, _bhh = _add_textbox(slide, _TBL_L, tbl_start, _TBL_W, _bh, btext,
+                                       size=10.5, bullet=True, line_spacing=1.5,
+                                       red_set=red_set, ul_set=ul_set)
+                _img_top = tbl_start + _bhh + 0.15
+                btext = ""        # 위에 이미 썼으니 아래에서 또 안 찍음
             if len(big_imgs) >= 4:
-                _place_images_grid(slide, big_imgs, _TBL_L, tbl_start, _TBL_W, _BODY_BOTTOM)
+                _place_images_grid(slide, big_imgs, _TBL_L, _img_top, _TBL_W, _BODY_BOTTOM)
             else:
-                _place_images_row(slide, big_imgs[:2], _TBL_L, tbl_start,
-                                  _TBL_W, _BODY_BOTTOM)
+                _place_images_row(slide, big_imgs[:2], _TBL_L, _img_top, _TBL_W, _BODY_BOTTOM)
         # ★순서(원본): 표 → 주N) 각주(표 바로 밑, 9pt 회색) → 본문 산문(10pt 검정).
         #   주N)는 표에 딱 붙고, 분석 프로즈는 그 아래(원본: 인근 주요…는 주N) 다음).
         if idx == n - 1 and notes_text:
