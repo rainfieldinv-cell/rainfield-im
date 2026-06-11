@@ -877,10 +877,10 @@ def _compact_grid(table, font_pt, row_h, kind="grid", has_header=False, header_r
     heights = row_h if isinstance(row_h, (list, tuple)) else None
     hdr_n = header_rows if header_rows is not None else (1 if has_header else 0)
     for ri, row in enumerate(table.rows):
-        if heights is not None:
+        if hdr_n and ri < hdr_n:
+            row.height = Cm(0.6)        # ★표 헤더행(대가리)은 항상 0.6cm 고정(label_value 포함·메모리 규칙)
+        elif heights is not None:
             row.height = Inches(heights[ri] if ri < len(heights) else heights[-1])
-        elif hdr_n and ri < hdr_n:
-            row.height = Cm(0.6)        # ★표 헤더행(다단이면 여러 줄)은 0.6cm
         else:
             row.height = Inches(row_h)
         for ci, cell in enumerate(row.cells):
@@ -1132,7 +1132,7 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
         return 0.0
     nrow = len(data)
     if isinstance(row_h, (list, tuple)):
-        hdr_h = _rowh(font_pt)
+        hdr_h = 0.6 / 2.54        # ★헤더행 0.6cm 고정(메모리 규칙) — _compact_grid와 일치
         row_heights = [hdr_h] * n_hdr + list(row_h)
         height = sum(row_heights)
         row_h = row_heights        # 아래 _compact_grid에 행별 높이 전달
@@ -1554,7 +1554,7 @@ def _place_images_col(slide, imgs, L, top, W, bottom, *, labels=None):
     if avail_h < 0.7:
         return 0.0
     n = len(imgs)
-    hdr_h = 0.30
+    hdr_h = 0.6 / 2.54        # ★헤더행 0.6cm 고정(메모리 규칙)
     row_h = (avail_h - hdr_h) / n
     lab_w = 0.95
     content_w = W - lab_w
