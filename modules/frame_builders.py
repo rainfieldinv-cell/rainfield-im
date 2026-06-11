@@ -1731,6 +1731,11 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
     # ★기업개요(시행사·시공사 기본정보) label_value → 4열(구분|내용|구분|내용)로(원본처럼)
     tables = [_corp_to_4col(t) if _is_corp_info(t) else t for t in tables]
     source = (struct.get("source") or "").strip()
+    # ★차주개요(기업개요+주주구성및역할+재무제표)는 원본처럼 한 페이지에 — 표 폰트 9pt로 압축해 다 들어가게.
+    _tbl_blob = " ".join(str(h) for t in tables for h in (t.get("header") or [])) + " " + \
+                " ".join(str(c) for t in tables for r in (t.get("rows") or []) for c in r)
+    _is_chaju = ("회사명" in _tbl_blob and "주주명" in _tbl_blob
+                 and "자산" in _tbl_blob and "부채" in _tbl_blob)
 
     # ★표 안의 표: 앵커 라벨 → grid 파싱 (해당 label_value 행 내용칸에 grid를 얹음)
     nested_grids = struct.get("_nested_grids") or []
@@ -1858,7 +1863,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         kind, header, body, ncol = _parse_tdef(tdef)
         if ncol == 0 or not body:
             continue
-        fp = _grid_font(ncol)
+        fp = 9 if _is_chaju else _grid_font(ncol)
         title = (tdef.get("title") or "").strip()
         has_h = bool(header)
         label_h = _LABEL_H if title else 0.0
@@ -1990,14 +1995,9 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
     if notes_text:
         reserve_bottom += _est_text_height(notes_text, _TBL_W, 9) + 0.10
     pack_bottom = _BODY_BOTTOM - reserve_bottom
-    # ★차주개요(기업개요+주주구성및역할+재무제표)는 원본처럼 한 페이지에 — 패킹 하한을 살짝 늘려 분할 방지
-    _blk_blob = " ".join(
-        str(h) for blk in blocks for h in (blk[2] or [])
-    ) + " " + " ".join(
-        str(c) for blk in blocks for r in (blk[3] or []) for c in r)
-    if ("회사명" in _blk_blob and "주주명" in _blk_blob
-            and "자산" in _blk_blob and "부채" in _blk_blob):
-        pack_bottom = _BODY_BOTTOM + 0.6 - reserve_bottom   # 차주개요 3표 한 페이지
+    # ★차주개요(기업개요+주주구성및역할+재무제표)는 원본처럼 한 페이지에 — 9pt 압축 + 패킹 하한 약간 늘림
+    if _is_chaju:
+        pack_bottom = _BODY_BOTTOM + 0.5 - reserve_bottom
 
     def flush():
         nonlocal cur, top
