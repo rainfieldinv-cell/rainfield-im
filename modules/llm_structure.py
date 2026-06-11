@@ -537,10 +537,19 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
             note = ""
             for npart in list(grid.get("_notes") or []):
                 note = (note + "\n" + npart).strip() if note else npart
+            # ★금융구조도 다이어그램(원본은 표 안 그림) → '금융구조도' 행을 참여기관 뒤·금융조건 앞에
+            #   삽입하고 페이지 이미지를 그 행 내용칸에 넣음(표안 사진). p['images']서 빼 중복배치 방지.
+            _imgs = p.get("images") or []
+            _diag = _imgs[0] if _imgs else None
+            if _diag and (_diag.get("width", 0) >= _diag.get("height", 1)):
+                lv_rows.append(["금융구조도", ""])
+                p["images"] = []
             lv_rows.append(["주요 금융조건", ""])
             st["tables"] = [{"kind": "label_value", "title": "본 PF 주요조건",
                              "header": [], "rows": lv_rows}]
             st["_nested_grids"] = [("주요 금융조건", grid, note)]
+            if _diag and not (p.get("images")):
+                st["_nested_imgs"] = [("금융구조도", _diag)]
 
     # ── 각주 복원: raw_text의 '주N)' 각주를 살리고(글머리 X), '출처:' 아닌 표각주는 표 밑으로 ──
     _restore_page_notes(pages)

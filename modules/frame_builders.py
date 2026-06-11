@@ -1682,6 +1682,16 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             hdr_rows = 2
         return (hdr_rows + len(gb)) * _rowh(_grid_font(gn)) + 0.10
 
+    # ★표 안의 그림: 앵커 라벨(금융구조도 등) → 이미지(해당 행 내용칸에 사진처럼 얹음)
+    nested_imgs = struct.get("_nested_imgs") or []
+    nested_imgs_parsed = [(a, im) for (a, im) in nested_imgs if im and im.get("data")]
+
+    def _nested_img_for(label):
+        for a, im in nested_imgs_parsed:
+            if a and a in str(label):
+                return im
+        return None
+
     def _nested_for(label):
         for a, parsed, note, unit in nested_parsed:
             if a and a in str(label):
@@ -1788,6 +1798,13 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                 out = []
                 for r in body:
                     ng = _nested_for(r[0])
+                    nim = _nested_img_for(r[0])
+                    if nim and not ng:
+                        # ★다이어그램(금융구조도) 행: 내용칸 폭에 맞춘 표시높이(최대 1.6in — 한 페이지 유지)
+                        iw, ih = nim.get("width", 1), nim.get("height", 1)
+                        disp = (val_w - 0.12) * ih / iw if iw else 1.5
+                        out.append(min(disp, 1.6) + 0.06)
+                        continue
                     if ng:
                         _, gh, gb, gn = ng
                         grid_h = _grid_render_h(gh, gb, gn)
@@ -1807,7 +1824,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             avail = _BODY_BOTTOM - _INTRO_T - label_h - hdr_h
             rhs_all = _calc_rhs(fp)
             # ★표 글씨는 항상 10.5(사용자 지시: 예외 없음). 길어도 폰트 줄이지 말고 페이지 분할.
-            _no_anchor = not any(_nested_for(r[0]) for r in body)
+            _no_anchor = not any(_nested_for(r[0]) or _nested_img_for(r[0]) for r in body)
             chunks, cr, crh, cacc = [], [], [], 0.0
             for r, h in zip(body, rhs_all):
                 if cr and cacc + h > avail:
@@ -1824,7 +1841,8 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             m = len(chunks)
             for k, (rows, rhs) in enumerate(chunks):
                 lbl = (f"{title}({k + 1}/{m})" if (title and m > 1) else title)
-                anchors = [(i, rows[i][0]) for i in range(len(rows)) if _nested_for(rows[i][0])]
+                anchors = [(i, rows[i][0]) for i in range(len(rows))
+                           if _nested_for(rows[i][0]) or _nested_img_for(rows[i][0])]
                 _bn = tnotes if k == m - 1 else []   # 표 각주는 마지막 청크 밑에만
                 blocks.append((lbl, kind, header, rows, ncol, fp, rhs, anchors, _bn, None))
         else:
@@ -1984,7 +2002,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             _anchor_vals = {}
             if anchors and isinstance(rh, (list, tuple)):
                 for (li, alabel) in anchors:
-                    if _nested_for(alabel) and li < len(rows) and len(rows[li]) > 1:
+                    if (_nested_for(alabel) or _nested_img_for(alabel)) and li < len(rows) and len(rows[li]) > 1:
                         _anchor_vals[li] = str(rows[li][1] or "")
                         rows[li][1] = ""
             used = _render_table_chunk(slide, kind, header, rows, ncol, _TBL_L, t, tw, fp, rh,
@@ -1998,6 +2016,23 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                 val_w = tw - lab_w
                 hh = _rowh(fp)
                 for (li, alabel) in anchors:
+                    nim = _nested_img_for(alabel)
+                    if nim and not _nested_for(alabel):
+                        # ★금융구조도 등 다이어그램: 내용칸(val_x..val_w) 안에 사진처럼 중앙배치
+                        cell_y = tbl_top + hh + sum(rh[:li])
+                        cell_h = rh[li]
+                        iw, ih = nim.get("width", 1), nim.get("height", 1)
+                        sc = min((val_w - 0.14) / iw, (cell_h - 0.10) / ih) if iw and ih else 1.0
+                        w_in, h_in = iw * sc, ih * sc
+                        px = val_x + (val_w - w_in) / 2
+                        py = cell_y + (cell_h - h_in) / 2
+                        try:
+                            slide.shapes.add_picture(io.BytesIO(nim["data"]),
+                                                     Inches(px), Inches(py),
+                                                     Inches(w_in), Inches(h_in))
+                        except Exception:
+                            pass
+                        continue
                     ng = _nested_for(alabel)
                     if not ng:
                         continue
