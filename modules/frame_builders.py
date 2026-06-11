@@ -1648,6 +1648,9 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
     side_box = bool(big_imgs) and has_tbl and labeled_img
     top_bare = bool(big_imgs) and has_tbl and not labeled_img
     _IMG_W, _IMG_GAP_LR = 4.0, 0.25
+    # 입지분석: 표 글이 많음 → 지도 칸을 좁게(지도 2장 세로로) 두고 표를 넓혀 10.5로 한 페이지에 맞춤.
+    if "입지" in subtitle and side_box:
+        _IMG_W = 2.7
     _sidebox_tw = _TBL_W - _IMG_W - _IMG_GAP_LR
     tw = _sidebox_tw if side_box else _TBL_W
     img_col_L = _TBL_L + tw + _IMG_GAP_LR
