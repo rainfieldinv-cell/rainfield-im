@@ -1598,6 +1598,31 @@ def _place_images_col(slide, imgs, L, top, W, bottom, *, labels=None):
     return avail_h
 
 
+def _place_images_col_bare(slide, imgs, L, top, W, bottom, gap=0.12):
+    """표 틀(구분|내용 라벨표) 없이 이미지만 세로로 쌓아 배치 — 입지분석처럼 라벨표가 답답해 보일 때.
+       테두리·헤더·'위치도/조감도' 라벨 전부 생략, 사진만 칸에 꽉 채워 크게(사용자 지시)."""
+    imgs = [im for im in (imgs or []) if im.get("data")]
+    if not imgs:
+        return 0.0
+    n = len(imgs)
+    avail_h = bottom - top
+    if avail_h < 0.5:
+        return 0.0
+    cell_h = (avail_h - gap * (n - 1)) / n
+    for i, im in enumerate(imgs):
+        iw, ih = im.get("width", 1), im.get("height", 1)
+        scale = min(W / iw, cell_h / ih) if iw and ih else 1.0
+        w_in, h_in = iw * scale, ih * scale
+        px = L + (W - w_in) / 2
+        py = top + i * (cell_h + gap) + (cell_h - h_in) / 2
+        try:
+            slide.shapes.add_picture(io.BytesIO(im["data"]), Inches(px), Inches(py),
+                                     Inches(w_in), Inches(h_in))
+        except Exception:
+            pass
+    return avail_h
+
+
 _GAP = 0.22       # 표 간 간격
 _LABEL_H = 0.34   # 표 미니라벨 높이
 
@@ -2007,10 +2032,15 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         # ★본문 사진 배치(top_bare는 위에서 처리).
         #   side_box(조감도/광역입지)=첫 plan(건축개요 표) 오른쪽 / 부록=마지막 plan 표없이 크게
         if side_box and idx == img_plan_idx and big_imgs:
-            labels = _img_labels_for(subtitle, min(2, len(big_imgs)))
-            # 원본이 '표 안 사진'(조감도·광역위치도) → 라벨 헤더 표박스(각 1:1), 표 오른쪽
-            _place_images_col(slide, big_imgs[:2], img_col_L, tbl_start,
-                              _IMG_W, _BODY_BOTTOM, labels=labels)
+            if "입지" in subtitle:
+                # ★입지분석: 위치도/조감도 라벨표는 답답 → 표 틀 없이 사진만 크게(사용자 지시)
+                _place_images_col_bare(slide, big_imgs[:2], img_col_L, tbl_start,
+                                       _IMG_W, _BODY_BOTTOM)
+            else:
+                labels = _img_labels_for(subtitle, min(2, len(big_imgs)))
+                # 원본이 '표 안 사진'(조감도·광역위치도) → 라벨 헤더 표박스(각 1:1), 표 오른쪽
+                _place_images_col(slide, big_imgs[:2], img_col_L, tbl_start,
+                                  _IMG_W, _BODY_BOTTOM, labels=labels)
         elif idx == n - 1 and big_imgs and not top_bare and not side_box and not has_tbl:
             # 표 없는 사진 페이지 → (분석 글이 있으면 글을 위에 먼저 쓰고 지도는 그 아래 = 겹침 방지),
             #   사진 4장 이상이면 그리드(사업지전경 6장 등), 아니면 한 줄.

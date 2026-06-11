@@ -239,7 +239,7 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
             elif (re.match(r"^\d+\)\s*\S", s) and len(s) >= 8
                   and any(k in s for k in ("감정", "탁감", "LTV", "매출액", "별도", "수용재결 필지", "탁상감정"))):
                 # ★'N) …'는 '값 각주'(감정가/LTV/매출액 등)일 때만 — 본문 목록('1) 당연 기한이익…')은 제외.
-                note = "주" + s        # 'N)' → '주N)' 로 통일
+                note = s               # ★원본 마커 그대로 보존(천안 금융조건은 '1)' — '주' 붙이지 말 것)
                 nxt = _lines[li + 1].strip() if li + 1 < len(_lines) else ""
                 if nxt and not re.match(r"^[\*\d주■▶•]", nxt) and any(k in nxt for k in ("LTV", "기준", "수용", "탁감")):
                     note += " " + nxt
@@ -288,8 +288,9 @@ def _merge_section2_financing(pages: list, *, debug: bool = False) -> None:
             if _find_row(anchor) is None:
                 lv_rows.append([anchor, ""])
         else:
-            # 구분|대출금액|금리|LTV → 주요 대출조건. 참여기관 바로 뒤(상세 조건 앞)에 신설.
-            anchor = "주요 대출조건"
+            # 구분|대출금액|금리|LTV → 원본 섹션명(예 '금융 조건') 사용. 괄호 접미사(트랜치별 등)는 제거.
+            #   참여기관 바로 뒤(상세 조건 앞)에 신설.
+            anchor = re.sub(r"\s*\([^)]*\)\s*$", "", title.strip()) or "주요 대출조건"
             note = _take_note(("탁상감정", "감정가", "감정평가", "경일감정"))
             _star = _take_note(("자문수수료", "제반비용 별도", "수수료 및 대출"))   # *…별도 주석
             if _star:
@@ -959,6 +960,16 @@ def _restore_page_notes(pages: list) -> None:
                                 for _n in _nts]
             # ★표 _notes에 '있는 번호'만 bullets에서 제거(중복). 표에 없는 주N)는 bullets에 그대로 유지.
             st["bullets"] = [_b for _b in _bl if _jnum(_b) is None or _jnum(_b) not in _tab_nums]
+
+        # ⑧ 토지 확보현황 표: 각주를 원본 raw '*…' 줄 그대로 사용(LLM 확장본 대신).
+        #    원본엔 '*실시계획인가 …'(편입면적 기준) + '*주1)/주2)/주3)' 4줄 — verbatim 보존(사용자 지시).
+        _star = [ln.strip() for ln in raw.splitlines()
+                 if ln.strip().startswith("*") and len(ln.strip()) >= 6]
+        if _star:
+            for _t in (st.get("tables") or []):
+                _hdr = " ".join(str(h) for h in (_t.get("header") or []))
+                if "확보비율" in _hdr and "구역면적" in _hdr:
+                    _t["_notes"] = list(_star)
 
 
 def _inject_comparison_thumbnails(pages: list, pdf_path: str) -> None:
