@@ -1675,12 +1675,19 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         if gn > 0 and gb:
             nested_parsed.append((anchor, (gk, gh, gb, gn), note, unit))
 
+    # ★별첨1(다이어그램 행 + 금융조건 중첩표 동거)는 중첩 금융조건표만 8pt로 축소해 한 페이지 fit
+    #   (사용자 확정: 일반표 10.5pt 유지, 이 중첩표만 예외).
+    _force_ng_fp = 8 if struct.get("_nested_imgs") else None
+
+    def _ng_font(gn):
+        return _force_ng_fp if _force_ng_fp else _grid_font(gn)
+
     def _grid_render_h(gh, gb, gn):
         """중첩 grid 렌더 높이 — Cash-in/Cash-out 2행 헤더는 헤더 2줄로 계산."""
         hdr_rows = 1 if gh else 0
         if gh and any("Cash" in str(h) for h in gh):
             hdr_rows = 2
-        return (hdr_rows + len(gb)) * _rowh(_grid_font(gn)) + 0.10
+        return (hdr_rows + len(gb)) * _rowh(_ng_font(gn)) + 0.10
 
     # ★표 안의 그림: 앵커 라벨(금융구조도 등) → 이미지(해당 행 내용칸에 사진처럼 얹음)
     nested_imgs = struct.get("_nested_imgs") or []
@@ -1803,7 +1810,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                         # ★다이어그램(금융구조도) 행: 내용칸 폭에 맞춘 표시높이(최대 1.6in — 한 페이지 유지)
                         iw, ih = nim.get("width", 1), nim.get("height", 1)
                         disp = (val_w - 0.12) * ih / iw if iw else 1.5
-                        out.append(min(disp, 1.6) + 0.06)
+                        out.append(min(disp, 1.4) + 0.06)
                         continue
                     if ng:
                         _, gh, gb, gn = ng
@@ -2058,7 +2065,7 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                     try:
                         _render_table_chunk(slide, "grid", gh, gb, gn,
                                             val_x + 0.05, cur_y, val_w - 0.10,
-                                            _grid_font(gn), _rowh(_grid_font(gn)), red_counts=red_counts,
+                                            _ng_font(gn), _rowh(_ng_font(gn)), red_counts=red_counts,
                                             hdr_fill_hex="3E95BE", hdr_alpha=35)
                         cur_y += grid_h + 0.02
                         # grid 바로 밑 주N) 각주(원본처럼)
