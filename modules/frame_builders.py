@@ -1359,8 +1359,8 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
         if hdr_rows > 0:
             _set_cell_red_border(t.cell(hdr_rows - 1, eq_col), ["B"])
     # ★원본 정렬 재현(G2) — 모든 병합·색칠 뒤 맨 마지막에 적용(앞서 _compact_grid가 가운데로 리셋하므로).
-    #   grid 표에서 '숫자/비율 전용' 컬럼은 가운데, '텍스트가 섞인(긴) 컬럼'은 왼쪽 정렬(원본처럼).
-    #   (수용재결 진행일정·관계법령·단지명·비고·구분 라벨 등 → 왼쪽 / 금액·세대수·비율 → 가운데)
+    #   원본처럼: '숫자/비율 전용' 컬럼 = 오른쪽 / '텍스트 섞인 긴(≥10자)' 컬럼 = 왼쪽 / 그 외(짧은) = 가운데.
+    #   (금액·세대수·면적·비율·매매대금 → 오른쪽 / 진행일정·관계법령·단지명·구분 라벨 → 왼쪽)
     if kind != "label_value" and header:
         _NUMERIC = re.compile(r"^[\d,.\-~%()\s원억평㎡천만원/]+$")
         for ci in range(ncol):
@@ -1371,10 +1371,12 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
                 continue
             all_numeric = all(_NUMERIC.match(v) for v in vals)
             longish = any(len(v) >= 10 for v in vals)
-            if (not all_numeric) and longish:
+            _al = (PP_ALIGN.RIGHT if all_numeric
+                   else (PP_ALIGN.LEFT if longish else None))
+            if _al is not None:
                 for ri in range(hdr_rows, nrow):
                     for p in t.cell(ri, ci).text_frame.paragraphs:
-                        p.alignment = PP_ALIGN.LEFT
+                        p.alignment = _al
     return height
 
 
