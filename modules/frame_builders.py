@@ -611,13 +611,17 @@ def _classify_total_rows(data, ncol):
     # ★재무상태표 항목(자산총계/부채총계/자본총계)은 합계행 아님 — 원본도 색칠 안 함 → 분류 제외
     _FIN_EXCLUDE = ("자산총계", "부채총계", "자본총계", "자 산 총 계", "부 채 총 계", "자 본 총 계",
                     "총자산", "총부채", "총자본", "총 자산", "총 부채", "총 자본")  # 재무제표 항목 — 합계행 아님(색칠X)
+    # ★사업수지표 섹션합계(원본에 색칠된 행) — 수입계/비용계/사업이익/최종사업이익만(분양매출전환이익 제외)
+    _SUJI_TOT = ("수입계", "비용계", "사업이익", "최종사업이익")
     subtotal, grandtotal = set(), set()
     for i, row in enumerate(data):
         cells = [str((row[c] if c < len(row) else "") or "").strip() for c in range(ncol)]
+        _c0d = cells[0].replace(" ", "") if cells else ""
         is_sub = any(len(cx) <= 12 and cx not in _FIN_EXCLUDE and any(k in cx for k in ("소계", "소 계"))
                      for cx in cells)
-        #  '총…'(총매출/총비용/총계/총합계 등 짧은 합산 라벨)도 합계행으로 인정
-        is_grand = any(len(cx) <= 12 and cx not in _FIN_EXCLUDE
+        #  '총…'(총매출/총비용/총계/총합계 등 짧은 합산 라벨)·사업수지 섹션합계도 합계행으로 인정
+        is_grand = (_c0d in _SUJI_TOT) or any(
+                       len(cx) <= 12 and cx not in _FIN_EXCLUDE
                        and (cx.startswith("총")
                             or any(k in cx for k in ("합계", "총계", "총합계", "합 계", "총 계")))
                        for cx in cells)
@@ -684,9 +688,17 @@ def _header_groups(header):
         for i in range(s, e + 1):
             grouped[i] = True
             row1[i] = h[i].replace("(평)", "").replace("(㎡)", "")
-    for (s, e) in _runs([i for i, x in enumerate(h)
-                         if any(k in x for k in ("시점", "거래", "분양가", "평단가"))]):
-        hmerges.append((s, e, "실거래가/분양가"))
+    # 분양가/실거래가 그룹 — 시점·거래가 있으면 시세표('실거래가/분양가'), 분양가만이면 분양개요('분양가').
+    #   분양개요는 '분양수입(백만원)'이 분양가 칸 바로 뒤에 붙으면 같은 그룹(원본 헤더 구조).
+    _price = set(i for i, x in enumerate(h) if any(k in x for k in ("시점", "거래", "분양가", "평단가", "평당")))
+    for i in list(_price):
+        j = i + 1
+        while j < n and "분양수입" in h[j]:
+            _price.add(j); j += 1
+    for (s, e) in _runs(sorted(_price)):
+        _seg = h[s:e + 1]
+        _lab = "실거래가/분양가" if any(k in x for x in _seg for k in ("시점", "거래")) else "분양가"
+        hmerges.append((s, e, _lab))
         for i in range(s, e + 1):
             grouped[i] = True
             row1[i] = h[i]
@@ -1997,16 +2009,12 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         tbl_start = t   # 표가 시작되는 y(사진 옆배치 기준)
         for (lbl, kind, header, rows, ncol, fp, rh, anchors, tbl_notes, thumb_imgs) in plan["items"]:
             if lbl:
-                # ★'(단위 …)'는 표 우측 위에 Light 9pt 별도 글상자로(원본처럼), 라벨에선 분리
+                # ★'(단위 …)'·'[단위 …]'는 표 우측 위에 Light 9pt 별도 글상자로(원본처럼), 라벨에선 분리
                 unit = ""
-                mi = lbl.find("(단위")
-                if mi != -1:
-                    me = lbl.find(")", mi)
-                    if me != -1:
-                        unit = lbl[mi:me + 1]
-                        lbl = (lbl[:mi] + lbl[me + 1:]).strip()
-                    else:
-                        unit = lbl[mi:]; lbl = lbl[:mi].strip()
+                _um = re.search(r"[\(\[]\s*단위[^)\]]*[\)\]]", lbl)
+                if _um:
+                    unit = _um.group(0).strip()
+                    lbl = (lbl[:_um.start()] + lbl[_um.end():]).strip()
                 _add_textbox(slide, _TBL_L, t, tw - 2.2, 0.28, lbl,
                              size=12, bold=True, color=PALETTE["navy_dark"])
                 if unit:
