@@ -548,6 +548,13 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
                     _defn = _s.lstrip("*").strip()
                     if (f"주{_m.group(1)})" in _gblob) and (_defn not in note):
                         note = (note + "\n" + _defn).strip() if note else _defn
+            # ★grid 셀의 '주N) 설명…'은 마커만 남김(설명은 표 밑 각주로 이미 감 — 비고칸 LTV '주1)'만)
+            for _gr in (grid.get("rows") or []):
+                for _ci in range(len(_gr)):
+                    _cv = str(_gr[_ci] or "").strip()
+                    _tm = re.match(r"^(\*?\s*주\s*\d+\s*\))\s+\S.+$", _cv)
+                    if _tm:
+                        _gr[_ci] = re.sub(r"\s+", "", _tm.group(1))
             # ★금융구조도 다이어그램(원본은 표 안 그림) → '금융구조도' 행을 참여기관 뒤·금융조건 앞에
             #   삽입하고 페이지 이미지를 그 행 내용칸에 넣음(표안 사진). p['images']서 빼 중복배치 방지.
             _imgs = p.get("images") or []
@@ -1135,14 +1142,20 @@ def _recover_dropped_comparison_tables(pages: list, pdf_path: str) -> None:
         new_tbl = {"kind": "grid", "title": title, "header": hdr, "rows": body}
         # ★분석문/지도가 같이 있는 페이지면 표는 '별도 슬라이드'로(원본처럼 표 안 짤리게 — 이어서 한 장에).
         if st.get("bullets") or p.get("images"):
-            _inserts.append((idx, {
+            _np = {
                 "page_num": p.get("page_num"),
                 "raw_text": "", "images": [], "_sec_int": p.get("_sec_int"),
+                # ★정렬키 복사 + _orig_idx 살짝 뒤로 → 후속 정렬(_ck)에서 분석페이지 바로 뒤에 위치
+                "_orig_idx": (p.get("_orig_idx", 0) or 0) + 0.5,
                 "_struct": {"subtitle": st.get("subtitle"),
                             "section_label": st.get("section_label"),
                             "intro": "", "bullets": [], "source": "",
                             "tables": [new_tbl]},
-            }))
+            }
+            for _k in ("_grp_sec", "_grp_seq", "_grp_fixed"):
+                if p.get(_k) is not None:
+                    _np[_k] = p.get(_k)
+            _inserts.append((idx, _np))
         else:
             st.setdefault("tables", []).append(new_tbl)
     for _off, (idx, np_) in enumerate(_inserts):
