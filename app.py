@@ -965,8 +965,58 @@ def show_step5():
             st.dataframe(df, use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    if st.button("← 4단계로 (PPT 재생성)", use_container_width=False):
-        st.session_state.current_step = 4
+    _r5c1, _r5c2 = st.columns(2)
+    with _r5c1:
+        if st.button("← 4단계로 (PPT 재생성)", use_container_width=True):
+            st.session_state.current_step = 4
+            st.rerun()
+    with _r5c2:
+        if st.session_state.get("ppt_bytes"):
+            if st.button("다음 단계 → (6단계 간격 점검)", use_container_width=True, type="primary"):
+                st.session_state.current_step = 6
+                st.rerun()
+
+
+# ─────────────────────────────────────────────
+# [6단계: 간격 점검] — 띄어쓰기·공백·오버플로우·빈줄(읽기전용). 맞춤법은 5단계.
+# ─────────────────────────────────────────────
+def show_step6():
+    st.markdown("## 6단계. 간격 점검")
+    st.caption("텍스트 띄어쓰기·연속 공백·오버플로우(넘침)·빈 줄을 점검합니다. (맞춤법은 5단계. 자동 수정은 하지 않습니다.)")
+    st.markdown("")
+
+    ppt_bytes = st.session_state.get("ppt_bytes")
+    if not ppt_bytes:
+        st.warning("먼저 4단계에서 PPT를 생성해주세요.")
+        if st.button("← 4단계로"):
+            st.session_state.current_step = 4
+            st.rerun()
+        return
+
+    if st.button("🔍 간격 점검 실행", type="primary"):
+        with st.spinner("슬라이드 텍스트 간격을 점검하는 중입니다..."):
+            from modules.spacing_check import check_spacing
+            st.session_state.spacing_result = check_spacing(ppt_bytes)
+
+    result = st.session_state.get("spacing_result")
+    if result is not None:
+        c = result["counts"]
+        cols = st.columns(len(c))
+        for col, (k, v) in zip(cols, c.items()):
+            col.metric(k, v)
+        st.markdown("---")
+        if result["ok"]:
+            st.success("✅ 이상 없음 — 띄어쓰기·공백·넘침 문제가 발견되지 않았습니다.")
+        else:
+            import pandas as pd
+            df = pd.DataFrame(result["items"], columns=["page", "type", "content", "suggestion"])
+            df = df.rename(columns={"page": "페이지", "type": "문제유형",
+                                    "content": "내용", "suggestion": "제안"})
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    if st.button("← 5단계로 (내용 검수)", use_container_width=False):
+        st.session_state.current_step = 5
         st.rerun()
 
 
@@ -988,6 +1038,8 @@ def show_conversion_tab():
         show_step4()
     elif st.session_state.current_step == 5:
         show_step5()
+    elif st.session_state.current_step == 6:
+        show_step6()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
 
