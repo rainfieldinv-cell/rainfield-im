@@ -41,3 +41,6 @@ templates/layout_data.json
 # 개발용 테스트 스크립트
 _test_*.py
 debug.log
+
+# 메모 탭 저장 파일 (런타임 데이터 — repo에 불필요)
+memos.json

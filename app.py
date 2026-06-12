@@ -1127,8 +1127,52 @@ def show_step7():
             _render_large(st.session_state.preview_selected)
 
     st.markdown("---")
-    if st.button("← 6단계로 (간격 점검)", use_container_width=False):
-        st.session_state.current_step = 6
+    _r7c1, _r7c2 = st.columns(2)
+    with _r7c1:
+        if st.button("← 6단계로 (간격 점검)", use_container_width=True):
+            st.session_state.current_step = 6
+            st.rerun()
+    with _r7c2:
+        if st.session_state.get("ppt_bytes"):
+            if st.button("다음 단계 → (8단계 다운로드)", use_container_width=True, type="primary"):
+                st.session_state.current_step = 8
+                st.rerun()
+
+
+# ─────────────────────────────────────────────
+# [8단계: 다운로드] — 완성 PPT를 .pptx로 내려받기(서버 저장 X).
+# ─────────────────────────────────────────────
+def show_step8():
+    st.markdown("## 8단계. 다운로드")
+    st.caption("완성된 제안서 PPT를 내려받습니다. (파일은 서버에 저장되지 않고 다운로드만 합니다.)")
+    st.markdown("")
+
+    ppt_bytes = st.session_state.get("ppt_bytes")
+    if not ppt_bytes:
+        st.warning("먼저 4단계에서 PPT를 생성해주세요.")
+        if st.button("← 4단계로"):
+            st.session_state.current_step = 4
+            st.rerun()
+        return
+
+    biz = (st.session_state.get("business_name") or "").strip()
+    safe = re.sub(r'[\\/:*?"<>|]', "", biz) or "제안서"
+    fname = f"{safe}_제안서_{datetime.now().strftime('%Y%m%d')}.pptx"
+
+    st.metric("사업명", biz or "(미입력)")
+    st.download_button(
+        "⬇️ PPT 다운로드",
+        data=ppt_bytes,
+        file_name=fname,
+        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        type="primary",
+        use_container_width=True,
+    )
+    st.caption(f"파일명: {fname}")
+
+    st.markdown("---")
+    if st.button("← 7단계로 (전체 미리보기)", use_container_width=False):
+        st.session_state.current_step = 7
         st.rerun()
 
 
@@ -1154,8 +1198,57 @@ def show_conversion_tab():
         show_step6()
     elif st.session_state.current_step == 7:
         show_step7()
+    elif st.session_state.current_step == 8:
+        show_step8()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
+
+
+# ─────────────────────────────────────────────
+# [메모 탭] — 사업명/문제점/추가의견 텍스트 메모(memos.json 보관). PPT 파일은 저장 안 함.
+# ─────────────────────────────────────────────
+def show_memo_tab():
+    from modules.memo import load_memos, add_memo, delete_memo
+
+    st.markdown("### 📝 메모")
+    st.caption("사업명·문제점·추가의견을 메모로 보관합니다. "
+               "(PPT 파일은 저장하지 않고 텍스트만 보관 · 자동 삭제 없음)")
+
+    # 새 메모 추가 폼
+    with st.form("memo_form", clear_on_submit=True):
+        biz = st.text_input("사업명", value=st.session_state.get("business_name", ""))
+        prob = st.text_area("문제점", height=80, placeholder="변환·내용상 발견한 문제점")
+        opin = st.text_area("추가의견", height=80, placeholder="개선 아이디어·참고사항 등")
+        submitted = st.form_submit_button("➕ 새 메모 추가", type="primary")
+    if submitted:
+        if not (biz.strip() or prob.strip() or opin.strip()):
+            st.warning("사업명·문제점·추가의견 중 하나 이상 입력해주세요.")
+        else:
+            created = datetime.now().strftime("%Y-%m-%d %H:%M")
+            add_memo(biz.strip(), prob.strip(), opin.strip(), created)
+            st.success("메모를 저장했습니다.")
+            st.rerun()
+
+    st.markdown("---")
+    memos = load_memos()
+    if not memos:
+        st.info("저장된 메모가 없습니다.")
+        return
+
+    st.markdown(f"**저장된 메모 ({len(memos)}개)**")
+    for i, m in enumerate(memos):
+        with st.container(border=True):
+            c1, c2 = st.columns([6, 1])
+            with c1:
+                st.markdown(f"**{m.get('business') or '(사업명 없음)'}**  ·  🕒 {m.get('created', '')}")
+                if m.get("problem"):
+                    st.markdown(f"- **문제점:** {m['problem']}")
+                if m.get("opinion"):
+                    st.markdown(f"- **추가의견:** {m['opinion']}")
+            with c2:
+                if st.button("🗑 삭제", key=f"del_memo_{i}", use_container_width=True):
+                    delete_memo(i)
+                    st.rerun()
 
 
 # ─────────────────────────────────────────────
@@ -1196,15 +1289,15 @@ def show_main():
 
     # ── 탭 구성 ──
     # 탭 이름을 바꾸려면 아래 리스트의 문자열을 수정하세요
-    tab1, tab2 = st.tabs(["🔄 변환 작업", "📁 저장된 파일 / 메모"])
+    tab1, tab2 = st.tabs(["🔄 변환 작업", "📝 메모"])
 
     # ── 탭1: 변환 작업 ──
     with tab1:
         show_conversion_tab()
 
-    # ── 탭2: 저장된 파일 / 메모 ──
+    # ── 탭2: 메모 ──
     with tab2:
-        st.info("📌 추후 STEP 7에서 구현될 예정입니다.")
+        show_memo_tab()
 
     # ── 하단 푸터 ──
     # 여기를 수정하면 하단 저작권 문구가 바뀝니다
