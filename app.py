@@ -1263,7 +1263,7 @@ def show_memo_tab():
 
     # 새 메모 추가 폼
     with st.form("memo_form", clear_on_submit=True):
-        biz = st.text_input("사업명", value=st.session_state.get("business_name", ""))
+        biz = st.text_input("제목(사업명)", value=st.session_state.get("business_name", ""))
         prob = st.text_area("문제점", height=80, placeholder="변환·내용상 발견한 문제점")
         opin = st.text_area("추가의견", height=80, placeholder="개선 아이디어·참고사항 등")
         submitted = st.form_submit_button("➕ 새 메모 추가", type="primary")
