@@ -145,31 +145,15 @@ def find_empty_cells(prs):
 # ──────────────────────────────────────────────────────────
 # 3) 오타 / 맞춤법
 # ──────────────────────────────────────────────────────────
-# 규칙 기반 최소 점검(라이브러리 없을 때 폴백) — 명백한 패턴만.
-_COMMON_TYPO = {
-    "되요": "돼요", "안되": "안 되", "할수": "할 수", "갈수": "갈 수", "될수": "될 수",
-    "몇일": "며칠", "왠만": "웬만", "역활": "역할", "되어집": "됩", "있읍": "있습",
-}
-
-
-def _rule_based_spell(prs):
-    # ★규칙 기반 폴백은 '명백한 오타'만(연속공백 등은 디자인상 흔해 노이즈라 제외).
-    rows = []
-    for i, t in _ppt_korean_lines(prs):
-        for bad, good in _COMMON_TYPO.items():
-            if bad in t:
-                rows.append({"page": f"슬라이드 {i}", "type": "맞춤법",
-                             "content": bad, "suggestion": f"'{good}'(으)로 수정 검토"})
-    return rows
-
-
 def check_spelling(prs):
-    """hanspell(네이버 맞춤법) 사용 가능하면 그걸로, 아니면 규칙 기반 폴백.
-       라이브러리/네트워크 실패 시 앱이 죽지 않게 graceful 처리."""
+    """맞춤법 검사 — hanspell(네이버) 설치/동작 시에만 수행. 없으면 '건너뛰기'.
+       ★py-hanspell은 클라우드 설치가 자주 실패하므로 requirements에 넣지 않는다.
+         라이브러리 미설치/호출 실패 시 빈 결과 + '비활성' 표시 → 앱은 절대 죽지 않음.
+         (내용 1:1 대조·빈 표 셀 검출은 이 함수와 무관하게 정상 동작)"""
     try:
-        from hanspell import spell_checker            # py-hanspell
+        from hanspell import spell_checker            # 설치돼 있을 때만(기본 미설치)
     except Exception:
-        return _rule_based_spell(prs), "규칙 기반(기본) — hanspell 미설치"
+        return [], "맞춤법 검사 비활성(라이브러리 미설치)"
 
     rows, ok = [], False
     for i, t in _ppt_korean_lines(prs):
@@ -184,7 +168,7 @@ def check_spelling(prs):
             rows.append({"page": f"슬라이드 {i}", "type": "맞춤법",
                          "content": t[:40], "suggestion": checked[:60]})
     if not ok:
-        return _rule_based_spell(prs), "규칙 기반(기본) — hanspell 호출 실패(네트워크)"
+        return [], "맞춤법 검사 비활성(호출 실패 — 네트워크)"
     return rows, "hanspell(네이버 맞춤법)"
 
 
