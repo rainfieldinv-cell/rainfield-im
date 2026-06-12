@@ -80,6 +80,8 @@ if "parsed_pages" not in st.session_state:
     st.session_state.parsed_pages = []         # content_parser 결과
 if "pdf_bytes" not in st.session_state:
     st.session_state.pdf_bytes = None          # PDF 원본 bytes(좌표기반 사진/표복원용)
+if "ppt_bytes" not in st.session_state:
+    st.session_state.ppt_bytes = None          # 생성된 PPT bytes(5단계 내용검수용)
 
 # 섹션 이미지 관련 세션 상태 — 원형 슬롯 3개 (4개 섹션 divider 공통 적용)
 if "section_img_idx_list" not in st.session_state:
@@ -885,6 +887,8 @@ def show_step4():
                     exec_summary_data=exec_summary_data,
                 )
 
+            # ★5단계 내용검수에서 쓰도록 생성 PPT 보관
+            st.session_state.ppt_bytes = ppt_bytes
             filename = make_output_filename(st.session_state.business_name)
             st.success(f"✅ PPT 생성 완료!")
 
@@ -906,8 +910,63 @@ def show_step4():
     # ────────────────────────────────────────
     # (D) 하단 네비게이션
     # ────────────────────────────────────────
-    if st.button("← 이전 단계 (설정 변경)", use_container_width=False):
-        st.session_state.current_step = 3
+    _navc1, _navc2 = st.columns(2)
+    with _navc1:
+        if st.button("← 이전 단계 (설정 변경)", use_container_width=True):
+            st.session_state.current_step = 3
+            st.rerun()
+    with _navc2:
+        if st.session_state.get("ppt_bytes"):
+            if st.button("다음 단계 → (5단계 내용 검수)", use_container_width=True, type="primary"):
+                st.session_state.current_step = 5
+                st.rerun()
+
+
+# ─────────────────────────────────────────────
+# [5단계: 내용 검수] — 생성 PPT가 원본과 일치하는지 읽기전용 점검
+# ─────────────────────────────────────────────
+def show_step5():
+    st.markdown("## 5단계. 내용 검수")
+    st.caption("생성된 PPT 본문이 원본과 일치하는지 자동 점검합니다. (문제를 보여줄 뿐, 자동 수정은 하지 않습니다.)")
+    st.markdown("")
+
+    ppt_bytes = st.session_state.get("ppt_bytes")
+    if not ppt_bytes:
+        st.warning("먼저 4단계에서 PPT를 생성해주세요.")
+        if st.button("← 4단계로"):
+            st.session_state.current_step = 4
+            st.rerun()
+        return
+
+    pages_text = (st.session_state.extracted_data or {}).get("pages_text", []) \
+        if st.session_state.extracted_data else []
+
+    if st.button("🔍 검수 실행", type="primary"):
+        with st.spinner("PPT와 원본을 대조하는 중입니다..."):
+            from modules.content_review import review_presentation
+            st.session_state.review_result = review_presentation(ppt_bytes, pages_text)
+
+    result = st.session_state.get("review_result")
+    if result is not None:
+        c = result["counts"]
+        st.markdown(f"**맞춤법 엔진:** {result.get('spell_engine','-')}")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("내용 누락", c["내용 누락"])
+        m2.metric("빈 표 셀", c["빈 표 셀"])
+        m3.metric("맞춤법", c["맞춤법"])
+        st.markdown("---")
+        if result["ok"]:
+            st.success("✅ 이상 없음 — 누락·빈칸·맞춤법 문제가 발견되지 않았습니다.")
+        else:
+            import pandas as pd
+            df = pd.DataFrame(result["items"], columns=["page", "type", "content", "suggestion"])
+            df = df.rename(columns={"page": "페이지", "type": "문제유형",
+                                    "content": "내용", "suggestion": "제안"})
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    if st.button("← 4단계로 (PPT 재생성)", use_container_width=False):
+        st.session_state.current_step = 4
         st.rerun()
 
 
@@ -927,6 +986,8 @@ def show_conversion_tab():
         show_step3()
     elif st.session_state.current_step == 4:
         show_step4()
+    elif st.session_state.current_step == 5:
+        show_step5()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
 

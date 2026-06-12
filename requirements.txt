@@ -6,3 +6,4 @@ python-docx
 Pillow
 anthropic
 python-dotenv
+py-hanspell   # 5단계 내용검수 한글 맞춤법(없거나 실패하면 규칙기반으로 자동 폴백)
