@@ -1079,9 +1079,52 @@ def show_step7():
         st.error(f"미리보기 생성 실패 — {err}")
     if imgs:
         st.success(f"✅ {len(imgs)}개 슬라이드 변환 완료")
-        for i, png in enumerate(imgs, start=1):
-            st.markdown(f"**슬라이드 {i}**")
-            st.image(png, use_container_width=True)
+        st.caption("썸네일 아래 '🔍 슬라이드 N'을 누르면 큰 이미지로 확대해서 볼 수 있습니다.")
+        st.session_state.setdefault("preview_selected", None)
+        _has_dialog = hasattr(st, "dialog")
+
+        # 확대 보기 본문(팝업/인라인 공통) — 이전·다음·닫기 지원
+        def _render_large(idx):
+            st.image(imgs[idx], use_container_width=True)
+            st.markdown(f"**슬라이드 {idx + 1} / {len(imgs)}**")
+            a, b, c = st.columns(3)
+            if a.button("← 이전", key="lg_prev", disabled=(idx <= 0), use_container_width=True):
+                st.session_state.preview_selected = idx - 1
+                if not _has_dialog:
+                    st.rerun()
+            if b.button("다음 →", key="lg_next", disabled=(idx >= len(imgs) - 1), use_container_width=True):
+                st.session_state.preview_selected = idx + 1
+                if not _has_dialog:
+                    st.rerun()
+            if c.button("✕ 닫기", key="lg_close", use_container_width=True):
+                st.session_state.preview_selected = None
+                st.rerun()
+
+        if _has_dialog:
+            @st.dialog("슬라이드 크게 보기", width="large")
+            def _open_large():
+                _render_large(st.session_state.preview_selected)
+
+        # 썸네일 그리드 — 한 줄에 5개
+        COLS = 5
+        for start in range(0, len(imgs), COLS):
+            cols = st.columns(COLS)
+            for col, idx in zip(cols, range(start, min(start + COLS, len(imgs)))):
+                with col:
+                    st.image(imgs[idx], use_container_width=True)
+                    if st.button(f"🔍 슬라이드 {idx + 1}", key=f"thumb_{idx}",
+                                 use_container_width=True):
+                        st.session_state.preview_selected = idx
+                        if _has_dialog:
+                            _open_large()
+                        else:
+                            st.rerun()
+
+        # st.dialog 미지원 환경: 선택 슬라이드를 인라인으로 크게 표시
+        if not _has_dialog and st.session_state.preview_selected is not None:
+            st.markdown("---")
+            st.markdown("### 🔍 크게 보기")
+            _render_large(st.session_state.preview_selected)
 
     st.markdown("---")
     if st.button("← 6단계로 (간격 점검)", use_container_width=False):
