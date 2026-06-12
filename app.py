@@ -1030,8 +1030,60 @@ def show_step6():
             st.dataframe(df, use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    if st.button("← 5단계로 (내용 검수)", use_container_width=False):
-        st.session_state.current_step = 5
+    _r6c1, _r6c2 = st.columns(2)
+    with _r6c1:
+        if st.button("← 5단계로 (내용 검수)", use_container_width=True):
+            st.session_state.current_step = 5
+            st.rerun()
+    with _r6c2:
+        if st.session_state.get("ppt_bytes"):
+            if st.button("다음 단계 → (7단계 전체 미리보기)", use_container_width=True, type="primary"):
+                st.session_state.current_step = 7
+                st.rerun()
+
+
+# ─────────────────────────────────────────────
+# [7단계: 전체 미리보기] — 생성 PPT를 슬라이드 이미지로(LibreOffice→PDF→PNG). 읽기전용.
+# ─────────────────────────────────────────────
+def show_step7():
+    st.markdown("## 7단계. 전체 미리보기")
+    st.caption("생성된 PPT를 슬라이드 이미지로 변환해 한 장씩 확인합니다. "
+               "(LibreOffice 변환 — 페이지가 많으면 수십 초 걸릴 수 있습니다.)")
+    st.markdown("")
+
+    ppt_bytes = st.session_state.get("ppt_bytes")
+    if not ppt_bytes:
+        st.warning("먼저 4단계에서 PPT를 생성해주세요.")
+        if st.button("← 4단계로"):
+            st.session_state.current_step = 4
+            st.rerun()
+        return
+
+    mode = st.radio("변환 범위", ["앞 3페이지만 (테스트)", "전체 페이지"],
+                    horizontal=True, key="preview_mode")
+    st.caption("처음엔 '앞 3페이지만'으로 LibreOffice 설치·한글폰트·변환이 정상인지 확인하세요.")
+
+    if st.button("🖼️ 미리보기 생성", type="primary"):
+        from modules.preview import ppt_to_images
+        mx = 3 if mode.startswith("앞 3") else None
+        with st.spinner("LibreOffice로 슬라이드를 이미지로 변환하는 중입니다... (잠시 기다려주세요)"):
+            imgs, err = ppt_to_images(ppt_bytes, max_pages=mx)
+        st.session_state.preview_images = imgs
+        st.session_state.preview_error = err
+
+    err = st.session_state.get("preview_error")
+    imgs = st.session_state.get("preview_images")
+    if err:
+        st.error(f"미리보기 생성 실패 — {err}")
+    if imgs:
+        st.success(f"✅ {len(imgs)}개 슬라이드 변환 완료")
+        for i, png in enumerate(imgs, start=1):
+            st.markdown(f"**슬라이드 {i}**")
+            st.image(png, use_container_width=True)
+
+    st.markdown("---")
+    if st.button("← 6단계로 (간격 점검)", use_container_width=False):
+        st.session_state.current_step = 6
         st.rerun()
 
 
@@ -1055,6 +1107,8 @@ def show_conversion_tab():
         show_step5()
     elif st.session_state.current_step == 6:
         show_step6()
+    elif st.session_state.current_step == 7:
+        show_step7()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
 

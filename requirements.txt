@@ -6,3 +6,4 @@ python-docx
 Pillow
 anthropic
 python-dotenv
+pdf2image
