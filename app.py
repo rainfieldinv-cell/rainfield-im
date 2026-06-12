@@ -927,7 +927,9 @@ def show_step4():
 # ─────────────────────────────────────────────
 def show_step5():
     st.markdown("## 5단계. 내용 검수")
-    st.caption("생성된 PPT 본문이 원본과 일치하는지 자동 점검합니다. (문제를 보여줄 뿐, 자동 수정은 하지 않습니다.)")
+    st.caption("원본과 PPT를 글자·숫자 단위로 정밀 대조합니다. 숫자/단위/쉼표/이름의 누락·오류·잘림을 찾고 "
+               "페이지별 일치율(%)을 냅니다. 형식 차이(줄바꿈·공백·페이지번호)는 무시 — 내용 차이만. "
+               "(문제를 보여줄 뿐, 자동 수정은 하지 않습니다.)")
     st.markdown("")
 
     ppt_bytes = st.session_state.get("ppt_bytes")
@@ -949,20 +951,33 @@ def show_step5():
     result = st.session_state.get("review_result")
     if result is not None:
         c = result["counts"]
-        st.markdown(f"**맞춤법 엔진:** {result.get('spell_engine','-')}")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("내용 누락", c["내용 누락"])
-        m2.metric("빈 표 셀", c["빈 표 셀"])
-        m3.metric("맞춤법", c["맞춤법"])
+        page_rate = result.get("page_rate", {})
+        # 전체 일치율(검사 대상이 있었던 페이지 평균)
+        if page_rate:
+            avg = round(sum(page_rate.values()) / len(page_rate))
+            st.markdown(f"**원본 대비 평균 일치율: `{avg}%`**  ·  맞춤법: {result.get('spell_engine','-')}")
+        else:
+            st.markdown(f"맞춤법: {result.get('spell_engine','-')}")
+        # 문제유형별 건수(가변 키 — 동적으로 표시)
+        if c:
+            cols = st.columns(len(c))
+            for col, (k, v) in zip(cols, c.items()):
+                col.metric(k, v)
         st.markdown("---")
         if result["ok"]:
-            st.success("✅ 이상 없음 — 누락·빈칸·맞춤법 문제가 발견되지 않았습니다.")
+            st.success("✅ 이상 없음 — 원본 내용이 PPT에 정확히 옮겨졌습니다.")
         else:
             import pandas as pd
-            df = pd.DataFrame(result["items"], columns=["page", "type", "content", "suggestion"])
+            df = pd.DataFrame(result["items"], columns=["page", "type", "original", "ppt", "rate"])
             df = df.rename(columns={"page": "페이지", "type": "문제유형",
-                                    "content": "내용", "suggestion": "제안"})
+                                    "original": "원본 내용", "ppt": "PPT 내용", "rate": "일치율(%)"})
             st.dataframe(df, use_container_width=True, hide_index=True)
+            # 일치율 낮은 페이지(우선 확인) — 100% 미만만
+            low = {p: r for p, r in page_rate.items() if r < 100}
+            if low:
+                with st.expander(f"📉 일치율 낮은 페이지 ({len(low)}개) — 우선 확인", expanded=True):
+                    st.write(" · ".join(f"원본 {p}p: {r}%" for p, r in
+                                        sorted(low.items(), key=lambda kv: kv[1])))
 
     st.markdown("---")
     _r5c1, _r5c2 = st.columns(2)

@@ -1,26 +1,46 @@
-"""5단계 '내용 검수' — 생성된 PPT 본문이 원본 PDF/워드 내용과 일치하는지 자동 점검.
+"""5단계 '내용 검수' — 생성 PPT가 원본(PDF/워드)과 글자·숫자 단위로 1:1 일치하는지 정밀 점검.
 
 ★읽기 전용: 본문 생성 로직을 건드리지 않고, 문제를 '찾아서 보여주기만' 한다(자동 수정 X).
 점검 항목
-  1) 내용 1:1 대조 — 원본의 '중요 숫자/금액'이 PPT에 빠졌는지(누락) + 표 빈 셀
-  2) 오타/맞춤법 — PPT 한글 텍스트의 맞춤법 오류(hanspell 사용 가능 시, 아니면 규칙 기반 최소 점검)
-반환: [{"page": "원본 3p"|"슬라이드 7", "type": "내용 누락"|"빈 표 셀"|"맞춤법",
-        "content": "...", "suggestion": "..."}] 리스트.
+  1) 정밀 대조 — 원본의 '값'(숫자 전체형·데이터성 이름)이 PPT에 정확히 옮겨졌는지
+       · 숫자 누락 / 숫자 오류 의심(1,640→1,460) / 형식·단위·쉼표 차이 / 글자 잘림(더함도시개발→더함도시개) / 내용 누락
+       · 페이지별 '원본 대비 일치율(%)'을 계산(낮은 페이지 우선 정렬)
+  2) 빈 표 셀 — 데이터 누락 의심 칸
+노이즈 제거(의도적 변환은 오류로 안 잡음): 페이지번호(2/26)·줄바꿈·공백·괄호 템플릿([1,640])·표 배치는 무시.
+★맞춤법(hanspell)은 비활성 — 목적은 '원본 일치'이지 문법 검사가 아님.
+반환 item 스키마: {"page","type","original","ppt","rate"}.
 """
 import io
 import re
+from collections import Counter, defaultdict
 
 from pptx import Presentation
 
-# 콤마/소수 포함 숫자
-_NUM_RE = re.compile(r"\d[\d,\.]*\d|\d")
-# 금액/비율/면적 등 '단위가 붙은 중요 값'
-_UNIT_RE = re.compile(r"(억원|억|만원|만|천원|원|％|%|평|㎡|세대|개월|개동|동|호|건|명|위)")
+# 값에 붙는 단위(이게 붙은 숫자만 '중요 값'으로 본다)
+_UNIT = r"(억원|억|만원|만|천원|원|％|%|평|㎡|세대|개월|개동|동|호|명|위|배|건|개|차|호선|년|개소)"
+# 숫자 전체형: 선행 @ + 천단위쉼표/소수 + 후행 단위
+_FULLNUM_RE = re.compile(r"@?\s?\d[\d,]*(?:\.\d+)?\s*" + _UNIT + r"?")
+# 데이터성 한글 이름(회사·기관·단지 등) — 특정 접미사로 끝나는 토큰
+_NAME_RE = re.compile(
+    r"[가-힣A-Za-z0-9·]{2,}(?:신탁|건설|증권|개발|산업|자산운용|캐피탈|은행|토건|중공업|"
+    r"에쿼티|파트너스|투자|금융|보험|공사|법인|주식회사|아파트|디벨로퍼|엔지니어링)")
+# 페이지번호 류(비교 제외)
+_PAGEFOOT_RE = re.compile(r"^\s*(\d+\s*/\s*\d+|페이지\s*\d+|\d+\s*페이지|- ?\d+ ?-)\s*$")
+# '값'으로 의미 있는 단위(금액·비율·면적·세대/명). 차/호/년/월 등 날짜·서수는 1:1 값이 아니라 제외.
+_VALUE_UNITS = {"억원", "억", "만원", "만", "천원", "원", "%", "％", "평", "㎡", "세대", "명"}
+# 이름 접미사로 끝나지만 고유명사가 아닌 '일반 분류어'(누락 오탐 방지)
+_STOP_NAMES = {"부동산금융", "프로젝트금융", "구조화금융", "도시개발", "부동산개발", "주택개발",
+               "자산운용", "종합건설", "일반건설", "전문건설", "해외건설", "주택건설",
+               "토목건설", "부동산투자", "간접투자", "직접투자", "공동주택", "민간투자"}
 
 
-def _norm_num(s: str) -> str:
-    """비교용 숫자 정규화 — 콤마·공백 제거, 끝자리 0/소수점 정리."""
-    return s.replace(",", "").replace(" ", "").rstrip("0").rstrip(".")
+def _digits(s: str) -> str:
+    return re.sub(r"\D", "", s)
+
+
+def _form(s: str) -> str:
+    """비교용 정규형 — 공백·대괄호·소괄호 제거(쉼표·단위·@·% 는 유지해서 표기차이를 잡는다)."""
+    return re.sub(r"[\s\[\]()]", "", s)
 
 
 # ──────────────────────────────────────────────────────────
@@ -54,46 +74,96 @@ def _ppt_korean_lines(prs):
 
 
 # ──────────────────────────────────────────────────────────
-# 1) 내용 1:1 대조 — 원본의 중요 숫자가 PPT에 없으면 '누락'
+# 1) 정밀 대조 — 원본의 '값'(숫자·이름)이 PPT에 정확히 옮겨졌는지 + 페이지별 일치율
 # ──────────────────────────────────────────────────────────
-def _significant_numbers(text: str):
-    """원본에서 '빠지면 안 되는 값'만 추출 — 콤마 큰수(1,290)·단위 붙은 값(980억/61%/35평).
-       날짜(2026.03)·단순 정수·페이지번호 등은 표기변형/비1:1이라 노이즈 → 제외."""
-    found = []
-    for m in _NUM_RE.finditer(text):
-        tok = m.group(0)
-        digits = tok.replace(",", "").replace(".", "")
-        if len(digits) < 2:
-            continue
-        tail = text[m.end():m.end() + 3].lstrip()
-        unit_m = _UNIT_RE.match(tail)
-        if not (("," in tok) or unit_m):                  # 콤마 큰수 or 단위 붙은 값만
-            continue
-        disp = tok + (unit_m.group(1) if unit_m else "")
-        found.append((tok, disp))
-    return found
+def _checkable_tokens(text: str):
+    """원본 텍스트에서 1:1로 옮겨져야 하는 '값' 토큰: (종류, 토큰)."""
+    out = []
+    for m in _FULLNUM_RE.finditer(text):
+        tok = re.sub(r"\s+", "", m.group(0))
+        d = _digits(tok)
+        unit = m.group(1)
+        # 값으로 의미있는 것만: 천단위쉼표 큰수 / @단가 / 금액·비율·면적·세대 단위.
+        # 날짜(22.07)·서수(26차)·기간(24년)은 단위가 빠지거나 값단위가 아니라 자동 제외.
+        if len(d) >= 2 and (("," in tok) or "@" in tok or (unit in _VALUE_UNITS)):
+            out.append(("num", tok))
+    for m in _NAME_RE.finditer(text):
+        nm = m.group(0).strip()
+        if len(nm) >= 4 and nm not in _STOP_NAMES:
+            out.append(("name", nm))
+    return out
 
 
-def find_missing_content(pages_text, prs):
-    """원본 페이지별 중요 숫자 중 PPT에 없는 것 → 누락 리스트."""
-    ppt_nums = {_norm_num(m) for m in _NUM_RE.findall(_ppt_full_text(prs))}
-    rows, seen = [], set()
-    for pi, ptext in enumerate(pages_text or [], start=1):
-        page_seen = set()
-        for tok, disp in _significant_numbers(ptext):
-            core = _norm_num(tok)
-            if not core or core in page_seen:
-                continue
-            page_seen.add(core)
-            if core in ppt_nums:
-                continue
-            key = (pi, core)
-            if key in seen:
+def _near_number(d, by_len, maxdiff=2):
+    """같은 자릿수인데 1~2자리만 다른 PPT 숫자(오타/전치 의심) 반환 — 없으면 None.
+       후보가 둘 이상이면 애매하므로 None(오탐 방지)."""
+    cands = [c for c in by_len.get(len(d), ()) if c != d
+             and 1 <= sum(1 for a, b in zip(d, c) if a != b) <= maxdiff]
+    return cands[0] if len(cands) == 1 else None
+
+
+def _fmt_commas(d):
+    """숫자 문자열에 천단위 쉼표(소수 없는 정수만)."""
+    return f"{int(d):,}" if d.isdigit() else d
+
+
+def compare_content(pages_text, prs):
+    """원본 페이지별로 값 토큰을 PPT와 정밀 대조 → (items, page_rate).
+       page_rate: {원본페이지: 일치율(%)}. items 각 행에 해당 페이지 일치율 포함."""
+    ptext = _ppt_full_text(prs)
+    pform = _form(ptext)
+    numset, by_len = set(), defaultdict(set)
+    for m in _FULLNUM_RE.finditer(ptext):
+        d = _digits(m.group(0))
+        if len(d) >= 2:
+            numset.add(d)
+            by_len[len(d)].add(d)
+
+    items, page_rate, global_seen = [], {}, set()
+    for pi, raw in enumerate(pages_text or [], start=1):
+        # 페이지번호 줄 제거(노이즈)
+        text = "\n".join(ln for ln in (raw or "").splitlines()
+                         if not _PAGEFOOT_RE.match(ln.strip()))
+        page_rows, seen = [], set()
+        total = matched = 0
+        for kind, tok in _checkable_tokens(text):
+            f = _form(tok)
+            key = (kind, f)
+            if not f or key in seen:
                 continue
             seen.add(key)
-            rows.append({"page": f"원본 {pi}p", "type": "내용 누락",
-                         "content": disp, "suggestion": "PPT에 해당 수치가 없음 — 누락 여부 확인"})
-    return rows
+            total += 1
+            if f in pform:                                # 표기까지 정확히 일치
+                matched += 1
+                continue
+            if kind == "num":
+                d = _digits(tok)
+                if d in numset:                           # 수치는 맞고 표기만 다름
+                    page_rows.append(("형식/단위/쉼표 차이", tok, "수치는 있으나 표기 다름"))
+                else:
+                    near = _near_number(d, by_len)
+                    if near:
+                        page_rows.append(("숫자 오류 의심", tok, f"PPT '{_fmt_commas(near)}'"))
+                    else:
+                        page_rows.append(("숫자 누락", tok, "없음"))
+            else:                                         # name
+                pref = next((f[:L] for L in (len(f) - 1, len(f) - 2)
+                             if L >= 4 and f[:L] in pform), None)
+                if pref:
+                    page_rows.append(("글자 잘림 의심", tok, f"PPT '{pref}…'"))
+                else:
+                    page_rows.append(("내용 누락", tok, "없음"))
+        rate = round(matched / total * 100) if total else 100
+        if total:
+            page_rate[pi] = rate
+        for ty, orig, ppt in page_rows:
+            gkey = (pi, ty, orig)
+            if gkey in global_seen:
+                continue
+            global_seen.add(gkey)
+            items.append({"page": f"원본 {pi}p", "type": ty,
+                          "original": orig, "ppt": ppt, "rate": rate})
+    return items, page_rate
 
 
 # ──────────────────────────────────────────────────────────
@@ -137,8 +207,8 @@ def find_empty_cells(prs):
                     lbl = t.rows[ri].cells[0].text.strip() or (
                         t.rows[0].cells[ci].text.strip() if ncol > ci else "") or "?"
                     rows.append({"page": f"슬라이드 {i}", "type": "빈 표 셀",
-                                 "content": f"'{lbl[:18]}' 행({ri+1}행 {ci+1}열) 비어있음",
-                                 "suggestion": "원본에 값이 있는지 확인"})
+                                 "original": f"'{lbl[:18]}' 행({ri+1}행 {ci+1}열)",
+                                 "ppt": "빈 셀", "rate": "-"})
     return rows
 
 
@@ -176,15 +246,25 @@ def check_spelling(prs):
 # 통합 검수
 # ──────────────────────────────────────────────────────────
 def review_presentation(ppt_bytes: bytes, pages_text):
-    """PPT bytes + 원본 페이지텍스트 → 검수 결과 dict."""
+    """PPT bytes + 원본 페이지텍스트 → 정밀 검수 결과 dict.
+       items: [{page,type,original,ppt,rate}] — 일치율 낮은 페이지(=문제 많은 곳) 우선 정렬.
+       page_rate: {원본페이지: 일치율} (낮은 순)."""
     prs = Presentation(io.BytesIO(ppt_bytes))
-    missing = find_missing_content(pages_text, prs)
+    compared, page_rate = compare_content(pages_text, prs)
     empty = find_empty_cells(prs)
-    spelling, spell_engine = check_spelling(prs)
-    items = missing + empty + spelling
+    spelling, spell_engine = check_spelling(prs)        # 비활성(목적이 문법검사가 아님)
+    items = compared + empty + spelling
+
+    def _sort_key(it):
+        r = it.get("rate")
+        return (0, r) if isinstance(r, (int, float)) else (1, 999)  # 일치율 낮은 행 먼저, 빈셀 뒤로
+
+    items.sort(key=_sort_key)
+    counts = dict(Counter(it["type"] for it in items))
     return {
         "ok": len(items) == 0,
         "items": items,
-        "counts": {"내용 누락": len(missing), "빈 표 셀": len(empty), "맞춤법": len(spelling)},
+        "counts": counts,
+        "page_rate": dict(sorted(page_rate.items(), key=lambda kv: kv[1])),
         "spell_engine": spell_engine,
     }
