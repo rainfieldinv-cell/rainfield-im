@@ -43,6 +43,25 @@ def _form(s: str) -> str:
     return re.sub(r"[\s\[\]()]", "", s)
 
 
+def _ctx(text: str, start: int, end: int, pad: int = 16) -> str:
+    """원본에서 토큰 주변(앞뒤 pad자)을 잘라 '어디에 있던 값인지' 맥락 제공."""
+    a, b = max(0, start - pad), min(len(text), end + pad)
+    s = re.sub(r"\s{2,}", " ", text[a:b].replace("\n", " ")).strip()
+    return ("…" if a > 0 else "") + s + ("…" if b < len(text) else "")
+
+
+def _is_summary_page(text: str) -> bool:
+    """Executive Summary / 요약 페이지인지 — 이런 페이지는 원본을 '의도적으로 요약·생략'하므로
+       1:1 대조(누락 판정)에서 제외한다(단, 잘못 들어간 값=잘림/숫자오류는 계속 검출)."""
+    if re.search(r"executive\s*summary", text, re.I):
+        return True
+    for ln in text.splitlines()[:12]:                     # 상단 제목/머리말 영역만
+        s = ln.strip()
+        if 0 < len(s) <= 16 and "요약" in s:
+            return True
+    return False
+
+
 # ──────────────────────────────────────────────────────────
 # PPT 텍스트 추출
 # ──────────────────────────────────────────────────────────
@@ -77,7 +96,7 @@ def _ppt_korean_lines(prs):
 # 1) 정밀 대조 — 원본의 '값'(숫자·이름)이 PPT에 정확히 옮겨졌는지 + 페이지별 일치율
 # ──────────────────────────────────────────────────────────
 def _checkable_tokens(text: str):
-    """원본 텍스트에서 1:1로 옮겨져야 하는 '값' 토큰: (종류, 토큰)."""
+    """원본 텍스트에서 1:1로 옮겨져야 하는 '값' 토큰: (종류, 토큰, 주변맥락)."""
     out = []
     for m in _FULLNUM_RE.finditer(text):
         tok = re.sub(r"\s+", "", m.group(0))
@@ -86,11 +105,11 @@ def _checkable_tokens(text: str):
         # 값으로 의미있는 것만: 천단위쉼표 큰수 / @단가 / 금액·비율·면적·세대 단위.
         # 날짜(22.07)·서수(26차)·기간(24년)은 단위가 빠지거나 값단위가 아니라 자동 제외.
         if len(d) >= 2 and (("," in tok) or "@" in tok or (unit in _VALUE_UNITS)):
-            out.append(("num", tok))
+            out.append(("num", tok, _ctx(text, m.start(), m.end())))
     for m in _NAME_RE.finditer(text):
         nm = m.group(0).strip()
         if len(nm) >= 4 and nm not in _STOP_NAMES:
-            out.append(("name", nm))
+            out.append(("name", nm, _ctx(text, m.start(), m.end())))
     return out
 
 
@@ -119,14 +138,16 @@ def compare_content(pages_text, prs):
             numset.add(d)
             by_len[len(d)].add(d)
 
+    _ABSENT = ("숫자 누락", "내용 누락")
     items, page_rate, global_seen = [], {}, set()
     for pi, raw in enumerate(pages_text or [], start=1):
         # 페이지번호 줄 제거(노이즈)
         text = "\n".join(ln for ln in (raw or "").splitlines()
                          if not _PAGEFOOT_RE.match(ln.strip()))
+        is_sum = _is_summary_page(text)                   # 요약/ES 페이지는 누락 판정 제외
         page_rows, seen = [], set()
         total = matched = 0
-        for kind, tok in _checkable_tokens(text):
+        for kind, tok, ctx in _checkable_tokens(text):
             f = _form(tok)
             key = (kind, f)
             if not f or key in seen:
@@ -139,30 +160,32 @@ def compare_content(pages_text, prs):
             if kind == "num":
                 d = _digits(tok)
                 if d in numset:                           # 수치는 맞고 표기만 다름
-                    page_rows.append(("형식/단위/쉼표 차이", tok, "수치는 있으나 표기 다름"))
+                    ty, ppt = "형식/단위/쉼표 차이", "수치는 있으나 표기 다름"
                 else:
                     near = _near_number(d, by_len)
-                    if near:
-                        page_rows.append(("숫자 오류 의심", tok, f"PPT '{_fmt_commas(near)}'"))
-                    else:
-                        page_rows.append(("숫자 누락", tok, "없음"))
+                    ty, ppt = (("숫자 오류 의심", f"PPT '{_fmt_commas(near)}'") if near
+                               else ("숫자 누락", "없음"))
             else:                                         # name
                 pref = next((f[:L] for L in (len(f) - 1, len(f) - 2)
                              if L >= 4 and f[:L] in pform), None)
-                if pref:
-                    page_rows.append(("글자 잘림 의심", tok, f"PPT '{pref}…'"))
-                else:
-                    page_rows.append(("내용 누락", tok, "없음"))
+                ty, ppt = (("글자 잘림 의심", f"PPT '{pref}…'") if pref
+                           else ("내용 누락", "없음"))
+            # 요약/ES 페이지의 '누락'은 의도적 생략이므로 대조 대상에서 제외(잘림/오류는 유지)
+            if is_sum and ty in _ABSENT:
+                total -= 1
+                continue
+            page_rows.append((ty, tok, ppt, ctx))
         rate = round(matched / total * 100) if total else 100
-        if total:
+        if total and not is_sum:                          # 요약 페이지는 일치율 산정 제외
             page_rate[pi] = rate
-        for ty, orig, ppt in page_rows:
+        for ty, orig, ppt, ctx in page_rows:
             gkey = (pi, ty, orig)
             if gkey in global_seen:
                 continue
             global_seen.add(gkey)
-            items.append({"page": f"원본 {pi}p", "type": ty,
-                          "original": orig, "ppt": ppt, "rate": rate})
+            items.append({"page": f"원본 {pi}p", "type": ty, "original": orig,
+                          "context": ctx, "ppt": ppt,
+                          "rate": ("요약" if is_sum else rate)})
     return items, page_rate
 
 
@@ -208,7 +231,7 @@ def find_empty_cells(prs):
                         t.rows[0].cells[ci].text.strip() if ncol > ci else "") or "?"
                     rows.append({"page": f"슬라이드 {i}", "type": "빈 표 셀",
                                  "original": f"'{lbl[:18]}' 행({ri+1}행 {ci+1}열)",
-                                 "ppt": "빈 셀", "rate": "-"})
+                                 "context": "표 내 빈칸", "ppt": "빈 셀", "rate": "-"})
     return rows
 
 

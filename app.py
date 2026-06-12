@@ -968,9 +968,11 @@ def show_step5():
             st.success("✅ 이상 없음 — 원본 내용이 PPT에 정확히 옮겨졌습니다.")
         else:
             import pandas as pd
-            df = pd.DataFrame(result["items"], columns=["page", "type", "original", "ppt", "rate"])
-            df = df.rename(columns={"page": "페이지", "type": "문제유형",
-                                    "original": "원본 내용", "ppt": "PPT 내용", "rate": "일치율(%)"})
+            df = pd.DataFrame(result["items"],
+                              columns=["page", "type", "original", "context", "ppt", "rate"])
+            df = df.rename(columns={"page": "페이지", "type": "문제유형", "original": "원본 내용",
+                                    "context": "원본 맥락(주변 텍스트)", "ppt": "PPT 내용",
+                                    "rate": "일치율(%)"})
             st.dataframe(df, use_container_width=True, hide_index=True)
             # 일치율 낮은 페이지(우선 확인) — 100% 미만만
             low = {p: r for p, r in page_rate.items() if r < 100}
