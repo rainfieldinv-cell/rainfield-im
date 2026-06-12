@@ -1177,10 +1177,57 @@ def show_step8():
 
 
 # ─────────────────────────────────────────────
+# ['처음으로' — 현재 작업 전체 초기화 후 1단계로]
+# ─────────────────────────────────────────────
+def _reset_to_start():
+    """로그인 상태만 남기고 모든 세션 상태(업로드·추출·선택·생성 PPT 등)를 비운 뒤 1단계로.
+       삭제된 키들은 스크립트 상단의 기본값 초기화 블록에서 다음 rerun 때 재생성된다.
+       (메모는 memos.json에 저장돼 있어 세션 초기화와 무관하게 그대로 유지됨)"""
+    for k in list(st.session_state.keys()):
+        if k != "logged_in":
+            del st.session_state[k]
+    st.session_state.current_step = 1
+    st.rerun()
+
+
+def _confirm_home_dialog():
+    """st.dialog 지원 시 확인 팝업으로 '처음으로' 확인/취소."""
+    @st.dialog("처음으로")
+    def _dlg():
+        st.write("정말 처음으로 가시겠어요? 현재 작업이 초기화됩니다.")
+        c1, c2 = st.columns(2)
+        if c1.button("확인", type="primary", use_container_width=True):
+            _reset_to_start()
+        if c2.button("취소", use_container_width=True):
+            st.rerun()        # 팝업만 닫고 현재 상태 유지
+    _dlg()
+
+
+# ─────────────────────────────────────────────
 # [변환 작업 탭 전체 라우터]
 # current_step 값에 따라 각 단계 화면을 표시합니다
 # ─────────────────────────────────────────────
 def show_conversion_tab():
+    # 상단: '처음으로' 버튼 + Stepper
+    _has_dialog = hasattr(st, "dialog")
+    _hc1, _hc2 = st.columns([5, 1])
+    with _hc2:
+        if st.button("🏠 처음으로", use_container_width=True, help="현재 작업을 초기화하고 1단계로 돌아갑니다."):
+            if _has_dialog:
+                _confirm_home_dialog()
+            else:
+                st.session_state._show_home_confirm = True
+
+    # st.dialog 미지원 환경: 인라인 확인 영역
+    if not _has_dialog and st.session_state.get("_show_home_confirm"):
+        st.warning("정말 처음으로 가시겠어요? 현재 작업이 초기화됩니다.")
+        _cc1, _cc2 = st.columns(2)
+        if _cc1.button("확인", type="primary", use_container_width=True):
+            _reset_to_start()
+        if _cc2.button("취소", use_container_width=True):
+            st.session_state._show_home_confirm = False
+            st.rerun()
+
     # 상단 Stepper 항상 표시
     render_stepper(st.session_state.current_step)
 
