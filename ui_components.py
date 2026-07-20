@@ -71,8 +71,8 @@ def render_stepper(current_step: int):
         font-weight: bold;
         margin-bottom: 4px;
     }
-    .step-done   { background:#22c55e; color:white; }
-    .step-active { background:#2563eb; color:white; box-shadow: 0 0 0 3px #bfdbfe; }
+    .step-done   { background:#1a7f37; color:white; }
+    .step-active { background:#1A2B5E; color:white; box-shadow: 0 0 0 3px #cdd4e6; }
     .step-todo   { background:#e5e7eb; color:#9ca3af; }
     .step-label {
         font-size: 10px;
@@ -80,15 +80,15 @@ def render_stepper(current_step: int):
         line-height: 1.3;
         word-break: keep-all;
     }
-    .step-label-done   { color: #16a34a; font-weight: 600; }
-    .step-label-active { color: #1d4ed8; font-weight: 700; }
+    .step-label-done   { color: #1a7f37; font-weight: 600; }
+    .step-label-active { color: #1A2B5E; font-weight: 700; }
     .step-label-todo   { color: #9ca3af; }
     .step-connector {
         width: 20px;
         height: 2px;
         margin-bottom: 20px;
     }
-    .connector-done { background: #22c55e; }
+    .connector-done { background: #1a7f37; }
     .connector-todo { background: #e5e7eb; }
     </style>
     """, unsafe_allow_html=True)
