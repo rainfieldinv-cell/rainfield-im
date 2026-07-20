@@ -28,7 +28,7 @@ from modules.content_parser import (
 # - initial_sidebar_state : "collapsed" = 사이드바 기본 접힘 / "expanded" = 기본 펼침
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="레인필드투자자문 IM",
+    page_title="IM 생성기",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -108,7 +108,7 @@ def show_login():
 
         # 로그인 화면 제목 (여기를 수정하면 로그인 화면 제목이 바뀝니다)
         st.markdown(
-            "<h2 style='text-align:center;'>🌧 레인필드투자자문 IM</h2>",
+            "<h2 style='text-align:center;'>IM 생성기</h2>",
             unsafe_allow_html=True,
         )
         st.markdown(
@@ -916,269 +916,8 @@ def show_step4():
     # ────────────────────────────────────────
     # (D) 하단 네비게이션
     # ────────────────────────────────────────
-    _navc1, _navc2 = st.columns(2)
-    with _navc1:
-        if st.button("← 이전 단계 (설정 변경)", use_container_width=True):
-            st.session_state.current_step = 3
-            st.rerun()
-    with _navc2:
-        if st.session_state.get("ppt_bytes"):
-            if st.button("다음 단계 → (5단계 내용 검수)", use_container_width=True, type="primary"):
-                st.session_state.current_step = 5
-                st.rerun()
-
-
-# ─────────────────────────────────────────────
-# [5단계: 내용 검수] — 생성 PPT가 원본과 일치하는지 읽기전용 점검
-# ─────────────────────────────────────────────
-def show_step5():
-    st.markdown("## 5단계. 내용 검수")
-    st.caption("원본과 PPT를 글자·숫자 단위로 정밀 대조합니다. 숫자/단위/쉼표/이름의 누락·오류·잘림을 찾고 "
-               "페이지별 일치율(%)을 냅니다. 형식 차이(줄바꿈·공백·페이지번호)는 무시 — 내용 차이만. "
-               "(문제를 보여줄 뿐, 자동 수정은 하지 않습니다.)")
-    st.markdown("")
-
-    ppt_bytes = st.session_state.get("ppt_bytes")
-    if not ppt_bytes:
-        st.warning("먼저 4단계에서 PPT를 생성해주세요.")
-        if st.button("← 4단계로"):
-            st.session_state.current_step = 4
-            st.rerun()
-        return
-
-    pages_text = (st.session_state.extracted_data or {}).get("pages_text", []) \
-        if st.session_state.extracted_data else []
-
-    if st.button("🔍 검수 실행", type="primary"):
-        with st.spinner("PPT와 원본을 대조하는 중입니다..."):
-            from modules.content_review import review_presentation
-            st.session_state.review_result = review_presentation(ppt_bytes, pages_text)
-
-    result = st.session_state.get("review_result")
-    if result is not None:
-        c = result["counts"]
-        page_rate = result.get("page_rate", {})
-        # 전체 일치율(검사 대상이 있었던 페이지 평균)
-        if page_rate:
-            avg = round(sum(page_rate.values()) / len(page_rate))
-            st.markdown(f"**원본 대비 평균 일치율: `{avg}%`**  ·  맞춤법: {result.get('spell_engine','-')}")
-        else:
-            st.markdown(f"맞춤법: {result.get('spell_engine','-')}")
-        # 문제유형별 건수(가변 키 — 동적으로 표시)
-        if c:
-            cols = st.columns(len(c))
-            for col, (k, v) in zip(cols, c.items()):
-                col.metric(k, v)
-        st.markdown("---")
-        if result["ok"]:
-            st.success("✅ 이상 없음 — 원본 내용이 PPT에 정확히 옮겨졌습니다.")
-        else:
-            import pandas as pd
-            df = pd.DataFrame(result["items"],
-                              columns=["page", "type", "original", "context", "ppt", "rate"])
-            df = df.rename(columns={"page": "페이지", "type": "문제유형", "original": "원본 내용",
-                                    "context": "원본 맥락(주변 텍스트)", "ppt": "PPT 내용",
-                                    "rate": "일치율(%)"})
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            # 일치율 낮은 페이지(우선 확인) — 100% 미만만
-            low = {p: r for p, r in page_rate.items() if r < 100}
-            if low:
-                with st.expander(f"📉 일치율 낮은 페이지 ({len(low)}개) — 우선 확인", expanded=True):
-                    st.write(" · ".join(f"원본 {p}p: {r}%" for p, r in
-                                        sorted(low.items(), key=lambda kv: kv[1])))
-
-    st.markdown("---")
-    _r5c1, _r5c2 = st.columns(2)
-    with _r5c1:
-        if st.button("← 4단계로 (PPT 재생성)", use_container_width=True):
-            st.session_state.current_step = 4
-            st.rerun()
-    with _r5c2:
-        if st.session_state.get("ppt_bytes"):
-            if st.button("다음 단계 → (6단계 간격 점검)", use_container_width=True, type="primary"):
-                st.session_state.current_step = 6
-                st.rerun()
-
-
-# ─────────────────────────────────────────────
-# [6단계: 간격 점검] — 띄어쓰기·공백·오버플로우·빈줄(읽기전용). 맞춤법은 5단계.
-# ─────────────────────────────────────────────
-def show_step6():
-    st.markdown("## 6단계. 간격 점검")
-    st.caption("텍스트 띄어쓰기·연속 공백·오버플로우(넘침)·빈 줄을 점검합니다. (맞춤법은 5단계. 자동 수정은 하지 않습니다.)")
-    st.markdown("")
-
-    ppt_bytes = st.session_state.get("ppt_bytes")
-    if not ppt_bytes:
-        st.warning("먼저 4단계에서 PPT를 생성해주세요.")
-        if st.button("← 4단계로"):
-            st.session_state.current_step = 4
-            st.rerun()
-        return
-
-    if st.button("🔍 간격 점검 실행", type="primary"):
-        with st.spinner("슬라이드 텍스트 간격을 점검하는 중입니다..."):
-            from modules.spacing_check import check_spacing
-            st.session_state.spacing_result = check_spacing(ppt_bytes)
-
-    result = st.session_state.get("spacing_result")
-    if result is not None:
-        c = result["counts"]
-        cols = st.columns(len(c))
-        for col, (k, v) in zip(cols, c.items()):
-            col.metric(k, v)
-        st.markdown("---")
-        if result["ok"]:
-            st.success("✅ 이상 없음 — 띄어쓰기·공백·넘침 문제가 발견되지 않았습니다.")
-        else:
-            import pandas as pd
-            df = pd.DataFrame(result["items"], columns=["page", "type", "content", "suggestion"])
-            df = df.rename(columns={"page": "페이지", "type": "문제유형",
-                                    "content": "내용", "suggestion": "제안"})
-            st.dataframe(df, use_container_width=True, hide_index=True)
-
-    st.markdown("---")
-    _r6c1, _r6c2 = st.columns(2)
-    with _r6c1:
-        if st.button("← 5단계로 (내용 검수)", use_container_width=True):
-            st.session_state.current_step = 5
-            st.rerun()
-    with _r6c2:
-        if st.session_state.get("ppt_bytes"):
-            if st.button("다음 단계 → (7단계 전체 미리보기)", use_container_width=True, type="primary"):
-                st.session_state.current_step = 7
-                st.rerun()
-
-
-# ─────────────────────────────────────────────
-# [7단계: 전체 미리보기] — 생성 PPT를 슬라이드 이미지로(LibreOffice→PDF→PNG). 읽기전용.
-# ─────────────────────────────────────────────
-def show_step7():
-    st.markdown("## 7단계. 전체 미리보기")
-    st.caption("생성된 PPT를 슬라이드 이미지로 변환해 한 장씩 확인합니다. "
-               "(LibreOffice 변환 — 페이지가 많으면 수십 초 걸릴 수 있습니다.)")
-    st.markdown("")
-
-    ppt_bytes = st.session_state.get("ppt_bytes")
-    if not ppt_bytes:
-        st.warning("먼저 4단계에서 PPT를 생성해주세요.")
-        if st.button("← 4단계로"):
-            st.session_state.current_step = 4
-            st.rerun()
-        return
-
-    mode = st.radio("변환 범위", ["앞 3페이지만 (테스트)", "전체 페이지"],
-                    horizontal=True, key="preview_mode")
-    st.caption("처음엔 '앞 3페이지만'으로 LibreOffice 설치·한글폰트·변환이 정상인지 확인하세요.")
-
-    if st.button("🖼️ 미리보기 생성", type="primary"):
-        from modules.preview import ppt_to_images
-        mx = 3 if mode.startswith("앞 3") else None
-        with st.spinner("LibreOffice로 슬라이드를 이미지로 변환하는 중입니다... (잠시 기다려주세요)"):
-            imgs, err = ppt_to_images(ppt_bytes, max_pages=mx)
-        st.session_state.preview_images = imgs
-        st.session_state.preview_error = err
-
-    err = st.session_state.get("preview_error")
-    imgs = st.session_state.get("preview_images")
-    if err:
-        st.error(f"미리보기 생성 실패 — {err}")
-    if imgs:
-        st.success(f"✅ {len(imgs)}개 슬라이드 변환 완료")
-        st.caption("썸네일 아래 '🔍 슬라이드 N'을 누르면 큰 이미지로 확대해서 볼 수 있습니다.")
-        st.session_state.setdefault("preview_selected", None)
-        _has_dialog = hasattr(st, "dialog")
-
-        # 확대 보기 본문(팝업/인라인 공통) — 이전·다음·닫기 지원
-        def _render_large(idx):
-            st.image(imgs[idx], use_container_width=True)
-            st.markdown(f"**슬라이드 {idx + 1} / {len(imgs)}**")
-            a, b, c = st.columns(3)
-            if a.button("← 이전", key="lg_prev", disabled=(idx <= 0), use_container_width=True):
-                st.session_state.preview_selected = idx - 1
-                if not _has_dialog:
-                    st.rerun()
-            if b.button("다음 →", key="lg_next", disabled=(idx >= len(imgs) - 1), use_container_width=True):
-                st.session_state.preview_selected = idx + 1
-                if not _has_dialog:
-                    st.rerun()
-            if c.button("✕ 닫기", key="lg_close", use_container_width=True):
-                st.session_state.preview_selected = None
-                st.rerun()
-
-        if _has_dialog:
-            @st.dialog("슬라이드 크게 보기", width="large")
-            def _open_large():
-                _render_large(st.session_state.preview_selected)
-
-        # 썸네일 그리드 — 한 줄에 5개
-        COLS = 5
-        for start in range(0, len(imgs), COLS):
-            cols = st.columns(COLS)
-            for col, idx in zip(cols, range(start, min(start + COLS, len(imgs)))):
-                with col:
-                    st.image(imgs[idx], use_container_width=True)
-                    if st.button(f"🔍 슬라이드 {idx + 1}", key=f"thumb_{idx}",
-                                 use_container_width=True):
-                        st.session_state.preview_selected = idx
-                        if _has_dialog:
-                            _open_large()
-                        else:
-                            st.rerun()
-
-        # st.dialog 미지원 환경: 선택 슬라이드를 인라인으로 크게 표시
-        if not _has_dialog and st.session_state.preview_selected is not None:
-            st.markdown("---")
-            st.markdown("### 🔍 크게 보기")
-            _render_large(st.session_state.preview_selected)
-
-    st.markdown("---")
-    _r7c1, _r7c2 = st.columns(2)
-    with _r7c1:
-        if st.button("← 6단계로 (간격 점검)", use_container_width=True):
-            st.session_state.current_step = 6
-            st.rerun()
-    with _r7c2:
-        if st.session_state.get("ppt_bytes"):
-            if st.button("다음 단계 → (8단계 다운로드)", use_container_width=True, type="primary"):
-                st.session_state.current_step = 8
-                st.rerun()
-
-
-# ─────────────────────────────────────────────
-# [8단계: 다운로드] — 완성 PPT를 .pptx로 내려받기(서버 저장 X).
-# ─────────────────────────────────────────────
-def show_step8():
-    st.markdown("## 8단계. 다운로드")
-    st.caption("완성된 제안서 PPT를 내려받습니다. (파일은 서버에 저장되지 않고 다운로드만 합니다.)")
-    st.markdown("")
-
-    ppt_bytes = st.session_state.get("ppt_bytes")
-    if not ppt_bytes:
-        st.warning("먼저 4단계에서 PPT를 생성해주세요.")
-        if st.button("← 4단계로"):
-            st.session_state.current_step = 4
-            st.rerun()
-        return
-
-    biz = (st.session_state.get("business_name") or "").strip()
-    safe = re.sub(r'[\\/:*?"<>|]', "", biz) or "제안서"
-    fname = f"{safe}_제안서_{datetime.now().strftime('%Y%m%d')}.pptx"
-
-    st.metric("사업명", biz or "(미입력)")
-    st.download_button(
-        "⬇️ PPT 다운로드",
-        data=ppt_bytes,
-        file_name=fname,
-        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        type="primary",
-        use_container_width=True,
-    )
-    st.caption(f"파일명: {fname}")
-
-    st.markdown("---")
-    if st.button("← 7단계로 (전체 미리보기)", use_container_width=False):
-        st.session_state.current_step = 7
+    if st.button("← 이전 단계 (설정 변경)", use_container_width=False):
+        st.session_state.current_step = 3
         st.rerun()
 
 
@@ -1245,63 +984,8 @@ def show_conversion_tab():
         show_step3()
     elif st.session_state.current_step == 4:
         show_step4()
-    elif st.session_state.current_step == 5:
-        show_step5()
-    elif st.session_state.current_step == 6:
-        show_step6()
-    elif st.session_state.current_step == 7:
-        show_step7()
-    elif st.session_state.current_step == 8:
-        show_step8()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
-
-
-# ─────────────────────────────────────────────
-# [메모 탭] — 사업명/문제점/추가의견 텍스트 메모(memos.json 보관). PPT 파일은 저장 안 함.
-# ─────────────────────────────────────────────
-def show_memo_tab():
-    from modules.memo import load_memos, add_memo, delete_memo
-
-    st.markdown("### 📝 메모")
-    st.caption("사업명·문제점·추가의견을 메모로 보관합니다. "
-               "(PPT 파일은 저장하지 않고 텍스트만 보관 · 자동 삭제 없음)")
-
-    # 새 메모 추가 폼
-    with st.form("memo_form", clear_on_submit=True):
-        biz = st.text_input("제목(사업명)", value=st.session_state.get("business_name", ""))
-        prob = st.text_area("문제점", height=80, placeholder="변환·내용상 발견한 문제점")
-        opin = st.text_area("추가의견", height=80, placeholder="개선 아이디어·참고사항 등")
-        submitted = st.form_submit_button("➕ 새 메모 추가", type="primary")
-    if submitted:
-        if not (biz.strip() or prob.strip() or opin.strip()):
-            st.warning("사업명·문제점·추가의견 중 하나 이상 입력해주세요.")
-        else:
-            created = datetime.now().strftime("%Y-%m-%d %H:%M")
-            add_memo(biz.strip(), prob.strip(), opin.strip(), created)
-            st.success("메모를 저장했습니다.")
-            st.rerun()
-
-    st.markdown("---")
-    memos = load_memos()
-    if not memos:
-        st.info("저장된 메모가 없습니다.")
-        return
-
-    st.markdown(f"**저장된 메모 ({len(memos)}개)**")
-    for i, m in enumerate(memos):
-        with st.container(border=True):
-            c1, c2 = st.columns([6, 1])
-            with c1:
-                st.markdown(f"**{m.get('business') or '(사업명 없음)'}**  ·  🕒 {m.get('created', '')}")
-                if m.get("problem"):
-                    st.markdown(f"- **문제점:** {m['problem']}")
-                if m.get("opinion"):
-                    st.markdown(f"- **추가의견:** {m['opinion']}")
-            with c2:
-                if st.button("🗑 삭제", key=f"del_memo_{i}", use_container_width=True):
-                    delete_memo(i)
-                    st.rerun()
 
 
 # ─────────────────────────────────────────────
@@ -1310,7 +994,7 @@ def show_memo_tab():
 def show_main():
     # ── 사이드바: 로그아웃 버튼 ──
     with st.sidebar:
-        st.markdown("### 레인필드투자자문 IM")
+        st.markdown("### IM 생성기")
         st.markdown("---")
         # 로그아웃 버튼 (여기를 수정하면 로그아웃 버튼 텍스트가 바뀝니다)
         if st.button("🚪 로그아웃", use_container_width=True):
@@ -1335,22 +1019,13 @@ def show_main():
     # ── 메인 상단 제목 ──
     # 여기를 수정하면 메인 화면 상단 제목이 바뀝니다
     st.markdown(
-        "<h1 style='text-align:center;'>🌧 레인필드투자자문 IM</h1>",
+        "<h1 style='text-align:center;'>IM 생성기</h1>",
         unsafe_allow_html=True,
     )
     st.markdown("---")
 
-    # ── 탭 구성 ──
-    # 탭 이름을 바꾸려면 아래 리스트의 문자열을 수정하세요
-    tab1, tab2 = st.tabs(["🔄 변환 작업", "📝 메모"])
-
-    # ── 탭1: 변환 작업 ──
-    with tab1:
-        show_conversion_tab()
-
-    # ── 탭2: 메모 ──
-    with tab2:
-        show_memo_tab()
+    # ── 변환 작업 화면 ──
+    show_conversion_tab()
 
     # ── 하단 푸터 ──
     # 여기를 수정하면 하단 저작권 문구가 바뀝니다
