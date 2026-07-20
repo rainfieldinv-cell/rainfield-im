@@ -146,53 +146,59 @@ def show_login():
 # ─────────────────────────────────────────────
 def show_step1():
     st.markdown("## 1단계. 파일 업로드")
-    st.caption("증권사·은행에서 받은 IM 자료를 업로드하세요. PDF 또는 Word(.docx) 파일만 지원됩니다.")
+    st.caption("IM 자료를 워드+PDF로 함께 올려주세요. PDF가 있으면 표·이미지 위치까지 정확히 복원합니다. "
+               "(둘 중 하나만 올려도 됩니다 · PDF / Word(.docx) 지원)")
     st.markdown("")
 
-    # 파일 업로더 (여기를 수정하면 허용 파일 형식이 바뀝니다)
-    uploaded = st.file_uploader(
-        label="파일을 여기에 끌어다 놓거나 클릭해서 선택하세요",
+    # 파일 업로더 (워드·PDF 함께 업로드 가능 — 자금판과 동일 방식)
+    uploaded_files = st.file_uploader(
+        label="파일을 여기에 끌어다 놓거나 클릭해서 선택하세요 (워드/PDF 함께 가능)",
         type=["pdf", "docx"],
-        accept_multiple_files=False,
+        accept_multiple_files=True,
         key="file_uploader_widget",
     )
 
-    if uploaded is not None:
-        # 파일 정보 표시
-        file_size_mb = uploaded.size / (1024 * 1024)
-        file_type_label = "PDF" if uploaded.name.lower().endswith(".pdf") else "Word(.docx)"
+    if uploaded_files:
+        # 워드/PDF 분리 — 추출 주 파일은 PDF 우선(표·이미지 좌표 복원 가능), 없으면 워드
+        pdf_up = next((f for f in uploaded_files if f.name.lower().endswith(".pdf")), None)
+        word_up = next((f for f in uploaded_files
+                        if f.name.lower().endswith((".docx", ".doc"))), None)
+        primary = pdf_up or word_up
 
-        # 50MB 이상 경고 (여기를 수정하면 경고 기준 크기가 바뀝니다)
-        if file_size_mb >= 50:
+        # 올린 파일 정보 표시
+        total_mb = sum(f.size for f in uploaded_files) / (1024 * 1024)
+        if total_mb >= 50:
             st.warning("⚠️ 파일이 큽니다. 추출에 시간이 걸릴 수 있습니다.")
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
-            st.metric("파일명", uploaded.name)
+            st.metric("올린 파일", f"{len(uploaded_files)}개")
         with col2:
-            st.metric("파일 크기", f"{file_size_mb:.2f} MB")
-        with col3:
-            st.metric("파일 종류", file_type_label)
+            st.metric("합계 크기", f"{total_mb:.2f} MB")
+        st.caption("파일: " + " · ".join(f.name for f in uploaded_files))
+        if pdf_up and word_up:
+            st.info("워드+PDF 둘 다 올렸습니다. **PDF를 기준**으로 추출하고 표·이미지 위치까지 복원합니다.")
 
         st.markdown("")
 
         # 추출 시작 버튼
         if st.button("🔍 추출 시작", type="primary", use_container_width=False):
-            file_bytes = uploaded.read()
-            file_type  = get_file_type(uploaded.name)
+            primary_bytes = primary.getvalue()
+            file_type = get_file_type(primary.name)
 
             try:
                 with st.spinner("파일에서 텍스트와 이미지를 추출하는 중입니다..."):
                     if file_type == "pdf":
-                        result = extract_from_pdf(file_bytes)
+                        result = extract_from_pdf(primary_bytes)
                     else:
-                        result = extract_from_docx(file_bytes)
+                        result = extract_from_docx(primary_bytes)
 
                 # 추출 결과 저장
                 st.session_state.extracted_data = result
-                st.session_state.uploaded_file  = uploaded.name
-                # ★PDF 원본 bytes 보관 — enrich 단계에서 좌표기반 사진/표복원(조감도·매매사례)에 사용
-                st.session_state.pdf_bytes = file_bytes if file_type == "pdf" else None
+                st.session_state.uploaded_file  = primary.name
+                # ★업로드된 PDF가 있으면 그 bytes 보관 — 좌표기반 사진/표복원(조감도·매매사례)에 사용
+                #   (워드가 주 파일이어도 PDF를 함께 올렸으면 좌표 복원 가능)
+                st.session_state.pdf_bytes = pdf_up.getvalue() if pdf_up is not None else None
 
                 # 사업명 자동 감지
                 detected = detect_business_name(result["pages_text"])
@@ -201,7 +207,7 @@ def show_step1():
                 # 슬라이드 구조 파싱 (content_parser)
                 try:
                     st.session_state.parsed_pages = parse_document_from_bytes(
-                        file_bytes, uploaded.name
+                        primary_bytes, primary.name
                     )
                 except Exception:
                     st.session_state.parsed_pages = []
