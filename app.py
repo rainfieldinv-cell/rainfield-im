@@ -222,8 +222,8 @@ def show_step1():
                 except Exception:
                     st.session_state.parsed_pages = []
 
-                # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3·4단계 새로 시작)
-                for _k in ("toc_edit", "toc_hashtags", "toc_img_render", "toc_img_pages"):
+                # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3단계 새로 시작)
+                for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page"):
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
 
@@ -1005,6 +1005,21 @@ def _init_toc_edit(parsed):
     st.session_state.toc_count = fmt
 
 
+def _render_pdf_page(pdf_bytes, page_num, zoom=2.0):
+    """PDF 한 페이지를 PNG bytes로 렌더 — PyMuPDF(fitz), 자금판(전) 방식.
+       외부 프로그램(LibreOffice/poppler) 없이 빠르게 렌더. 반환: (png|None, err|None)."""
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            pix = doc[page_num - 1].get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+            return pix.tobytes("png"), None
+        finally:
+            doc.close()
+    except Exception as e:
+        return None, f"이미지 렌더 실패: {e}"
+
+
 def show_step_toc():
     st.markdown("## 3단계. 목차 구성")
     st.caption("왼쪽에 원본 IM의 목차 이미지를 띄우고, 오른쪽에서 목차 제목·소제목을 만드세요. "
@@ -1024,45 +1039,37 @@ def show_step_toc():
 
     img_col, form_col = st.columns([1, 1])
 
-    # ── 왼쪽: 원본 IM 목차 이미지 (버튼 클릭 시에만 변환) ──
+    # ── 왼쪽: 원본 IM 전체 페이지 뷰어 (표지부터 한 장씩, 버튼 없이 바로 표시) ──
     with img_col:
-        st.markdown("#### 📄 원본 IM 목차 이미지")
+        st.markdown("#### 📄 원본 IM (표지부터 한 장씩)")
         pdf_bytes = st.session_state.get("pdf_bytes")
         pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
-        detected = _find_toc_pages(pages_text)
-        default_pages = ",".join(str(p) for p in detected) if detected else "1"
-        if not pdf_bytes:
+        total = len(pages_text)
+        if not pdf_bytes or total == 0:
             st.warning("원본 PDF가 없어 이미지를 못 띄웁니다. 1단계에서 PDF(또는 워드→자동 PDF변환)로 올리세요.")
         else:
-            if detected:
-                st.caption(f"목차로 추정되는 페이지: {', '.join(map(str, detected))}p")
-            else:
-                st.caption("목차 페이지 자동감지 실패 — 아래에 직접 지정하세요.")
-            pages_str = st.text_input("표시할 페이지(쉼표)", value=default_pages,
-                                      key="toc_img_pages", help="예: 2,3")
-            if st.button("🖼️ 목차 이미지 생성", type="primary"):
-                try:
-                    pages = [int(x) for x in re.split(r"[,\s]+", pages_str.strip()) if x]
-                except ValueError:
-                    pages = []
-                if not pages:
-                    st.error("페이지 번호를 올바르게 입력하세요. (예: 2,3)")
-                else:
-                    from modules.preview import pdf_pages_to_images
-                    with st.spinner("원본 목차 페이지를 이미지로 변환하는 중..."):
-                        imgs, err = pdf_pages_to_images(pdf_bytes, pages)
-                    st.session_state.toc_img_render = {"imgs": imgs, "err": err, "pages": pages}
-            render = st.session_state.get("toc_img_render")
-            if render is None:
-                st.info("‘🖼️ 목차 이미지 생성’을 누르면 원본 목차가 여기에 표시됩니다.")
-            elif render["err"]:
-                st.error(f"이미지 생성 실패 — {render['err']}")
-            elif render["imgs"]:
-                for p, png in zip(render["pages"], render["imgs"]):
-                    st.markdown(f"**원본 {p}p**")
-                    st.image(png, use_container_width=True)
-            else:
-                st.warning("표시할 이미지가 없습니다.")
+            cur = min(max(1, st.session_state.get("toc_view_page", 1)), total)
+            pc1, pc2, pc3 = st.columns([1, 2, 1])
+            with pc1:
+                if st.button("◀ 이전", use_container_width=True, disabled=(cur <= 1)):
+                    st.session_state.toc_view_page = cur - 1
+                    st.rerun()
+            with pc2:
+                st.markdown(f"<div style='text-align:center; padding-top:6px;'>"
+                            f"<b>{cur}</b> / {total} 페이지</div>", unsafe_allow_html=True)
+            with pc3:
+                if st.button("다음 ▶", use_container_width=True, disabled=(cur >= total)):
+                    st.session_state.toc_view_page = cur + 1
+                    st.rerun()
+            # 현재 페이지를 fitz로 즉시 렌더(캐시) — 생성 버튼·다운로드 없이 바로 표시
+            cache = st.session_state.setdefault("toc_page_cache", {})
+            if cur not in cache:
+                cache[cur] = _render_pdf_page(pdf_bytes, cur)
+            png, err = cache[cur]
+            if err:
+                st.error(err)
+            elif png:
+                st.image(png, use_container_width=True)
 
     # ── 오른쪽: 목차 편집 폼 (컬럼 2중첩 방지 → 세로로 쌓음) ──
     with form_col:
