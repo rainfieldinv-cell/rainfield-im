@@ -212,6 +212,11 @@ def show_step1():
                 except Exception:
                     st.session_state.parsed_pages = []
 
+                # 새 문서이므로 이전 목차 편집 상태 초기화(3단계에서 새로 자동구성)
+                for _k in ("toc_edit", "toc_hashtags"):
+                    st.session_state.pop(_k, None)
+                _clear_toc_widget_state()
+
                 # 2단계로 이동
                 st.session_state.current_step = 2
                 st.rerun()
@@ -459,7 +464,7 @@ def show_step3():
             st.rerun()
         return
 
-    st.markdown("## 3단계. 레이아웃 및 표지 미리 생성")
+    st.markdown("## 4단계. 레이아웃 및 표지 미리 생성")
     st.caption("레이아웃을 선택하고 날짜·표지 이미지를 지정한 뒤 표지를 미리 생성해보세요.")
     st.markdown("")
 
@@ -753,12 +758,12 @@ def show_step3():
 
     with col_prev:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 2
+            st.session_state.current_step = 3
             st.rerun()
 
     with col_next:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 4
+            st.session_state.current_step = 5
             st.rerun()
 
 
@@ -774,7 +779,7 @@ def show_step4():
             st.rerun()
         return
 
-    st.markdown("## 4단계. 전체 PPT 생성")
+    st.markdown("## 5단계. 전체 PPT 생성")
     st.caption("지금까지 설정한 내용으로 완성된 제안서 PPT를 생성합니다.")
     st.markdown("")
 
@@ -917,8 +922,169 @@ def show_step4():
     # (D) 하단 네비게이션
     # ────────────────────────────────────────
     if st.button("← 이전 단계 (설정 변경)", use_container_width=False):
-        st.session_state.current_step = 3
+        st.session_state.current_step = 4
         st.rerun()
+
+
+# ─────────────────────────────────────────────
+# [3단계: 목차 구성] — 자동 추출 목차 편집 + 원본 항목(해시태그) 매치. (읽기/편집만, 이미지·재배치 X)
+# ─────────────────────────────────────────────
+def _clean_toc_text(t: str) -> str:
+    return re.sub(r"\s+", " ", (t or "").strip())
+
+
+def _build_toc_from_parsed(parsed_pages):
+    """parsed_pages(section_title/subtitle)로 초기 목차 구성 + 원본 해시태그 풀 생성.
+       반환: (groups, hashtags)
+         groups   = [{"title": 대분류제목, "subs": [{"text": 소제목, "tags": []}, ...]}, ...]
+         hashtags = 원본 IM 목차 항목(섹션·소제목) 문자열 목록(중복 제거)"""
+    from collections import OrderedDict
+    sections = OrderedDict()
+    tags = []
+    for pd in (parsed_pages or []):
+        sec = _clean_toc_text(pd.get("section_title") or pd.get("section_label"))
+        sub = _clean_toc_text(pd.get("subtitle"))
+        if sec:
+            sections.setdefault(sec, [])
+            if sub and sub != sec and sub not in sections[sec]:
+                sections[sec].append(sub)
+            if sec not in tags:
+                tags.append(sec)
+        if sub and sub not in tags:
+            tags.append(sub)
+    groups = [{"title": k, "subs": [{"text": s, "tags": []} for s in v]}
+              for k, v in sections.items()]
+    return groups, tags
+
+
+def _adjust_groups(groups, n):
+    """대분류 개수를 정확히 n개로(부족하면 빈 그룹 추가, 많으면 뒤에서 제거)."""
+    while len(groups) < n:
+        groups.append({"title": "", "subs": []})
+    while len(groups) > n:
+        groups.pop()
+    return groups
+
+
+def _clear_toc_widget_state():
+    """목차 편집 위젯 상태 초기화(구조 변경 후 재시딩용)."""
+    for k in list(st.session_state.keys()):
+        if k.startswith(("toctitle_", "tocsub_", "toctags_")):
+            del st.session_state[k]
+
+
+def _init_toc_edit(parsed):
+    groups, tags = _build_toc_from_parsed(parsed)
+    fmt = max(4, min(5, len(groups) or 4))
+    _adjust_groups(groups, fmt)
+    st.session_state.toc_edit = {"format": fmt, "groups": groups}
+    st.session_state.toc_hashtags = tags
+    st.session_state.toc_count = fmt
+
+
+def show_step_toc():
+    st.markdown("## 3단계. 목차 구성")
+    st.caption("자동 추출된 목차를 편집하세요. 대분류 제목·소제목을 직접 수정하고, 소제목마다 "
+               "원본 IM 목차 항목(해시태그)을 최대 3개까지 매치할 수 있습니다. "
+               "(이 단계는 구성·매치만 저장합니다. 이미지·재배치는 다음 단계에서)")
+    st.markdown("")
+
+    parsed = st.session_state.get("parsed_pages") or []
+    if "toc_edit" not in st.session_state:
+        _init_toc_edit(parsed)
+
+    toc = st.session_state.toc_edit
+    hashtags = st.session_state.get("toc_hashtags", [])
+
+    # 자동 목차 다시 불러오기
+    if st.button("🔄 자동 추출 목차 다시 불러오기", help="편집 내용을 버리고 원본에서 다시 구성합니다."):
+        _init_toc_edit(parsed)
+        _clear_toc_widget_state()
+        st.rerun()
+
+    # ── 4형식 / 5형식 선택 ──
+    st.markdown("#### 목차 형식 (대분류 개수)")
+    fc1, fc2, _fc = st.columns([1, 1, 4])
+    cur_fmt = toc["format"]
+    with fc1:
+        if st.button("4형식", type=("primary" if cur_fmt == 4 else "secondary"),
+                     use_container_width=True):
+            toc["format"] = 4
+            _adjust_groups(toc["groups"], 4)
+            st.session_state.toc_count = 4
+            _clear_toc_widget_state()
+            st.rerun()
+    with fc2:
+        if st.button("5형식", type=("primary" if cur_fmt == 5 else "secondary"),
+                     use_container_width=True):
+            toc["format"] = 5
+            _adjust_groups(toc["groups"], 5)
+            st.session_state.toc_count = 5
+            _clear_toc_widget_state()
+            st.rerun()
+    st.caption(f"현재: 목차 대분류 **{cur_fmt}개**")
+    st.markdown("---")
+
+    if not hashtags:
+        st.info("원본 목차 항목(해시태그)을 찾지 못했습니다. 소제목은 직접 입력하세요.")
+
+    # ── 목차 편집 폼 (제목 + 소제목들 + 해시태그 매치) ──
+    pending = {"del": None, "add": None}   # 렌더 후 일괄 처리(부분 읽기 방지)
+    for gi, g in enumerate(toc["groups"]):
+        with st.container(border=True):
+            tk = f"toctitle_{gi}"
+            st.session_state.setdefault(tk, g.get("title", ""))
+            g["title"] = st.text_input(f"목차 {gi + 1} 제목", key=tk,
+                                       placeholder="예: 01 사모사채 개요")
+            st.caption("소제목")
+            for si, sub in enumerate(g["subs"]):
+                c1, c2, c3 = st.columns([4, 4, 1])
+                sk = f"tocsub_{gi}_{si}"
+                st.session_state.setdefault(sk, sub.get("text", ""))
+                sub["text"] = c1.text_input("소제목", key=sk,
+                                            label_visibility="collapsed",
+                                            placeholder="소제목 입력")
+                gk = f"toctags_{gi}_{si}"
+                valid_default = [t for t in sub.get("tags", []) if t in hashtags][:3]
+                st.session_state.setdefault(gk, valid_default)
+                sub["tags"] = c2.multiselect(
+                    "원본 매치(해시태그)", options=hashtags,
+                    key=gk, max_selections=3, label_visibility="collapsed",
+                    placeholder="원본 항목 매치(최대 3)")
+                if c3.button("🗑", key=f"tocdel_{gi}_{si}", help="소제목 삭제"):
+                    pending["del"] = (gi, si)
+                if sub["tags"]:
+                    c1.caption("매치: " + "  ".join(f"#{t}" for t in sub["tags"]))
+            if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
+                pending["add"] = gi
+
+    # 구조 변경은 전체 렌더(값 읽기) 뒤에 적용 → 편집 유실 방지
+    if pending["del"] is not None:
+        gi, si = pending["del"]
+        toc["groups"][gi]["subs"].pop(si)
+        _clear_toc_widget_state()
+        st.rerun()
+    if pending["add"] is not None:
+        toc["groups"][pending["add"]]["subs"].append({"text": "", "tags": []})
+        _clear_toc_widget_state()
+        st.rerun()
+
+    st.markdown("---")
+    total_subs = sum(len(g["subs"]) for g in toc["groups"])
+    total_tags = sum(len(s["tags"]) for g in toc["groups"] for s in g["subs"])
+    st.success(f"저장됨 · 대분류 {toc['format']}개 · 소제목 {total_subs}개 · 매치 {total_tags}건 "
+               "(다음 단계로 넘어가도 유지됩니다)")
+
+    # ── 네비게이션 ──
+    nc1, _ns, nc2 = st.columns([2, 4, 2])
+    with nc1:
+        if st.button("← 이전 단계", use_container_width=True):
+            st.session_state.current_step = 2
+            st.rerun()
+    with nc2:
+        if st.button("다음 단계 →", use_container_width=True, type="primary"):
+            st.session_state.current_step = 4
+            st.rerun()
 
 
 # ─────────────────────────────────────────────
@@ -981,8 +1147,10 @@ def show_conversion_tab():
     elif st.session_state.current_step == 2:
         show_step2()
     elif st.session_state.current_step == 3:
-        show_step3()
+        show_step_toc()
     elif st.session_state.current_step == 4:
+        show_step3()
+    elif st.session_state.current_step == 5:
         show_step4()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
