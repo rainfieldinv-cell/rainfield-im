@@ -260,7 +260,7 @@ def show_step1():
 
                 # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3단계 새로 시작)
                 for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page",
-                           "view_pdf_bytes"):
+                           "view_pdf_bytes", "highlight_cards", "hl_img_render"):
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
 
@@ -329,19 +329,8 @@ def show_step2():
     for w in data.get("warnings", []):
         st.warning(f"⚠️ {w}")
 
-    st.markdown("---")
-
-    # ────────────────────────────────────────
-    # (B) 페이지별 텍스트 미리보기
-    # ────────────────────────────────────────
-    render_text_preview(data["pages_text"])
-
-    st.markdown("---")
-
-    # ────────────────────────────────────────
-    # (C) 이미지 갤러리
-    # ────────────────────────────────────────
-    render_image_gallery(data["images"])
+    # ★추출된 글/사진 미리보기는 표시하지 않음 —
+    #   글은 3단계(목차 구성)에서 원본 페이지로 보고, 사진은 뒤 단계에서 직접 고르므로 중복.
 
     st.markdown("---")
 
@@ -511,7 +500,7 @@ def show_step3():
             st.rerun()
         return
 
-    st.markdown("## 4단계. 레이아웃 및 표지 미리 생성")
+    st.markdown("## 5단계. 레이아웃 및 표지 미리 생성")
     st.caption("레이아웃을 선택하고 날짜·표지 이미지를 지정한 뒤 표지를 미리 생성해보세요.")
     st.markdown("")
 
@@ -805,12 +794,12 @@ def show_step3():
 
     with col_prev:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 3
+            st.session_state.current_step = 4
             st.rerun()
 
     with col_next:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 5
+            st.session_state.current_step = 6
             st.rerun()
 
 
@@ -826,7 +815,7 @@ def show_step4():
             st.rerun()
         return
 
-    st.markdown("## 5단계. 전체 PPT 생성")
+    st.markdown("## 6단계. 전체 PPT 생성")
     st.caption("지금까지 설정한 내용으로 완성된 제안서 PPT를 생성합니다.")
     st.markdown("")
 
@@ -969,7 +958,7 @@ def show_step4():
     # (D) 하단 네비게이션
     # ────────────────────────────────────────
     if st.button("← 이전 단계 (설정 변경)", use_container_width=False):
-        st.session_state.current_step = 4
+        st.session_state.current_step = 5
         st.rerun()
 
 
@@ -1254,6 +1243,157 @@ def _find_toc_pages(pages_text):
 
 
 # ─────────────────────────────────────────────
+# [4단계: 하이라이트(Executive Summary) 구성] — 원본 ES 페이지 확인 + 카드 3개 편집
+# ─────────────────────────────────────────────
+def _find_es_pages(pages_text):
+    """원본에서 Executive Summary / 요약 페이지(1-based) 추정.
+       페이지 앞부분에 'Executive Summary' 표기가 있거나, 제목처럼 '요약'만 있는 줄이 있으면 해당."""
+    hits = []
+    for i, t in enumerate(pages_text or [], start=1):
+        head = (t or "")[:400]
+        if "executive summary" in head.lower():
+            hits.append(i)
+            continue
+        if re.search(r"(^|\n)\s*(투자|사업|핵심)?\s*요약\s*(\n|$)", head):
+            hits.append(i)
+    return hits
+
+
+def _es_source_text():
+    """요약 자동추출에 넣을 원본 텍스트 — ES 페이지 우선, 없으면 앞 2페이지."""
+    pages = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
+    es = _find_es_pages(pages)
+    if es:
+        return "\n".join(pages[p - 1] for p in es)
+    return "\n".join(pages[:2])
+
+
+def _init_highlight_cards():
+    """카드 3개 기본값 — IM에서 자동 추출한 요약으로 채움(실패해도 빈 카드로 진행)."""
+    cards = [{"title": "", "use_sub": False, "subtitle": "", "content": ""} for _ in range(3)]
+    try:
+        from modules.ai_slide_builders import generate_executive_summary
+        with st.spinner("IM에서 요약(Executive Summary)을 자동 추출하는 중..."):
+            res = generate_executive_summary(_es_source_text())
+        if res.get("ok"):
+            secs = (res.get("data") or {}).get("sections") or []
+            for i, sec in enumerate(secs[:3]):
+                sub = (sec.get("subtitle") or "").strip()
+                cards[i] = {
+                    "title": (sec.get("title") or "").strip(),
+                    "use_sub": bool(sub),
+                    "subtitle": sub,
+                    "content": (sec.get("content") or sec.get("body") or "").strip(),
+                }
+    except Exception as e:
+        st.info(f"자동 추출을 건너뜁니다({e}). 카드를 직접 입력하세요.")
+    st.session_state.highlight_cards = cards
+
+
+def _clear_highlight_widget_state():
+    for k in list(st.session_state.keys()):
+        if k.startswith(("hlt_", "hls_", "hlc_", "hlu_")):
+            del st.session_state[k]
+
+
+def show_step_highlight():
+    st.markdown("## 4단계. 하이라이트 (Executive Summary) 구성")
+    st.caption("왼쪽에서 원본 IM의 Executive Summary 페이지를 확인하고, 오른쪽에서 카드 3개를 편집하세요. "
+               "(이 단계는 편집·저장까지만 · 완성 이미지는 다음 단계에서)")
+
+    pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
+    view_pdf = st.session_state.get("view_pdf_bytes") or st.session_state.get("pdf_bytes")
+    if "highlight_cards" not in st.session_state:
+        _init_highlight_cards()
+    cards = st.session_state.highlight_cards
+
+    if st.button("🤖 IM에서 다시 자동 추출", help="원본 요약을 다시 읽어 카드에 채웁니다(편집 내용 덮어씀)."):
+        _init_highlight_cards()
+        _clear_highlight_widget_state()
+        st.rerun()
+
+    img_col, form_col = st.columns([1, 1])
+
+    # ── 왼쪽: 원본 Executive Summary 페이지 (버튼 눌렀을 때만 변환) ──
+    with img_col:
+        st.markdown("#### 📄 원본 Executive Summary")
+        es_pages = _find_es_pages(pages_text)
+        if not view_pdf:
+            st.warning("원본 PDF가 없어 이미지를 못 띄웁니다. 1단계에서 워드/PDF를 올려주세요.")
+        else:
+            if es_pages:
+                st.caption(f"Executive Summary로 추정되는 페이지: {', '.join(map(str, es_pages))}p")
+            else:
+                st.caption("Executive Summary 페이지를 못 찾았습니다 — 아래에 직접 지정하세요.")
+            default_p = ",".join(map(str, es_pages)) if es_pages else "1"
+            p_str = st.text_input("표시할 페이지(쉼표)", value=default_p, key="hl_img_pages")
+            if st.button("🖼️ 원본 이미지 보기", type="primary"):
+                try:
+                    pgs = [int(x) for x in re.split(r"[,\s]+", p_str.strip()) if x]
+                except ValueError:
+                    pgs = []
+                if not pgs:
+                    st.error("페이지 번호를 올바르게 입력하세요. (예: 2)")
+                else:
+                    out = []
+                    with st.spinner("원본 페이지를 이미지로 변환하는 중..."):
+                        for p in pgs:
+                            png, err = _render_pdf_page(view_pdf, p)
+                            out.append((p, png, err))
+                    st.session_state.hl_img_render = out
+            rend = st.session_state.get("hl_img_render")
+            if not rend:
+                st.info("‘🖼️ 원본 이미지 보기’를 누르면 여기에 표시됩니다.")
+            else:
+                for p, png, err in rend:
+                    if err:
+                        st.error(f"{p}p 이미지 실패 — {err}")
+                    elif png:
+                        st.markdown(f"**원본 {p}p**")
+                        st.image(png, use_container_width=True)
+
+    # ── 오른쪽: 카드 3개 편집 (컬럼 2중첩 방지 → 세로) ──
+    with form_col:
+        st.markdown("#### ✅ 하이라이트 카드 3개")
+        st.caption("카드 간격은 다음 단계에서 일정하게 배치되고, 높이는 내용 양에 따라 자동 조절됩니다.")
+        for i, c in enumerate(cards):
+            with st.container(border=True):
+                st.markdown(f"**카드 {i + 1}**")
+                tk = f"hlt_{i}"
+                st.session_state.setdefault(tk, c.get("title", ""))
+                c["title"] = st.text_input("✓ 제목", key=tk,
+                                           placeholder="예: 낮은 인허가 리스크")
+                uk = f"hlu_{i}"
+                st.session_state.setdefault(uk, bool(c.get("use_sub")))
+                c["use_sub"] = st.checkbox("부제목 넣기", key=uk)
+                if c["use_sub"]:
+                    sk = f"hls_{i}"
+                    st.session_state.setdefault(sk, c.get("subtitle", ""))
+                    c["subtitle"] = st.text_input("부제목 (하늘색 줄)", key=sk,
+                                                  placeholder="예: ‘25년 8월 실시계획인가 완료")
+                ck = f"hlc_{i}"
+                st.session_state.setdefault(ck, c.get("content", ""))
+                c["content"] = st.text_area("내용", key=ck, height=110,
+                                            placeholder="카드 본문 (여러 줄 입력 가능)")
+
+    # ── 저장 요약 + 네비게이션 ──
+    st.markdown("---")
+    filled = sum(1 for c in cards if (c.get("title") or c.get("content")))
+    withsub = sum(1 for c in cards if c.get("use_sub") and c.get("subtitle"))
+    st.success(f"저장됨 · 작성된 카드 {filled}/3개 · 부제목 사용 {withsub}개")
+
+    nc1, _n, nc2 = st.columns([2, 4, 2])
+    with nc1:
+        if st.button("← 이전 단계", use_container_width=True):
+            st.session_state.current_step = 3
+            st.rerun()
+    with nc2:
+        if st.button("다음 단계 →", use_container_width=True, type="primary"):
+            st.session_state.current_step = 5
+            st.rerun()
+
+
+# ─────────────────────────────────────────────
 # ['처음으로' — 현재 작업 전체 초기화 후 1단계로]
 # ─────────────────────────────────────────────
 def _reset_to_start():
@@ -1315,8 +1455,10 @@ def show_conversion_tab():
     elif st.session_state.current_step == 3:
         show_step_toc()
     elif st.session_state.current_step == 4:
-        show_step3()
+        show_step_highlight()
     elif st.session_state.current_step == 5:
+        show_step3()
+    elif st.session_state.current_step == 6:
         show_step4()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
