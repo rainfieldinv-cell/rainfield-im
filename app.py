@@ -943,35 +943,8 @@ def _clean_toc_text(t: str) -> str:
     return re.sub(r"\s+", " ", (t or "").strip())
 
 
-def _build_toc_from_parsed(parsed_pages):
-    """parsed_pages(section_title/subtitle)로 초기 목차 구성 + 원본 해시태그 풀 생성.
-       반환: (groups, hashtags)
-         groups   = [{"title": 대분류제목, "subs": [{"text": 소제목, "tags": []}, ...]}, ...]
-         hashtags = 원본 IM 목차 항목(섹션·소제목) 문자열 목록(중복 제거)"""
-    from collections import OrderedDict
-    sections = OrderedDict()
-    tags = []
-    for pd in (parsed_pages or []):
-        sec = _clean_toc_text(pd.get("section_title") or pd.get("section_label"))
-        sub = _clean_toc_text(pd.get("subtitle"))
-        # 긴 본문 문장은 목차 항목이 아니므로 제외(제목/소제목다운 짧은 문구만)
-        sec = sec if _is_toc_heading(sec) else ""
-        sub = sub if _is_toc_heading(sub) else ""
-        if sec:
-            sections.setdefault(sec, [])
-            if sub and sub != sec and sub not in sections[sec]:
-                sections[sec].append(sub)
-            if sec not in tags:
-                tags.append(sec)
-        if sub and sub not in tags:
-            tags.append(sub)
-    groups = [{"title": k, "subs": [{"text": s, "tags": []} for s in v]}
-              for k, v in sections.items()]
-    return groups, tags
-
-
 def _is_toc_heading(t):
-    """목차 제목/소제목다운 '짧은 문구'인지 판정 — 긴 본문 문장/서술형은 제외."""
+    """목차 제목/소제목다운 '짧은 문구'인지 — 긴 본문 문장/서술형은 제외."""
     t = (t or "").strip()
     if not (0 < len(t) <= 45):
         return False
@@ -980,10 +953,37 @@ def _is_toc_heading(t):
     return True
 
 
+def _build_toc_from_parsed(parsed_pages):
+    """parsed_pages로 목차 자동 추출 시도(best-effort) → groups.
+       ※IM마다 섹션/소제목 형식이 제각각이고 러닝헤더(사업명)가 섞여 신뢰도 낮음 → '시도'용.
+       여러 페이지에 반복되는 제목(러닝헤더)은 빈도로 걸러낸다."""
+    from collections import OrderedDict, Counter
+    freq = Counter(_clean_toc_text(pd.get("section_title") or pd.get("section_label"))
+                   for pd in (parsed_pages or []))
+    npages = max(1, len(parsed_pages or []))
+
+    def _bad(t):
+        return (not _is_toc_heading(t)) or freq.get(t, 0) > max(3, npages * 0.4)
+
+    sections = OrderedDict()
+    for pd in (parsed_pages or []):
+        sec = _clean_toc_text(pd.get("section_title") or pd.get("section_label"))
+        sub = _clean_toc_text(pd.get("subtitle"))
+        if _bad(sec):
+            sec = ""
+        sub = sub if _is_toc_heading(sub) else ""
+        if sec:
+            sections.setdefault(sec, [])
+            if sub and sub != sec and sub not in sections[sec]:
+                sections[sec].append(sub)
+    return [{"title": k, "subs": [{"text": s, "page": 0} for s in v]}
+            for k, v in sections.items()]
+
+
 def _adjust_groups(groups, n):
     """대분류 개수를 정확히 n개로(부족하면 빈 그룹 추가, 많으면 뒤에서 제거)."""
     while len(groups) < n:
-        groups.append({"title": "", "subs": []})
+        groups.append({"title": "", "subs": [{"text": "", "page": 0}]})
     while len(groups) > n:
         groups.pop()
     return groups
@@ -992,16 +992,16 @@ def _adjust_groups(groups, n):
 def _clear_toc_widget_state():
     """목차 편집 위젯 상태 초기화(구조 변경 후 재시딩용)."""
     for k in list(st.session_state.keys()):
-        if k.startswith(("toctitle_", "tocsub_", "toctags_")):
+        if k.startswith(("toctitle_", "tocsub_", "tocpage_")):
             del st.session_state[k]
 
 
-def _init_toc_edit(parsed):
-    groups, tags = _build_toc_from_parsed(parsed)
+def _init_toc_edit(parsed, auto=False):
+    """목차 편집 상태 초기화 — 기본은 빈 4형식(직접 작성). auto=True면 자동 추출 시도."""
+    groups = _build_toc_from_parsed(parsed) if auto else []
     fmt = max(4, min(5, len(groups) or 4))
     _adjust_groups(groups, fmt)
     st.session_state.toc_edit = {"format": fmt, "groups": groups}
-    st.session_state.toc_hashtags = tags
     st.session_state.toc_count = fmt
 
 
@@ -1022,29 +1022,36 @@ def _render_pdf_page(pdf_bytes, page_num, zoom=2.0):
 
 def show_step_toc():
     st.markdown("## 3단계. 목차 구성")
-    st.caption("왼쪽에 원본 IM의 목차 이미지를 띄우고, 오른쪽에서 목차 제목·소제목을 만드세요. "
-               "소제목마다 원본 목차 항목(해시태그)을 최대 3개까지 매치할 수 있습니다. "
-               "(이 단계는 구성·매치만 저장 · 재배치/생성은 다음 단계)")
+    st.caption("왼쪽에서 원본 IM을 표지부터 넘겨보고, 오른쪽에서 목차 제목·소제목을 직접 만드세요. "
+               "소제목마다 **원본 IM의 몇 페이지인지** 번호로 지정하면 됩니다. "
+               "(IM마다 목차/소제목 형식이 제각각이라 자동추출은 부정확 → 페이지 번호로 매칭)")
 
     parsed = st.session_state.get("parsed_pages") or []
+    pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
+    total = len(pages_text)
+    pdf_bytes = st.session_state.get("pdf_bytes")
     if "toc_edit" not in st.session_state:
         _init_toc_edit(parsed)
     toc = st.session_state.toc_edit
-    hashtags = st.session_state.get("toc_hashtags", [])
 
-    if st.button("🔄 자동 추출 목차 다시 불러오기", help="편집 내용을 버리고 원본에서 다시 구성합니다."):
-        _init_toc_edit(parsed)
-        _clear_toc_widget_state()
-        st.rerun()
+    bc1, bc2, _bc = st.columns([1, 1, 3])
+    with bc1:
+        if st.button("🔄 자동 추출 시도", use_container_width=True,
+                     help="원본에서 목차를 자동 추출해봅니다(IM에 따라 부정확할 수 있음)."):
+            _init_toc_edit(parsed, auto=True)
+            _clear_toc_widget_state()
+            st.rerun()
+    with bc2:
+        if st.button("🧹 모두 비우기", use_container_width=True, help="빈 목차로 초기화합니다."):
+            _init_toc_edit(parsed, auto=False)
+            _clear_toc_widget_state()
+            st.rerun()
 
     img_col, form_col = st.columns([1, 1])
 
     # ── 왼쪽: 원본 IM 전체 페이지 뷰어 (표지부터 한 장씩, 버튼 없이 바로 표시) ──
     with img_col:
         st.markdown("#### 📄 원본 IM (표지부터 한 장씩)")
-        pdf_bytes = st.session_state.get("pdf_bytes")
-        pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
-        total = len(pages_text)
         if not pdf_bytes or total == 0:
             st.warning("원본 PDF가 없어 이미지를 못 띄웁니다. 1단계에서 PDF(또는 워드→자동 PDF변환)로 올리세요.")
         else:
@@ -1085,8 +1092,8 @@ def show_step_toc():
             _clear_toc_widget_state()
             st.rerun()
 
-        if not hashtags:
-            st.caption("원본 목차 항목(해시태그) 자동추출 없음 — 소제목은 직접 입력하세요.")
+        _cur = min(max(1, st.session_state.get("toc_view_page", 1)), total or 1)
+        st.caption(f"소제목마다 '원본 페이지'를 넣으세요 (0=미지정). 지금 왼쪽에 보이는 페이지: **{_cur}p**")
 
         pending = {"del": None, "add": None}
         for gi, g in enumerate(toc["groups"]):
@@ -1094,18 +1101,17 @@ def show_step_toc():
                 tk = f"toctitle_{gi}"
                 st.session_state.setdefault(tk, g.get("title", ""))
                 g["title"] = st.text_input(f"목차 {gi + 1} 제목", key=tk,
-                                           placeholder="예: 01 사모사채 개요")
+                                           placeholder="예: 4 리스크분석 / Executive Summary")
                 for si, sub in enumerate(g["subs"]):
                     sk = f"tocsub_{gi}_{si}"
                     st.session_state.setdefault(sk, sub.get("text", ""))
                     sub["text"] = st.text_input(f"└ 소제목 {si + 1}", key=sk,
-                                                placeholder="소제목 입력")
-                    gk = f"toctags_{gi}_{si}"
-                    vd = [t for t in sub.get("tags", []) if t in hashtags][:3]
-                    st.session_state.setdefault(gk, vd)
-                    sub["tags"] = st.multiselect(
-                        "원본 항목 매치(최대 3)", options=hashtags, key=gk,
-                        max_selections=3, placeholder="원본 목차 항목 골라 매치")
+                                                placeholder="예: (1) 낙찰사례 및 환가 분석")
+                    pk = f"tocpage_{gi}_{si}"
+                    st.session_state.setdefault(pk, int(sub.get("page", 0) or 0))
+                    sub["page"] = st.number_input(
+                        "└ 원본 페이지 (0=미지정)", min_value=0,
+                        max_value=(total if total else 999), step=1, key=pk)
                     if st.button("🗑 소제목 삭제", key=f"tocdel_{gi}_{si}"):
                         pending["del"] = (gi, si)
                 if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
@@ -1117,15 +1123,15 @@ def show_step_toc():
             _clear_toc_widget_state()
             st.rerun()
         if pending["add"] is not None:
-            toc["groups"][pending["add"]]["subs"].append({"text": "", "tags": []})
+            toc["groups"][pending["add"]]["subs"].append({"text": "", "page": 0})
             _clear_toc_widget_state()
             st.rerun()
 
     # ── 저장 요약 + 네비게이션 (전체 폭) ──
     st.markdown("---")
     total_subs = sum(len(g["subs"]) for g in toc["groups"])
-    total_tags = sum(len(s["tags"]) for g in toc["groups"] for s in g["subs"])
-    st.success(f"저장됨 · 대분류 {toc['format']}개 · 소제목 {total_subs}개 · 매치 {total_tags}건")
+    with_page = sum(1 for g in toc["groups"] for s in g["subs"] if s.get("page"))
+    st.success(f"저장됨 · 대분류 {toc['format']}개 · 소제목 {total_subs}개 · 페이지 지정 {with_page}건")
     nc1, _ns, nc2 = st.columns([2, 4, 2])
     with nc1:
         if st.button("← 이전 단계", use_container_width=True):
