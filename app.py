@@ -265,8 +265,7 @@ def show_step1():
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
 
-                # 2단계로 이동
-                st.session_state.current_step = 2
+                # 2단계 없이 1단계에 머물며 사업명 입력받음
                 st.rerun()
 
             except ValueError as e:
@@ -278,215 +277,44 @@ def show_step1():
             except Exception as e:
                 st.error(f"❌ 예상치 못한 오류가 발생했습니다: {e}")
 
-
-# ─────────────────────────────────────────────
-# [2단계: 추출 결과 확인 화면]
-# ─────────────────────────────────────────────
-def show_step2():
-    data = st.session_state.extracted_data
-
-    # 혹시 데이터가 없으면 1단계로 돌려보냄 (비정상 접근 방어)
-    if data is None:
-        st.warning("추출 데이터가 없습니다. 파일을 다시 업로드해주세요.")
-        if st.button("← 1단계로 돌아가기"):
-            st.session_state.current_step = 1
-            st.rerun()
-        return
-
-    st.markdown("## 2단계. 추출 결과 확인")
-    st.caption("추출된 내용을 확인해주세요. 사업명이 잘못 인식된 경우 수정할 수 있습니다.")
-    st.markdown("")
-
     # ────────────────────────────────────────
-    # (A) 핵심 정보 자동 감지
+    # 추출 완료 후 — 사업명 입력 + 다음 단계 (2단계 없이 여기서 처리)
     # ────────────────────────────────────────
-    st.markdown("### 📌 핵심 정보 자동 감지")
+    data = st.session_state.get("extracted_data")
+    if data:
+        st.markdown("---")
+        st.markdown("### 📌 추출 완료")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("총 페이지 수", f"{data['total_pages']}페이지")
+        with c2:
+            st.metric("추출된 이미지 수", f"{len(data['images'])}개")
+        with c3:
+            st.metric("파일 형식", data["file_type"].upper())
 
-    col_info1, col_info2, col_info3 = st.columns(3)
-    with col_info1:
-        st.metric("총 페이지 수", f"{data['total_pages']}페이지")
-    with col_info2:
-        st.metric("추출된 이미지 수", f"{len(data['images'])}개")
-    with col_info3:
-        st.metric("파일 형식", data["file_type"].upper())
+        for w in data.get("warnings", []):
+            st.warning(f"⚠️ {w}")
 
-    st.markdown("")
-
-    # 사업명 입력란 — 자동 감지 값이 기본으로 채워지며 수정 가능
-    # 여기를 수정하면 사업명 입력란 안내 문구가 바뀝니다
-    if not st.session_state.business_name:
-        st.warning("⚠️ 사업명을 자동으로 인식하지 못했습니다. 직접 입력해주세요.")
-
-    business_input = st.text_input(
-        label="사업명",
-        value=st.session_state.business_name,
-        placeholder="예) 천안 부성2지구 도시개발사업",
-        help="자동 감지된 사업명입니다. 잘못된 경우 직접 수정해주세요.",
-    )
-    # 입력값을 세션에 즉시 반영
-    st.session_state.business_name = business_input
-
-    # 추출 중 경고 메시지 표시
-    for w in data.get("warnings", []):
-        st.warning(f"⚠️ {w}")
-
-    # ★추출된 글/사진 미리보기는 표시하지 않음 —
-    #   글은 3단계(목차 구성)에서 원본 페이지로 보고, 사진은 뒤 단계에서 직접 고르므로 중복.
-
-    st.markdown("---")
-
-    # ────────────────────────────────────────
-    # (D) 하단 네비게이션 버튼
-    # ────────────────────────────────────────
-    col_prev, col_space, col_next = st.columns([3, 2, 3])
-
-    with col_prev:
-        if st.button("← 이전 단계  (파일 다시 업로드)", use_container_width=True):
-            # 추출 데이터 초기화 후 1단계로 복귀
-            st.session_state.current_step   = 1
-            st.session_state.extracted_data = None
-            st.session_state.uploaded_file  = None
-            st.session_state.business_name  = ""
-            # 전체 펼치기/접기 상태도 초기화
-            if "text_expanded" in st.session_state:
-                del st.session_state["text_expanded"]
-            st.rerun()
-
-    with col_next:
-        # 사업명이 없으면 다음 단계 버튼 비활성화
-        next_disabled = not bool(st.session_state.business_name.strip())
-
-        if next_disabled:
-            st.warning("사업명을 입력해주세요.")
-
-        if st.button(
-            "다음 단계 →",
-            use_container_width=True,
-            type="primary",
-            disabled=next_disabled,
-        ):
-            st.session_state.current_step = 3
-            st.rerun()
-
-
-# ─────────────────────────────────────────────
-# [섹션 divider 슬롯 위치 미니어처 헬퍼]
-# ─────────────────────────────────────────────
-@st.cache_data
-def _make_divider_miniature(w_px: int = 540, h_px: int = 374) -> bytes:
-    """섹션 divider 슬라이드 레이아웃을 단순화한 PNG 미니어처를 반환합니다.
-    ①②③ 표시로 각 원형 슬롯 위치를 직관적으로 안내합니다."""
-    import io as _mio
-    from PIL import Image as _Img, ImageDraw as _Draw, ImageFont as _Font
-
-    SLIDE_W = 27.52
-    SLIDE_H = 19.05
-    sx, sy = w_px / SLIDE_W, h_px / SLIDE_H
-
-    img  = _Img.new("RGB", (w_px, h_px), (248, 248, 248))
-    draw = _Draw.Draw(img)
-    draw.rectangle([0, 0, w_px - 1, h_px - 1], outline=(200, 200, 200), width=2)
-
-    # 텍스트 영역 힌트 (섹션 번호+제목 위치)
-    draw.rectangle(
-        [int(0.5 * sx), int(7.5 * sy), int(13 * sx), int(10.5 * sy)],
-        fill=(225, 225, 225), outline=(190, 190, 190),
-    )
-
-    # 3개 원형 슬롯 (outer oval 위치 기준) — _DIV_OVAL_PAIRS와 동일 순서
-    _OVALS  = [(16.3273, 0.7346, 9.70, 9.70),
-               (17.3779, 8.2234, 8.70, 8.70),
-               (13.5919, 6.1749, 6.80, 6.80)]
-    _LABELS = ["①", "②", "③"]
-    _GREEN  = (146, 208, 80)
-
-    try:
-        _fnt_path = os.path.join(os.path.dirname(__file__), "fonts", "PEOPLEFONTB.TTF")
-        _base_fnt = _Font.truetype(_fnt_path, size=28)
-    except Exception:
-        _base_fnt = _Font.load_default()
-
-    for (ol, ot, ow, oh), label in zip(_OVALS, _LABELS):
-        cx = int((ol + ow / 2) * sx)
-        cy = int((ot + oh / 2) * sy)
-        rx = int(ow / 2 * sx)
-        ry = int(oh / 2 * sy)
-        draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry],
-                     fill=(220, 220, 220), outline=_GREEN, width=5)
-        draw.text((cx, cy), label, font=_base_fnt, fill=(50, 50, 50), anchor="mm")
-
-    buf = _mio.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return buf.getvalue()
-
-
-# ─────────────────────────────────────────────
-# [목차 TOC 슬롯 위치 미니어처 헬퍼]
-# ─────────────────────────────────────────────
-@st.cache_data
-def _make_toc_miniature(w_px: int = 540, h_px: int = 374) -> bytes:
-    """목차 슬라이드 레이아웃을 단순화한 PNG 미니어처를 반환합니다.
-    ① 표시로 원형 슬롯 위치를 직관적으로 안내합니다."""
-    import io as _mio
-    from PIL import Image as _Img, ImageDraw as _Draw, ImageFont as _Font
-
-    SLIDE_W = 27.52
-    SLIDE_H = 19.05
-    sx, sy = w_px / SLIDE_W, h_px / SLIDE_H
-
-    img  = _Img.new("RGB", (w_px, h_px), (248, 248, 248))
-    draw = _Draw.Draw(img)
-    draw.rectangle([0, 0, w_px - 1, h_px - 1], outline=(200, 200, 200), width=2)
-
-    # 오른쪽 목차 항목 힌트 (4개 행)
-    for row in range(4):
-        y_top = int((2.0 + row * 4.1) * sy)
-        draw.rectangle(
-            [int(7.5 * sx), y_top, int(26.5 * sx), int(y_top + 3.2 * sy)],
-            fill=(225, 225, 225), outline=(190, 190, 190),
+        st.markdown("")
+        if not st.session_state.business_name:
+            st.warning("⚠️ 사업명을 자동으로 인식하지 못했습니다. 직접 입력해주세요.")
+        st.session_state.business_name = st.text_input(
+            label="사업명",
+            value=st.session_state.business_name,
+            placeholder="예) 천안 부성2지구 도시개발사업",
+            help="자동 감지된 사업명입니다. 잘못된 경우 직접 수정해주세요.",
         )
 
-    # 1개 원형 슬롯 — TOC oval 위치 (left=0.84, top=6.95, w=5.26, h=5.30)
-    _GREEN = (146, 208, 80)
-    ol, ot, ow, oh = 0.8409, 6.9520, 5.2600, 5.3000
-    cx = int((ol + ow / 2) * sx)
-    cy = int((ot + oh / 2) * sy)
-    rx = int(ow / 2 * sx)
-    ry = int(oh / 2 * sy)
-
-    try:
-        _fnt_path = os.path.join(os.path.dirname(__file__), "fonts", "PEOPLEFONTB.TTF")
-        _base_fnt = _Font.truetype(_fnt_path, size=28)
-    except Exception:
-        _base_fnt = _Font.load_default()
-
-    draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry],
-                 fill=(220, 220, 220), outline=_GREEN, width=5)
-    draw.text((cx, cy), "①", font=_base_fnt, fill=(50, 50, 50), anchor="mm")
-
-    buf = _mio.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return buf.getvalue()
-
-
-# ─────────────────────────────────────────────
-# [목차 개수 자동 감지 헬퍼]
-# ─────────────────────────────────────────────
-def _detect_toc_count(full_text: str) -> int:
-    """
-    추출 텍스트에서 '01', '02' 같은 섹션 번호 패턴을 세어 목차 개수를 추정합니다.
-    찾지 못하면 기본값 4를 반환합니다.
-    여기를 수정하면 목차 감지 패턴이 바뀝니다.
-    """
-    matches = re.findall(r'\b0[1-9]\b', full_text)
-    unique  = len(set(matches))
-    if unique >= 5:
-        return 5
-    elif unique >= 3:
-        return 4
-    return 4  # 기본값
+        st.markdown("")
+        _n1, _ns, _n2 = st.columns([2, 4, 2])
+        with _n2:
+            _dis = not bool(st.session_state.business_name.strip())
+            if _dis:
+                st.caption("사업명을 입력해주세요.")
+            if st.button("다음 단계 →", use_container_width=True, type="primary",
+                         disabled=_dis):
+                st.session_state.current_step = 2
+                st.rerun()
 
 
 # ─────────────────────────────────────────────
@@ -501,7 +329,7 @@ def show_step3():
             st.rerun()
         return
 
-    st.markdown("## 6단계. 레이아웃 및 표지 미리 생성")
+    st.markdown("## 5단계. 레이아웃 및 표지 미리 생성")
     st.caption("레이아웃을 선택하고 날짜·표지 이미지를 지정한 뒤 표지를 미리 생성해보세요.")
     st.markdown("")
 
@@ -795,12 +623,12 @@ def show_step3():
 
     with col_prev:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 5
+            st.session_state.current_step = 4
             st.rerun()
 
     with col_next:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 7
+            st.session_state.current_step = 6
             st.rerun()
 
 
@@ -816,7 +644,7 @@ def show_step4():
             st.rerun()
         return
 
-    st.markdown("## 7단계. 전체 PPT 생성")
+    st.markdown("## 6단계. 전체 PPT 생성")
     st.caption("지금까지 설정한 내용으로 완성된 제안서 PPT를 생성합니다.")
     st.markdown("")
 
@@ -959,7 +787,7 @@ def show_step4():
     # (D) 하단 네비게이션
     # ────────────────────────────────────────
     if st.button("← 이전 단계 (설정 변경)", use_container_width=False):
-        st.session_state.current_step = 6
+        st.session_state.current_step = 5
         st.rerun()
 
 
@@ -1094,7 +922,7 @@ def _render_pdf_page(pdf_bytes, page_num, zoom=2.0):
 
 
 def show_step_toc():
-    st.markdown("## 3단계. 목차 구성")
+    st.markdown("## 2단계. 목차 구성")
     st.caption("왼쪽에서 원본 IM을 표지부터 넘겨보고, 오른쪽에서 목차 제목·소제목을 직접 만드세요. "
                "소제목마다 **원본 IM의 몇 페이지인지** 번호로 지정하면 됩니다. "
                "(IM마다 목차/소제목 형식이 제각각이라 자동추출은 부정확 → 페이지 번호로 매칭)")
@@ -1224,11 +1052,11 @@ def show_step_toc():
     nc1, _ns, nc2 = st.columns([2, 4, 2])
     with nc1:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 2
+            st.session_state.current_step = 1
             st.rerun()
     with nc2:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 4
+            st.session_state.current_step = 3
             st.rerun()
 
 
@@ -1298,7 +1126,7 @@ def _clear_highlight_widget_state():
 
 
 def show_step_highlight():
-    st.markdown("## 4단계. 하이라이트 (Executive Summary) 구성")
+    st.markdown("## 3단계. 하이라이트 (Executive Summary) 구성")
     st.caption("왼쪽에서 원본 IM의 Executive Summary 페이지를 확인하고, 오른쪽에서 카드 3개를 편집하세요. "
                "(이 단계는 편집·저장까지만 · 완성 이미지는 다음 단계에서)")
 
@@ -1386,11 +1214,11 @@ def show_step_highlight():
     nc1, _n, nc2 = st.columns([2, 4, 2])
     with nc1:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 3
+            st.session_state.current_step = 2
             st.rerun()
     with nc2:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 5
+            st.session_state.current_step = 4
             st.rerun()
 
 
@@ -1428,15 +1256,15 @@ def _build_highlight_ppt_bytes(cards, business_name=""):
 
 
 def show_step_highlight_preview():
-    st.markdown("## 5단계. 하이라이트 완성본 확인")
+    st.markdown("## 4단계. 하이라이트 완성본 확인")
     st.caption("4단계에서 만든 카드 3개로 Executive Summary 슬라이드를 만들어 이미지로 보여줍니다. "
                "(화면 확인용 · 다운로드 없음 · 수정은 이전 단계에서)")
 
     cards = st.session_state.get("highlight_cards")
     if not cards:
         st.warning("4단계에서 하이라이트 카드를 먼저 작성해주세요.")
-        if st.button("← 4단계로"):
-            st.session_state.current_step = 4
+        if st.button("← 3단계로"):
+            st.session_state.current_step = 3
             st.rerun()
         return
 
@@ -1477,11 +1305,11 @@ def show_step_highlight_preview():
     with nc1:
         if st.button("← 이전 (수정하러 가기)", use_container_width=True):
             st.session_state.pop("hl_done_render", None)   # 수정하면 완성본은 다시 만들도록
-            st.session_state.current_step = 4
+            st.session_state.current_step = 3
             st.rerun()
     with nc2:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 6
+            st.session_state.current_step = 5
             st.rerun()
 
 
@@ -1543,16 +1371,14 @@ def show_conversion_tab():
     if st.session_state.current_step == 1:
         show_step1()
     elif st.session_state.current_step == 2:
-        show_step2()
-    elif st.session_state.current_step == 3:
         show_step_toc()
-    elif st.session_state.current_step == 4:
+    elif st.session_state.current_step == 3:
         show_step_highlight()
-    elif st.session_state.current_step == 5:
+    elif st.session_state.current_step == 4:
         show_step_highlight_preview()
-    elif st.session_state.current_step == 6:
+    elif st.session_state.current_step == 5:
         show_step3()
-    elif st.session_state.current_step == 7:
+    elif st.session_state.current_step == 6:
         show_step4()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
