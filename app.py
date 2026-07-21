@@ -197,13 +197,15 @@ def show_step1():
         if st.button("🔍 추출 시작", type="primary", use_container_width=False):
             try:
                 # 글자·목차 항목은 '워드(변환 PDF)'에서 정확히 뽑고, 사진은 '원본 PDF'로 보여준다.
-                proc_pdf = None      # 글자/항목 추출용
+                proc_pdf = None          # 글자/항목 추출용
+                proc_from_word = False   # 글자를 워드에서 뽑았는지
                 conv_err = None
                 proc_name = word_up.name if word_up is not None else (pdf_up.name if pdf_up else "")
                 if word_up is not None:
                     from modules.preview import convert_word_to_pdf
                     with st.spinner("워드를 PDF로 변환하는 중입니다... (자금판과 동일 방식)"):
                         proc_pdf, conv_err = convert_word_to_pdf(word_up.getvalue(), word_up.name)
+                    proc_from_word = proc_pdf is not None
                     if not proc_pdf and pdf_up is not None:      # 변환 실패 시 PDF로
                         proc_pdf = pdf_up.getvalue()
                         proc_name = pdf_up.name
@@ -212,7 +214,16 @@ def show_step1():
 
                 with st.spinner("파일에서 텍스트와 이미지를 추출하는 중입니다..."):
                     if proc_pdf is not None:
-                        result = extract_from_pdf(proc_pdf)
+                        result = extract_from_pdf(proc_pdf)          # 글자·페이지(워드 기준 = 정확)
+                        # ★사진은 원본 PDF가 화질이 훨씬 좋음(실측 2013x1108 vs 1233x727)
+                        #   → 이미지 '세트를 교체'(추가 X)해서 글·사진 각각 1세트만 남김
+                        if proc_from_word and pdf_up is not None:
+                            try:
+                                _img_res = extract_from_pdf(pdf_up.getvalue())
+                                if _img_res.get("images"):
+                                    result["images"] = _img_res["images"]
+                            except Exception:
+                                pass
                         st.session_state.pdf_bytes = proc_pdf        # 좌표기반 표·이미지 복원용
                         parse_bytes, parse_name = proc_pdf, "converted.pdf"
                         # 사진 표시용 PDF: 원본 PDF 우선(글자 PDF와 페이지 수 같을 때만 정렬 유지)
