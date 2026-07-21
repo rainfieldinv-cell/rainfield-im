@@ -146,9 +146,9 @@ def show_login():
 # ─────────────────────────────────────────────
 def show_step1():
     st.markdown("## 1단계. 파일 업로드")
-    st.caption("**워드 + PDF를 함께 올려주세요.**  📄 워드(.docx)는 **본문 글자·목차 항목** 추출용, "
-               "🖼️ PDF는 **페이지 사진** 표시용입니다. "
-               "(워드만 올려도 자동으로 PDF로 변환해 사진까지 보여줍니다 · PDF / Word(.doc·.docx) 지원)")
+    st.caption("📄 **워드(.docx)는 무조건 올려주세요 — 필수.** 본문 글자·목차 항목 추출에 꼭 필요합니다. "
+               "🖼️ **PDF는 함께 올리면 더 좋아요 — 권장.** 페이지 사진을 원본 그대로 보여줍니다. "
+               "(PDF / Word(.doc·.docx) 지원)")
     st.markdown("")
 
     # 파일 업로더 (워드·PDF 함께 업로드 가능 — 자금판과 동일 방식, 워드는 PDF로 변환)
@@ -178,6 +178,13 @@ def show_step1():
         st.caption("파일: " + " · ".join(f.name for f in uploaded_files))
         if pdf_up and word_up:
             st.info("워드+PDF 둘 다 올렸습니다. 📄 **워드로 글자·항목**을 뽑고, 🖼️ **PDF로 페이지 사진**을 보여줍니다.")
+        elif word_up and not pdf_up:
+            st.info("워드만 올렸습니다. 자동으로 PDF로 변환해 사진까지 보여줍니다. "
+                    "(원본 PDF도 함께 올리면 사진이 더 원본에 가까워요)")
+        elif pdf_up and not word_up:
+            st.warning("⚠️ **워드(.docx)가 없습니다 — 워드는 필수예요.** "
+                       "PDF만으로는 글자·목차 항목이 안 잡힐 수 있습니다(내용이 이미지로 된 PDF가 많음). "
+                       "워드를 꼭 함께 올려주세요.")
 
         st.markdown("")
 
