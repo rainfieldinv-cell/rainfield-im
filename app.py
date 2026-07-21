@@ -1037,9 +1037,24 @@ def _clear_toc_widget_state():
             del st.session_state[k]
 
 
+# 표준 목차(거의 고정) — 화면에서 수정 가능. 소제목 중 일부는 항상 들어가는 항목.
+_DEFAULT_TOC = [
+    {"title": "사모사채 개요",
+     "subs": [{"text": "사모사채 개요", "page": 0, "item": ""}]},
+    {"title": "금융개요",
+     "subs": [{"text": "금융 투자구조도", "page": 0, "item": ""},
+              {"text": "본건 기초자산 금융조건", "page": 0, "item": ""}]},
+    {"title": "본 건 담보개요",
+     "subs": [{"text": "", "page": 0, "item": ""}]},
+    {"title": "Appendix",
+     "subs": [{"text": "", "page": 0, "item": ""}]},
+]
+
+
 def _init_toc_edit(parsed, auto=False):
-    """목차 편집 상태 초기화 — 기본은 빈 4형식(직접 작성). auto=True면 자동 추출 시도."""
-    groups = _build_toc_from_parsed(parsed) if auto else []
+    """목차 편집 상태 초기화 — 기본은 표준 목차(수정 가능). auto=True면 원본에서 자동 추출 시도."""
+    import copy
+    groups = _build_toc_from_parsed(parsed) if auto else copy.deepcopy(_DEFAULT_TOC)
     fmt = max(4, min(5, len(groups) or 4))
     _adjust_groups(groups, fmt)
     st.session_state.toc_edit = {"format": fmt, "groups": groups}
@@ -1097,7 +1112,8 @@ def show_step_toc():
             _clear_toc_widget_state()
             st.rerun()
     with bc2:
-        if st.button("🧹 모두 비우기", use_container_width=True, help="빈 목차로 초기화합니다."):
+        if st.button("🧹 기본 목차로 되돌리기", use_container_width=True,
+                     help="표준 목차(사모사채 개요/금융개요/본 건 담보개요/Appendix)로 초기화합니다."):
             _init_toc_edit(parsed, auto=False)
             _clear_toc_widget_state()
             st.rerun()
@@ -1160,7 +1176,7 @@ def show_step_toc():
                 for si, sub in enumerate(g["subs"]):
                     sk = f"tocsub_{gi}_{si}"
                     st.session_state.setdefault(sk, sub.get("text", ""))
-                    sub["text"] = st.text_input(f"└ 소제목 {si + 1}", key=sk,
+                    sub["text"] = st.text_input(f"└ 소제목 {gi + 1}.{si + 1}", key=sk,
                                                 placeholder="예: (1) 낙찰사례 및 환가 분석")
                     pk = f"tocpage_{gi}_{si}"
                     st.session_state.setdefault(pk, int(sub.get("page", 0) or 0))
