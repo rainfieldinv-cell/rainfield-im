@@ -146,8 +146,9 @@ def show_login():
 # ─────────────────────────────────────────────
 def show_step1():
     st.markdown("## 1단계. 파일 업로드")
-    st.caption("IM 자료를 워드+PDF로 함께 올려주세요. 워드만 올려도 자금판처럼 **PDF로 변환**해 "
-               "페이지·표·이미지를 살립니다. (둘 중 하나만 올려도 됩니다 · PDF / Word(.doc·.docx) 지원)")
+    st.caption("**워드 + PDF를 함께 올려주세요.**  📄 워드(.docx)는 **본문 글자·목차 항목** 추출용, "
+               "🖼️ PDF는 **페이지 사진** 표시용입니다. "
+               "(워드만 올려도 자동으로 PDF로 변환해 사진까지 보여줍니다 · PDF / Word(.doc·.docx) 지원)")
     st.markdown("")
 
     # 파일 업로더 (워드·PDF 함께 업로드 가능 — 자금판과 동일 방식, 워드는 PDF로 변환)
@@ -176,35 +177,47 @@ def show_step1():
             st.metric("합계 크기", f"{total_mb:.2f} MB")
         st.caption("파일: " + " · ".join(f.name for f in uploaded_files))
         if pdf_up and word_up:
-            st.info("워드+PDF 둘 다 올렸습니다. **PDF를 기준**으로 추출하고 표·이미지 위치까지 복원합니다.")
+            st.info("워드+PDF 둘 다 올렸습니다. 📄 **워드로 글자·항목**을 뽑고, 🖼️ **PDF로 페이지 사진**을 보여줍니다.")
 
         st.markdown("")
 
         # 추출 시작 버튼
         if st.button("🔍 추출 시작", type="primary", use_container_width=False):
             try:
-                # 처리할 PDF 확보 — PDF 있으면 그대로, 워드만 있으면 자금판처럼 PDF로 변환
-                proc_pdf = None
-                proc_name = pdf_up.name if pdf_up is not None else (word_up.name if word_up else "")
-                if pdf_up is not None:
-                    proc_pdf = pdf_up.getvalue()
-                elif word_up is not None:
+                # 글자·목차 항목은 '워드(변환 PDF)'에서 정확히 뽑고, 사진은 '원본 PDF'로 보여준다.
+                proc_pdf = None      # 글자/항목 추출용
+                conv_err = None
+                proc_name = word_up.name if word_up is not None else (pdf_up.name if pdf_up else "")
+                if word_up is not None:
                     from modules.preview import convert_word_to_pdf
                     with st.spinner("워드를 PDF로 변환하는 중입니다... (자금판과 동일 방식)"):
                         proc_pdf, conv_err = convert_word_to_pdf(word_up.getvalue(), word_up.name)
-                    if not proc_pdf:
-                        st.warning(f"워드→PDF 변환 실패 — 텍스트만 추출합니다(레이아웃·이미지 제한). 원인: {conv_err}")
+                    if not proc_pdf and pdf_up is not None:      # 변환 실패 시 PDF로
+                        proc_pdf = pdf_up.getvalue()
+                        proc_name = pdf_up.name
+                elif pdf_up is not None:
+                    proc_pdf = pdf_up.getvalue()
 
                 with st.spinner("파일에서 텍스트와 이미지를 추출하는 중입니다..."):
                     if proc_pdf is not None:
                         result = extract_from_pdf(proc_pdf)
                         st.session_state.pdf_bytes = proc_pdf        # 좌표기반 표·이미지 복원용
                         parse_bytes, parse_name = proc_pdf, "converted.pdf"
+                        # 사진 표시용 PDF: 원본 PDF 우선(글자 PDF와 페이지 수 같을 때만 정렬 유지)
+                        view_pdf = proc_pdf
+                        if pdf_up is not None:
+                            _up = pdf_up.getvalue()
+                            if _pdf_page_count(_up) == _pdf_page_count(proc_pdf):
+                                view_pdf = _up
+                        st.session_state.view_pdf_bytes = view_pdf
                     else:
-                        # 변환 실패 폴백: python-docx 텍스트만(레이아웃 제한)
+                        # 변환 실패 폴백: python-docx 텍스트만(레이아웃·사진 제한)
                         result = extract_from_docx(word_up.getvalue())
                         st.session_state.pdf_bytes = None
+                        st.session_state.view_pdf_bytes = None
                         parse_bytes, parse_name = word_up.getvalue(), word_up.name
+                        if conv_err:
+                            st.warning(f"워드→PDF 변환 실패 — 텍스트만 추출(사진 제한). 원인: {conv_err}")
 
                 # 추출 결과 저장
                 st.session_state.extracted_data = result
@@ -223,7 +236,8 @@ def show_step1():
                     st.session_state.parsed_pages = []
 
                 # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3단계 새로 시작)
-                for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page"):
+                for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page",
+                           "view_pdf_bytes"):
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
 
@@ -1023,6 +1037,19 @@ def _init_toc_edit(parsed, auto=False):
     st.session_state.toc_count = fmt
 
 
+def _pdf_page_count(pdf_bytes):
+    """PDF 페이지 수(실패 시 -1) — 사진 PDF와 글자 PDF 정렬 확인용."""
+    try:
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            return doc.page_count
+        finally:
+            doc.close()
+    except Exception:
+        return -1
+
+
 def _render_pdf_page(pdf_bytes, page_num, zoom=2.0):
     """PDF 한 페이지를 PNG bytes로 렌더 — PyMuPDF(fitz), 자금판(전) 방식.
        외부 프로그램(LibreOffice/poppler) 없이 빠르게 렌더. 반환: (png|None, err|None)."""
@@ -1047,7 +1074,8 @@ def show_step_toc():
     parsed = st.session_state.get("parsed_pages") or []
     pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
     total = len(pages_text)
-    pdf_bytes = st.session_state.get("pdf_bytes")
+    pdf_bytes = st.session_state.get("pdf_bytes")           # 글자/항목 소스(워드 변환)
+    view_pdf = st.session_state.get("view_pdf_bytes") or pdf_bytes   # 사진(원본 PDF 우선)
     if "toc_edit" not in st.session_state:
         _init_toc_edit(parsed)
     toc = st.session_state.toc_edit
@@ -1089,7 +1117,7 @@ def show_step_toc():
             # 현재 페이지를 fitz로 즉시 렌더(캐시) — 생성 버튼·다운로드 없이 바로 표시
             cache = st.session_state.setdefault("toc_page_cache", {})
             if cur not in cache:
-                cache[cur] = _render_pdf_page(pdf_bytes, cur)
+                cache[cur] = _render_pdf_page(view_pdf, cur)
             png, err = cache[cur]
             if err:
                 st.error(err)
