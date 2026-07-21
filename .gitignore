@@ -44,3 +44,14 @@ debug.log
 
 # 메모 탭 저장 파일 (런타임 데이터 — repo에 불필요)
 memos.json
+
+# 기밀 IM 원본·참고자료 (로컬에만 보관, 저장소에 올리지 않음)
+예시/
+PDF,워드(원본)/
+변환성공/
+원본보고 만든 PPT/
+*.docx
+*.doc
+*.png
+!templates/*.png
+templates/*_backup.pptx
