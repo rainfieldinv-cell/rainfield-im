@@ -126,3 +126,46 @@ def pdf_pages_to_images(pdf_bytes: bytes, pages=None, dpi: int = 120):
     if not images:
         return [], "변환된 이미지가 없습니다(페이지 번호를 확인하세요)."
     return images, None
+
+
+# ─────────────────────────────────────────────
+# [워드 → PDF 변환] — 자금판(전)처럼 워드를 LibreOffice로 PDF로 바꿔 페이지·레이아웃·이미지를 살린다.
+#   (python-docx 직독은 '1페이지'로 뭉치고 좌표가 없어 IM 재현이 안 됨 → PDF 변환이 필요)
+# ─────────────────────────────────────────────
+def convert_word_to_pdf(word_bytes: bytes, filename: str = "doc.docx"):
+    """워드(.doc/.docx) → PDF bytes. 반환: (pdf_bytes: bytes|None, error: str|None).
+       LibreOffice(soffice) 사용. 실패해도 앱이 죽지 않게 graceful 처리."""
+    if not word_bytes:
+        return None, "워드 파일이 없습니다."
+    soffice = _find_soffice()
+    if not soffice:
+        return None, "LibreOffice(soffice)가 없어 워드→PDF 변환을 못 합니다(로컬 실행 시 LibreOffice 필요)."
+
+    ext = ".doc" if filename.lower().endswith(".doc") else ".docx"
+    tmp = tempfile.mkdtemp(prefix="rf_word_")
+    try:
+        src = os.path.join(tmp, "src" + ext)
+        with open(src, "wb") as f:
+            f.write(word_bytes)
+        env = dict(os.environ)
+        env["HOME"] = tmp
+        try:
+            subprocess.run(
+                [soffice, "--headless", "--norestore", "--nofirststartwizard",
+                 "--convert-to", "pdf", "--outdir", tmp, src],
+                capture_output=True, timeout=240, env=env,
+            )
+        except subprocess.TimeoutExpired:
+            return None, "워드→PDF 변환 시간 초과(240초)."
+        except Exception as e:
+            return None, f"LibreOffice 실행 실패: {e}"
+
+        pdf_path = os.path.join(tmp, "src.pdf")
+        if not os.path.exists(pdf_path):
+            return None, "워드→PDF 변환 실패(PDF가 생성되지 않음)."
+        with open(pdf_path, "rb") as f:
+            return f.read(), None
+    except Exception as e:
+        return None, f"워드→PDF 변환 중 오류: {e}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

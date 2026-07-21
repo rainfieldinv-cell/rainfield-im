@@ -146,24 +146,23 @@ def show_login():
 # ─────────────────────────────────────────────
 def show_step1():
     st.markdown("## 1단계. 파일 업로드")
-    st.caption("IM 자료를 워드+PDF로 함께 올려주세요. PDF가 있으면 표·이미지 위치까지 정확히 복원합니다. "
-               "(둘 중 하나만 올려도 됩니다 · PDF / Word(.docx) 지원)")
+    st.caption("IM 자료를 워드+PDF로 함께 올려주세요. 워드만 올려도 자금판처럼 **PDF로 변환**해 "
+               "페이지·표·이미지를 살립니다. (둘 중 하나만 올려도 됩니다 · PDF / Word(.doc·.docx) 지원)")
     st.markdown("")
 
-    # 파일 업로더 (워드·PDF 함께 업로드 가능 — 자금판과 동일 방식)
+    # 파일 업로더 (워드·PDF 함께 업로드 가능 — 자금판과 동일 방식, 워드는 PDF로 변환)
     uploaded_files = st.file_uploader(
         label="파일을 여기에 끌어다 놓거나 클릭해서 선택하세요 (워드/PDF 함께 가능)",
-        type=["pdf", "docx"],
+        type=["pdf", "docx", "doc"],
         accept_multiple_files=True,
         key="file_uploader_widget",
     )
 
     if uploaded_files:
-        # 워드/PDF 분리 — 추출 주 파일은 PDF 우선(표·이미지 좌표 복원 가능), 없으면 워드
+        # 워드/PDF 분리 — PDF 있으면 PDF로, 없으면 워드를 PDF로 변환해 처리
         pdf_up = next((f for f in uploaded_files if f.name.lower().endswith(".pdf")), None)
         word_up = next((f for f in uploaded_files
                         if f.name.lower().endswith((".docx", ".doc"))), None)
-        primary = pdf_up or word_up
 
         # 올린 파일 정보 표시
         total_mb = sum(f.size for f in uploaded_files) / (1024 * 1024)
@@ -183,31 +182,42 @@ def show_step1():
 
         # 추출 시작 버튼
         if st.button("🔍 추출 시작", type="primary", use_container_width=False):
-            primary_bytes = primary.getvalue()
-            file_type = get_file_type(primary.name)
-
             try:
+                # 처리할 PDF 확보 — PDF 있으면 그대로, 워드만 있으면 자금판처럼 PDF로 변환
+                proc_pdf = None
+                proc_name = pdf_up.name if pdf_up is not None else (word_up.name if word_up else "")
+                if pdf_up is not None:
+                    proc_pdf = pdf_up.getvalue()
+                elif word_up is not None:
+                    from modules.preview import convert_word_to_pdf
+                    with st.spinner("워드를 PDF로 변환하는 중입니다... (자금판과 동일 방식)"):
+                        proc_pdf, conv_err = convert_word_to_pdf(word_up.getvalue(), word_up.name)
+                    if not proc_pdf:
+                        st.warning(f"워드→PDF 변환 실패 — 텍스트만 추출합니다(레이아웃·이미지 제한). 원인: {conv_err}")
+
                 with st.spinner("파일에서 텍스트와 이미지를 추출하는 중입니다..."):
-                    if file_type == "pdf":
-                        result = extract_from_pdf(primary_bytes)
+                    if proc_pdf is not None:
+                        result = extract_from_pdf(proc_pdf)
+                        st.session_state.pdf_bytes = proc_pdf        # 좌표기반 표·이미지 복원용
+                        parse_bytes, parse_name = proc_pdf, "converted.pdf"
                     else:
-                        result = extract_from_docx(primary_bytes)
+                        # 변환 실패 폴백: python-docx 텍스트만(레이아웃 제한)
+                        result = extract_from_docx(word_up.getvalue())
+                        st.session_state.pdf_bytes = None
+                        parse_bytes, parse_name = word_up.getvalue(), word_up.name
 
                 # 추출 결과 저장
                 st.session_state.extracted_data = result
-                st.session_state.uploaded_file  = primary.name
-                # ★업로드된 PDF가 있으면 그 bytes 보관 — 좌표기반 사진/표복원(조감도·매매사례)에 사용
-                #   (워드가 주 파일이어도 PDF를 함께 올렸으면 좌표 복원 가능)
-                st.session_state.pdf_bytes = pdf_up.getvalue() if pdf_up is not None else None
+                st.session_state.uploaded_file  = proc_name
 
                 # 사업명 자동 감지
                 detected = detect_business_name(result["pages_text"])
                 st.session_state.business_name = detected
 
-                # 슬라이드 구조 파싱 (content_parser)
+                # 슬라이드 구조 파싱 (content_parser) — 변환된 PDF 기준
                 try:
                     st.session_state.parsed_pages = parse_document_from_bytes(
-                        primary_bytes, primary.name
+                        parse_bytes, parse_name
                     )
                 except Exception:
                     st.session_state.parsed_pages = []
