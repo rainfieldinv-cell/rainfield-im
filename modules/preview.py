@@ -89,3 +89,40 @@ def ppt_to_images(ppt_bytes: bytes, max_pages=None, dpi: int = 120):
         return [], f"미리보기 생성 중 오류: {e}"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────
+# [원본 PDF 페이지 렌더] — ppt_to_images와 동일하게 pdf2image 사용(원본 목차 이미지 확인용).
+#   ★기존 ppt_to_images는 건드리지 않고, 원본 PDF 페이지 렌더 전용 함수를 별도 추가.
+# ─────────────────────────────────────────────
+def pdf_pages_to_images(pdf_bytes: bytes, pages=None, dpi: int = 120):
+    """원본 PDF의 지정 페이지를 PNG 이미지로 변환 → (images: list[bytes], error: str|None).
+
+    pages: 1-based 페이지 번호 리스트(None이면 전체). 실패해도 앱이 죽지 않게 graceful 처리.
+    """
+    if not pdf_bytes:
+        return [], "원본 PDF가 없습니다. 1단계에서 PDF를 함께 올려주세요."
+    try:
+        from pdf2image import convert_from_bytes
+    except Exception as e:
+        return [], f"pdf2image 임포트 실패(requirements.txt 확인): {e}"
+
+    images = []
+    try:
+        if not pages:
+            for im in convert_from_bytes(pdf_bytes, dpi=dpi):
+                buf = io.BytesIO()
+                im.save(buf, format="PNG")
+                images.append(buf.getvalue())
+        else:
+            for p in pages:
+                for im in convert_from_bytes(pdf_bytes, dpi=dpi, first_page=p, last_page=p):
+                    buf = io.BytesIO()
+                    im.save(buf, format="PNG")
+                    images.append(buf.getvalue())
+    except Exception as e:
+        return [], f"PDF→이미지 변환 실패(poppler-utils 필요): {e}"
+
+    if not images:
+        return [], "변환된 이미지가 없습니다(페이지 번호를 확인하세요)."
+    return images, None

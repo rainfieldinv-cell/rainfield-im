@@ -212,8 +212,8 @@ def show_step1():
                 except Exception:
                     st.session_state.parsed_pages = []
 
-                # 새 문서이므로 이전 목차 편집 상태 초기화(3단계에서 새로 자동구성)
-                for _k in ("toc_edit", "toc_hashtags"):
+                # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3·4단계 새로 시작)
+                for _k in ("toc_edit", "toc_hashtags", "toc_img_render", "toc_img_pages"):
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
 
@@ -464,7 +464,7 @@ def show_step3():
             st.rerun()
         return
 
-    st.markdown("## 4단계. 레이아웃 및 표지 미리 생성")
+    st.markdown("## 5단계. 레이아웃 및 표지 미리 생성")
     st.caption("레이아웃을 선택하고 날짜·표지 이미지를 지정한 뒤 표지를 미리 생성해보세요.")
     st.markdown("")
 
@@ -758,12 +758,12 @@ def show_step3():
 
     with col_prev:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 3
+            st.session_state.current_step = 4
             st.rerun()
 
     with col_next:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 5
+            st.session_state.current_step = 6
             st.rerun()
 
 
@@ -779,7 +779,7 @@ def show_step4():
             st.rerun()
         return
 
-    st.markdown("## 5단계. 전체 PPT 생성")
+    st.markdown("## 6단계. 전체 PPT 생성")
     st.caption("지금까지 설정한 내용으로 완성된 제안서 PPT를 생성합니다.")
     st.markdown("")
 
@@ -922,7 +922,7 @@ def show_step4():
     # (D) 하단 네비게이션
     # ────────────────────────────────────────
     if st.button("← 이전 단계 (설정 변경)", use_container_width=False):
-        st.session_state.current_step = 4
+        st.session_state.current_step = 5
         st.rerun()
 
 
@@ -1088,6 +1088,100 @@ def show_step_toc():
 
 
 # ─────────────────────────────────────────────
+# [4단계: 원본 목차 이미지 확인] — 원본 IM 목차 페이지를 이미지로(pdf2image) + 내 구성 비교(읽기전용)
+# ─────────────────────────────────────────────
+def _find_toc_pages(pages_text):
+    """원본 텍스트에서 '목차' 페이지(1-based) 추정 — 상단에 '목차/CONTENTS' 표기가 있는 페이지."""
+    hits = []
+    for i, t in enumerate(pages_text or [], start=1):
+        head = (t or "")[:300]
+        low = head.lower()
+        if "목차" in head or "contents" in low or "table of contents" in low:
+            hits.append(i)
+    return hits
+
+
+def show_step_toc_image():
+    st.markdown("## 4단계. 원본 목차 이미지 확인")
+    st.caption("원본 IM의 목차 페이지를 이미지로 보고, 3단계에서 만든 목차 구성과 비교합니다. "
+               "(이 단계는 확인만 — 편집은 3단계에서. 렌더링이 무거워 버튼을 눌러야 변환합니다.)")
+    st.markdown("")
+
+    pdf_bytes = st.session_state.get("pdf_bytes")
+    pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
+    detected = _find_toc_pages(pages_text)
+    default_pages = ",".join(str(p) for p in detected) if detected else "1"
+
+    if not pdf_bytes:
+        st.warning("원본 PDF가 없습니다. 원본 목차 이미지를 보려면 1단계에서 **PDF를 함께 업로드**하세요. "
+                   "(워드만 올린 경우 이미지 렌더링 불가)")
+    else:
+        if detected:
+            st.info(f"원본에서 목차로 추정되는 페이지: **{', '.join(map(str, detected))}p** "
+                    f"(총 {len(pages_text)}p 중)")
+        else:
+            st.info("목차 페이지를 자동으로 못 찾았습니다. 아래에 페이지 번호를 직접 지정하세요.")
+
+        pages_str = st.text_input("렌더링할 페이지 (쉼표로 여러 개)", value=default_pages,
+                                  key="toc_img_pages", help="예: 2,3")
+        if st.button("🖼️ 목차 이미지 생성", type="primary"):
+            try:
+                pages = [int(x) for x in re.split(r"[,\s]+", pages_str.strip()) if x]
+            except ValueError:
+                pages = []
+            if not pages:
+                st.error("페이지 번호를 올바르게 입력하세요. (예: 2,3)")
+            else:
+                from modules.preview import pdf_pages_to_images
+                with st.spinner("원본 목차 페이지를 이미지로 변환하는 중입니다..."):
+                    imgs, err = pdf_pages_to_images(pdf_bytes, pages)
+                st.session_state.toc_img_render = {"imgs": imgs, "err": err, "pages": pages}
+
+    st.markdown("---")
+    left, right = st.columns([3, 2])
+    with left:
+        st.markdown("#### 📄 원본 목차 이미지")
+        render = st.session_state.get("toc_img_render")
+        if render is None:
+            st.caption("‘🖼️ 목차 이미지 생성’을 누르면 여기에 표시됩니다.")
+        elif render["err"]:
+            st.error(f"이미지 생성 실패 — {render['err']}")
+        elif render["imgs"]:
+            for p, png in zip(render["pages"], render["imgs"]):
+                st.markdown(f"**원본 {p}p**")
+                st.image(png, use_container_width=True)
+        else:
+            st.warning("표시할 이미지가 없습니다.")
+    with right:
+        st.markdown("#### 📝 내가 만든 목차 구성 (3단계)")
+        toc = st.session_state.get("toc_edit")
+        if not toc or not toc.get("groups"):
+            st.caption("3단계에서 만든 목차 구성이 없습니다.")
+        else:
+            st.caption(f"형식: {toc.get('format')}형식 · 대분류 {len(toc['groups'])}개")
+            for gi, g in enumerate(toc["groups"], start=1):
+                st.markdown(f"**{gi}. {g.get('title') or '(제목 없음)'}**")
+                for sub in g.get("subs", []):
+                    txt = sub.get("text") or "(소제목 없음)"
+                    tags = sub.get("tags") or []
+                    line = f"- {txt}"
+                    if tags:
+                        line += "  " + " ".join(f"`#{t}`" for t in tags)
+                    st.markdown(line)
+
+    st.markdown("---")
+    nc1, _ns, nc2 = st.columns([2, 4, 2])
+    with nc1:
+        if st.button("← 이전 단계", use_container_width=True):
+            st.session_state.current_step = 3
+            st.rerun()
+    with nc2:
+        if st.button("다음 단계 →", use_container_width=True, type="primary"):
+            st.session_state.current_step = 5
+            st.rerun()
+
+
+# ─────────────────────────────────────────────
 # ['처음으로' — 현재 작업 전체 초기화 후 1단계로]
 # ─────────────────────────────────────────────
 def _reset_to_start():
@@ -1149,8 +1243,10 @@ def show_conversion_tab():
     elif st.session_state.current_step == 3:
         show_step_toc()
     elif st.session_state.current_step == 4:
-        show_step3()
+        show_step_toc_image()
     elif st.session_state.current_step == 5:
+        show_step3()
+    elif st.session_state.current_step == 6:
         show_step4()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
