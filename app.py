@@ -474,7 +474,7 @@ def show_step3():
             st.rerun()
         return
 
-    st.markdown("## 5단계. 레이아웃 및 표지 미리 생성")
+    st.markdown("## 4단계. 레이아웃 및 표지 미리 생성")
     st.caption("레이아웃을 선택하고 날짜·표지 이미지를 지정한 뒤 표지를 미리 생성해보세요.")
     st.markdown("")
 
@@ -768,12 +768,12 @@ def show_step3():
 
     with col_prev:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 4
+            st.session_state.current_step = 3
             st.rerun()
 
     with col_next:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 6
+            st.session_state.current_step = 5
             st.rerun()
 
 
@@ -789,7 +789,7 @@ def show_step4():
             st.rerun()
         return
 
-    st.markdown("## 6단계. 전체 PPT 생성")
+    st.markdown("## 5단계. 전체 PPT 생성")
     st.caption("지금까지 설정한 내용으로 완성된 제안서 PPT를 생성합니다.")
     st.markdown("")
 
@@ -932,7 +932,7 @@ def show_step4():
     # (D) 하단 네비게이션
     # ────────────────────────────────────────
     if st.button("← 이전 단계 (설정 변경)", use_container_width=False):
-        st.session_state.current_step = 5
+        st.session_state.current_step = 4
         st.rerun()
 
 
@@ -954,6 +954,9 @@ def _build_toc_from_parsed(parsed_pages):
     for pd in (parsed_pages or []):
         sec = _clean_toc_text(pd.get("section_title") or pd.get("section_label"))
         sub = _clean_toc_text(pd.get("subtitle"))
+        # 긴 본문 문장은 목차 항목이 아니므로 제외(제목/소제목다운 짧은 문구만)
+        sec = sec if _is_toc_heading(sec) else ""
+        sub = sub if _is_toc_heading(sub) else ""
         if sec:
             sections.setdefault(sec, [])
             if sub and sub != sec and sub not in sections[sec]:
@@ -965,6 +968,16 @@ def _build_toc_from_parsed(parsed_pages):
     groups = [{"title": k, "subs": [{"text": s, "tags": []} for s in v]}
               for k, v in sections.items()]
     return groups, tags
+
+
+def _is_toc_heading(t):
+    """목차 제목/소제목다운 '짧은 문구'인지 판정 — 긴 본문 문장/서술형은 제외."""
+    t = (t or "").strip()
+    if not (0 < len(t) <= 45):
+        return False
+    if re.search(r"(습니다|입니다|합니다|이다|였다|된다|한다|하였다)\.?$", t):
+        return False
+    return True
 
 
 def _adjust_groups(groups, n):
@@ -994,98 +1007,118 @@ def _init_toc_edit(parsed):
 
 def show_step_toc():
     st.markdown("## 3단계. 목차 구성")
-    st.caption("자동 추출된 목차를 편집하세요. 대분류 제목·소제목을 직접 수정하고, 소제목마다 "
-               "원본 IM 목차 항목(해시태그)을 최대 3개까지 매치할 수 있습니다. "
-               "(이 단계는 구성·매치만 저장합니다. 이미지·재배치는 다음 단계에서)")
-    st.markdown("")
+    st.caption("왼쪽에 원본 IM의 목차 이미지를 띄우고, 오른쪽에서 목차 제목·소제목을 만드세요. "
+               "소제목마다 원본 목차 항목(해시태그)을 최대 3개까지 매치할 수 있습니다. "
+               "(이 단계는 구성·매치만 저장 · 재배치/생성은 다음 단계)")
 
     parsed = st.session_state.get("parsed_pages") or []
     if "toc_edit" not in st.session_state:
         _init_toc_edit(parsed)
-
     toc = st.session_state.toc_edit
     hashtags = st.session_state.get("toc_hashtags", [])
 
-    # 자동 목차 다시 불러오기
     if st.button("🔄 자동 추출 목차 다시 불러오기", help="편집 내용을 버리고 원본에서 다시 구성합니다."):
         _init_toc_edit(parsed)
         _clear_toc_widget_state()
         st.rerun()
 
-    # ── 4형식 / 5형식 선택 ──
-    st.markdown("#### 목차 형식 (대분류 개수)")
-    fc1, fc2, _fc = st.columns([1, 1, 4])
-    cur_fmt = toc["format"]
-    with fc1:
-        if st.button("4형식", type=("primary" if cur_fmt == 4 else "secondary"),
-                     use_container_width=True):
-            toc["format"] = 4
-            _adjust_groups(toc["groups"], 4)
-            st.session_state.toc_count = 4
+    img_col, form_col = st.columns([1, 1])
+
+    # ── 왼쪽: 원본 IM 목차 이미지 (버튼 클릭 시에만 변환) ──
+    with img_col:
+        st.markdown("#### 📄 원본 IM 목차 이미지")
+        pdf_bytes = st.session_state.get("pdf_bytes")
+        pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
+        detected = _find_toc_pages(pages_text)
+        default_pages = ",".join(str(p) for p in detected) if detected else "1"
+        if not pdf_bytes:
+            st.warning("원본 PDF가 없어 이미지를 못 띄웁니다. 1단계에서 PDF(또는 워드→자동 PDF변환)로 올리세요.")
+        else:
+            if detected:
+                st.caption(f"목차로 추정되는 페이지: {', '.join(map(str, detected))}p")
+            else:
+                st.caption("목차 페이지 자동감지 실패 — 아래에 직접 지정하세요.")
+            pages_str = st.text_input("표시할 페이지(쉼표)", value=default_pages,
+                                      key="toc_img_pages", help="예: 2,3")
+            if st.button("🖼️ 목차 이미지 생성", type="primary"):
+                try:
+                    pages = [int(x) for x in re.split(r"[,\s]+", pages_str.strip()) if x]
+                except ValueError:
+                    pages = []
+                if not pages:
+                    st.error("페이지 번호를 올바르게 입력하세요. (예: 2,3)")
+                else:
+                    from modules.preview import pdf_pages_to_images
+                    with st.spinner("원본 목차 페이지를 이미지로 변환하는 중..."):
+                        imgs, err = pdf_pages_to_images(pdf_bytes, pages)
+                    st.session_state.toc_img_render = {"imgs": imgs, "err": err, "pages": pages}
+            render = st.session_state.get("toc_img_render")
+            if render is None:
+                st.info("‘🖼️ 목차 이미지 생성’을 누르면 원본 목차가 여기에 표시됩니다.")
+            elif render["err"]:
+                st.error(f"이미지 생성 실패 — {render['err']}")
+            elif render["imgs"]:
+                for p, png in zip(render["pages"], render["imgs"]):
+                    st.markdown(f"**원본 {p}p**")
+                    st.image(png, use_container_width=True)
+            else:
+                st.warning("표시할 이미지가 없습니다.")
+
+    # ── 오른쪽: 목차 편집 폼 (컬럼 2중첩 방지 → 세로로 쌓음) ──
+    with form_col:
+        st.markdown("#### 📝 목차 구성 편집")
+        fmt_sel = st.radio("목차 형식 (대분류 개수)", [4, 5],
+                           index=(0 if toc["format"] == 4 else 1),
+                           horizontal=True, format_func=lambda x: f"{x}형식",
+                           key="toc_fmt_radio")
+        if fmt_sel != toc["format"]:
+            toc["format"] = fmt_sel
+            _adjust_groups(toc["groups"], fmt_sel)
+            st.session_state.toc_count = fmt_sel
             _clear_toc_widget_state()
             st.rerun()
-    with fc2:
-        if st.button("5형식", type=("primary" if cur_fmt == 5 else "secondary"),
-                     use_container_width=True):
-            toc["format"] = 5
-            _adjust_groups(toc["groups"], 5)
-            st.session_state.toc_count = 5
+
+        if not hashtags:
+            st.caption("원본 목차 항목(해시태그) 자동추출 없음 — 소제목은 직접 입력하세요.")
+
+        pending = {"del": None, "add": None}
+        for gi, g in enumerate(toc["groups"]):
+            with st.container(border=True):
+                tk = f"toctitle_{gi}"
+                st.session_state.setdefault(tk, g.get("title", ""))
+                g["title"] = st.text_input(f"목차 {gi + 1} 제목", key=tk,
+                                           placeholder="예: 01 사모사채 개요")
+                for si, sub in enumerate(g["subs"]):
+                    sk = f"tocsub_{gi}_{si}"
+                    st.session_state.setdefault(sk, sub.get("text", ""))
+                    sub["text"] = st.text_input(f"└ 소제목 {si + 1}", key=sk,
+                                                placeholder="소제목 입력")
+                    gk = f"toctags_{gi}_{si}"
+                    vd = [t for t in sub.get("tags", []) if t in hashtags][:3]
+                    st.session_state.setdefault(gk, vd)
+                    sub["tags"] = st.multiselect(
+                        "원본 항목 매치(최대 3)", options=hashtags, key=gk,
+                        max_selections=3, placeholder="원본 목차 항목 골라 매치")
+                    if st.button("🗑 소제목 삭제", key=f"tocdel_{gi}_{si}"):
+                        pending["del"] = (gi, si)
+                if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
+                    pending["add"] = gi
+
+        if pending["del"] is not None:
+            gi, si = pending["del"]
+            toc["groups"][gi]["subs"].pop(si)
             _clear_toc_widget_state()
             st.rerun()
-    st.caption(f"현재: 목차 대분류 **{cur_fmt}개**")
-    st.markdown("---")
+        if pending["add"] is not None:
+            toc["groups"][pending["add"]]["subs"].append({"text": "", "tags": []})
+            _clear_toc_widget_state()
+            st.rerun()
 
-    if not hashtags:
-        st.info("원본 목차 항목(해시태그)을 찾지 못했습니다. 소제목은 직접 입력하세요.")
-
-    # ── 목차 편집 폼 (제목 + 소제목들 + 해시태그 매치) ──
-    pending = {"del": None, "add": None}   # 렌더 후 일괄 처리(부분 읽기 방지)
-    for gi, g in enumerate(toc["groups"]):
-        with st.container(border=True):
-            tk = f"toctitle_{gi}"
-            st.session_state.setdefault(tk, g.get("title", ""))
-            g["title"] = st.text_input(f"목차 {gi + 1} 제목", key=tk,
-                                       placeholder="예: 01 사모사채 개요")
-            st.caption("소제목")
-            for si, sub in enumerate(g["subs"]):
-                c1, c2, c3 = st.columns([4, 4, 1])
-                sk = f"tocsub_{gi}_{si}"
-                st.session_state.setdefault(sk, sub.get("text", ""))
-                sub["text"] = c1.text_input("소제목", key=sk,
-                                            label_visibility="collapsed",
-                                            placeholder="소제목 입력")
-                gk = f"toctags_{gi}_{si}"
-                valid_default = [t for t in sub.get("tags", []) if t in hashtags][:3]
-                st.session_state.setdefault(gk, valid_default)
-                sub["tags"] = c2.multiselect(
-                    "원본 매치(해시태그)", options=hashtags,
-                    key=gk, max_selections=3, label_visibility="collapsed",
-                    placeholder="원본 항목 매치(최대 3)")
-                if c3.button("🗑", key=f"tocdel_{gi}_{si}", help="소제목 삭제"):
-                    pending["del"] = (gi, si)
-                if sub["tags"]:
-                    c1.caption("매치: " + "  ".join(f"#{t}" for t in sub["tags"]))
-            if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
-                pending["add"] = gi
-
-    # 구조 변경은 전체 렌더(값 읽기) 뒤에 적용 → 편집 유실 방지
-    if pending["del"] is not None:
-        gi, si = pending["del"]
-        toc["groups"][gi]["subs"].pop(si)
-        _clear_toc_widget_state()
-        st.rerun()
-    if pending["add"] is not None:
-        toc["groups"][pending["add"]]["subs"].append({"text": "", "tags": []})
-        _clear_toc_widget_state()
-        st.rerun()
-
+    # ── 저장 요약 + 네비게이션 (전체 폭) ──
     st.markdown("---")
     total_subs = sum(len(g["subs"]) for g in toc["groups"])
     total_tags = sum(len(s["tags"]) for g in toc["groups"] for s in g["subs"])
-    st.success(f"저장됨 · 대분류 {toc['format']}개 · 소제목 {total_subs}개 · 매치 {total_tags}건 "
-               "(다음 단계로 넘어가도 유지됩니다)")
-
-    # ── 네비게이션 ──
+    st.success(f"저장됨 · 대분류 {toc['format']}개 · 소제목 {total_subs}개 · 매치 {total_tags}건")
     nc1, _ns, nc2 = st.columns([2, 4, 2])
     with nc1:
         if st.button("← 이전 단계", use_container_width=True):
@@ -1097,9 +1130,6 @@ def show_step_toc():
             st.rerun()
 
 
-# ─────────────────────────────────────────────
-# [4단계: 원본 목차 이미지 확인] — 원본 IM 목차 페이지를 이미지로(pdf2image) + 내 구성 비교(읽기전용)
-# ─────────────────────────────────────────────
 def _find_toc_pages(pages_text):
     """원본 텍스트에서 '목차' 페이지(1-based) 추정 — 상단에 '목차/CONTENTS' 표기가 있는 페이지."""
     hits = []
@@ -1109,86 +1139,6 @@ def _find_toc_pages(pages_text):
         if "목차" in head or "contents" in low or "table of contents" in low:
             hits.append(i)
     return hits
-
-
-def show_step_toc_image():
-    st.markdown("## 4단계. 원본 목차 이미지 확인")
-    st.caption("원본 IM의 목차 페이지를 이미지로 보고, 3단계에서 만든 목차 구성과 비교합니다. "
-               "(이 단계는 확인만 — 편집은 3단계에서. 렌더링이 무거워 버튼을 눌러야 변환합니다.)")
-    st.markdown("")
-
-    pdf_bytes = st.session_state.get("pdf_bytes")
-    pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
-    detected = _find_toc_pages(pages_text)
-    default_pages = ",".join(str(p) for p in detected) if detected else "1"
-
-    if not pdf_bytes:
-        st.warning("원본 PDF가 없습니다. 원본 목차 이미지를 보려면 1단계에서 **PDF를 함께 업로드**하세요. "
-                   "(워드만 올린 경우 이미지 렌더링 불가)")
-    else:
-        if detected:
-            st.info(f"원본에서 목차로 추정되는 페이지: **{', '.join(map(str, detected))}p** "
-                    f"(총 {len(pages_text)}p 중)")
-        else:
-            st.info("목차 페이지를 자동으로 못 찾았습니다. 아래에 페이지 번호를 직접 지정하세요.")
-
-        pages_str = st.text_input("렌더링할 페이지 (쉼표로 여러 개)", value=default_pages,
-                                  key="toc_img_pages", help="예: 2,3")
-        if st.button("🖼️ 목차 이미지 생성", type="primary"):
-            try:
-                pages = [int(x) for x in re.split(r"[,\s]+", pages_str.strip()) if x]
-            except ValueError:
-                pages = []
-            if not pages:
-                st.error("페이지 번호를 올바르게 입력하세요. (예: 2,3)")
-            else:
-                from modules.preview import pdf_pages_to_images
-                with st.spinner("원본 목차 페이지를 이미지로 변환하는 중입니다..."):
-                    imgs, err = pdf_pages_to_images(pdf_bytes, pages)
-                st.session_state.toc_img_render = {"imgs": imgs, "err": err, "pages": pages}
-
-    st.markdown("---")
-    left, right = st.columns([3, 2])
-    with left:
-        st.markdown("#### 📄 원본 목차 이미지")
-        render = st.session_state.get("toc_img_render")
-        if render is None:
-            st.caption("‘🖼️ 목차 이미지 생성’을 누르면 여기에 표시됩니다.")
-        elif render["err"]:
-            st.error(f"이미지 생성 실패 — {render['err']}")
-        elif render["imgs"]:
-            for p, png in zip(render["pages"], render["imgs"]):
-                st.markdown(f"**원본 {p}p**")
-                st.image(png, use_container_width=True)
-        else:
-            st.warning("표시할 이미지가 없습니다.")
-    with right:
-        st.markdown("#### 📝 내가 만든 목차 구성 (3단계)")
-        toc = st.session_state.get("toc_edit")
-        if not toc or not toc.get("groups"):
-            st.caption("3단계에서 만든 목차 구성이 없습니다.")
-        else:
-            st.caption(f"형식: {toc.get('format')}형식 · 대분류 {len(toc['groups'])}개")
-            for gi, g in enumerate(toc["groups"], start=1):
-                st.markdown(f"**{gi}. {g.get('title') or '(제목 없음)'}**")
-                for sub in g.get("subs", []):
-                    txt = sub.get("text") or "(소제목 없음)"
-                    tags = sub.get("tags") or []
-                    line = f"- {txt}"
-                    if tags:
-                        line += "  " + " ".join(f"`#{t}`" for t in tags)
-                    st.markdown(line)
-
-    st.markdown("---")
-    nc1, _ns, nc2 = st.columns([2, 4, 2])
-    with nc1:
-        if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 3
-            st.rerun()
-    with nc2:
-        if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 5
-            st.rerun()
 
 
 # ─────────────────────────────────────────────
@@ -1253,10 +1203,8 @@ def show_conversion_tab():
     elif st.session_state.current_step == 3:
         show_step_toc()
     elif st.session_state.current_step == 4:
-        show_step_toc_image()
-    elif st.session_state.current_step == 5:
         show_step3()
-    elif st.session_state.current_step == 6:
+    elif st.session_state.current_step == 5:
         show_step4()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
