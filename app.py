@@ -260,7 +260,8 @@ def show_step1():
 
                 # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3단계 새로 시작)
                 for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page",
-                           "view_pdf_bytes", "highlight_cards", "hl_img_render"):
+                           "view_pdf_bytes", "highlight_cards", "hl_img_render",
+                           "hl_done_render"):
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
 
@@ -500,7 +501,7 @@ def show_step3():
             st.rerun()
         return
 
-    st.markdown("## 5단계. 레이아웃 및 표지 미리 생성")
+    st.markdown("## 6단계. 레이아웃 및 표지 미리 생성")
     st.caption("레이아웃을 선택하고 날짜·표지 이미지를 지정한 뒤 표지를 미리 생성해보세요.")
     st.markdown("")
 
@@ -794,12 +795,12 @@ def show_step3():
 
     with col_prev:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 4
+            st.session_state.current_step = 5
             st.rerun()
 
     with col_next:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 6
+            st.session_state.current_step = 7
             st.rerun()
 
 
@@ -815,7 +816,7 @@ def show_step4():
             st.rerun()
         return
 
-    st.markdown("## 6단계. 전체 PPT 생성")
+    st.markdown("## 7단계. 전체 PPT 생성")
     st.caption("지금까지 설정한 내용으로 완성된 제안서 PPT를 생성합니다.")
     st.markdown("")
 
@@ -958,7 +959,7 @@ def show_step4():
     # (D) 하단 네비게이션
     # ────────────────────────────────────────
     if st.button("← 이전 단계 (설정 변경)", use_container_width=False):
-        st.session_state.current_step = 5
+        st.session_state.current_step = 6
         st.rerun()
 
 
@@ -1394,6 +1395,97 @@ def show_step_highlight():
 
 
 # ─────────────────────────────────────────────
+# [5단계: 하이라이트 완성본 확인] — 카드 3개로 ES 슬라이드 생성 → 이미지로 확인(다운로드 X)
+# ─────────────────────────────────────────────
+def _cards_to_sections(cards):
+    """편집 카드 → build_executive_summary_slide가 받는 sections 형식으로 변환(읽기만)."""
+    out = []
+    for c in (cards or [])[:3]:
+        out.append({
+            "title":    (c.get("title") or "").strip(),
+            "subtitle": ((c.get("subtitle") or "").strip() if c.get("use_sub") else ""),
+            "content":  (c.get("content") or "").strip(),
+        })
+    return out
+
+
+def _build_highlight_ppt_bytes(cards, business_name=""):
+    """카드 3개로 Executive Summary 슬라이드 1장짜리 PPT bytes 생성(확인용).
+       ★기존 build_executive_summary_slide를 그대로 호출 — 본문 생성 로직 미수정."""
+    import io as _io
+    from modules.page_builders import (
+        create_presentation_from_template,
+        build_executive_summary_slide,
+        finalize_presentation,
+    )
+    prs = create_presentation_from_template()
+    template_count = len(prs.slides)
+    build_executive_summary_slide(prs, _cards_to_sections(cards), business_name)
+    finalize_presentation(prs, template_count)   # 템플릿 슬라이드 제거 → ES 1장만 남김
+    buf = _io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+def show_step_highlight_preview():
+    st.markdown("## 5단계. 하이라이트 완성본 확인")
+    st.caption("4단계에서 만든 카드 3개로 Executive Summary 슬라이드를 만들어 이미지로 보여줍니다. "
+               "(화면 확인용 · 다운로드 없음 · 수정은 이전 단계에서)")
+
+    cards = st.session_state.get("highlight_cards")
+    if not cards:
+        st.warning("4단계에서 하이라이트 카드를 먼저 작성해주세요.")
+        if st.button("← 4단계로"):
+            st.session_state.current_step = 4
+            st.rerun()
+        return
+
+    # 현재 카드 내용(읽기 전용 확인)
+    with st.expander("현재 카드 내용 (읽기 전용)", expanded=False):
+        for i, c in enumerate(cards, start=1):
+            sub = (f"  ·  부제목: {c.get('subtitle')}"
+                   if c.get("use_sub") and c.get("subtitle") else "")
+            st.markdown(f"**카드 {i}. {c.get('title') or '(제목 없음)'}**{sub}")
+            if c.get("content"):
+                st.caption(c["content"][:250])
+
+    if st.button("🖼️ 완성본 이미지 생성", type="primary"):
+        try:
+            with st.spinner("완성본 슬라이드를 만드는 중..."):
+                ppt_b = _build_highlight_ppt_bytes(
+                    cards, st.session_state.get("business_name", ""))
+            from modules.preview import ppt_to_images
+            with st.spinner("슬라이드를 이미지로 변환하는 중... (LibreOffice)"):
+                imgs, err = ppt_to_images(ppt_b, max_pages=1)
+            st.session_state.hl_done_render = {"imgs": imgs, "err": err}
+        except Exception as e:
+            st.session_state.hl_done_render = {"imgs": [], "err": f"완성본 생성 실패: {e}"}
+
+    rend = st.session_state.get("hl_done_render")
+    if not rend:
+        st.info("‘🖼️ 완성본 이미지 생성’을 누르면 완성된 Executive Summary가 여기에 표시됩니다.")
+    elif rend.get("err"):
+        st.error(f"이미지 생성 실패 — {rend['err']}")
+    elif rend.get("imgs"):
+        st.markdown("#### ✅ 완성본 Executive Summary")
+        st.image(rend["imgs"][0], use_container_width=True)
+    else:
+        st.warning("표시할 이미지가 없습니다.")
+
+    st.markdown("---")
+    nc1, _n, nc2 = st.columns([2, 4, 2])
+    with nc1:
+        if st.button("← 이전 (수정하러 가기)", use_container_width=True):
+            st.session_state.pop("hl_done_render", None)   # 수정하면 완성본은 다시 만들도록
+            st.session_state.current_step = 4
+            st.rerun()
+    with nc2:
+        if st.button("다음 단계 →", use_container_width=True, type="primary"):
+            st.session_state.current_step = 6
+            st.rerun()
+
+
+# ─────────────────────────────────────────────
 # ['처음으로' — 현재 작업 전체 초기화 후 1단계로]
 # ─────────────────────────────────────────────
 def _reset_to_start():
@@ -1457,8 +1549,10 @@ def show_conversion_tab():
     elif st.session_state.current_step == 4:
         show_step_highlight()
     elif st.session_state.current_step == 5:
-        show_step3()
+        show_step_highlight_preview()
     elif st.session_state.current_step == 6:
+        show_step3()
+    elif st.session_state.current_step == 7:
         show_step4()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
