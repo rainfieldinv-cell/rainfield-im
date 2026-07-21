@@ -953,6 +953,24 @@ def _is_toc_heading(t):
     return True
 
 
+# 항목 머리글 패턴: (1) / 1) / 1. / 1.1 / ①~⑳ / ■▪●▶ / (가) / 가. / I. II.
+_ITEM_MARK = re.compile(
+    r"^\s*(\(?\d{1,2}[\).]|\d{1,2}\.\d{1,2}|[①-⑳]|[■▪●◦▶]|\([가-힣]\)|[가-힣]\.|[IVXivx]{1,4}\.)")
+
+
+def _page_items(pages_text, page):
+    """지정 페이지의 텍스트에서 '항목 머리글'로 시작하는 짧은 줄만 뽑음(그 페이지의 (1)(2)(3)…)."""
+    if not pages_text or not (1 <= page <= len(pages_text)):
+        return []
+    out, seen = [], set()
+    for ln in (pages_text[page - 1] or "").split("\n"):
+        s = re.sub(r"\s+", " ", ln.strip())
+        if 2 < len(s) <= 60 and _ITEM_MARK.match(s) and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
 def _build_toc_from_parsed(parsed_pages):
     """parsed_pages로 목차 자동 추출 시도(best-effort) → groups.
        ※IM마다 섹션/소제목 형식이 제각각이고 러닝헤더(사업명)가 섞여 신뢰도 낮음 → '시도'용.
@@ -976,14 +994,14 @@ def _build_toc_from_parsed(parsed_pages):
             sections.setdefault(sec, [])
             if sub and sub != sec and sub not in sections[sec]:
                 sections[sec].append(sub)
-    return [{"title": k, "subs": [{"text": s, "page": 0} for s in v]}
+    return [{"title": k, "subs": [{"text": s, "page": 0, "item": ""} for s in v]}
             for k, v in sections.items()]
 
 
 def _adjust_groups(groups, n):
     """대분류 개수를 정확히 n개로(부족하면 빈 그룹 추가, 많으면 뒤에서 제거)."""
     while len(groups) < n:
-        groups.append({"title": "", "subs": [{"text": "", "page": 0}]})
+        groups.append({"title": "", "subs": [{"text": "", "page": 0, "item": ""}]})
     while len(groups) > n:
         groups.pop()
     return groups
@@ -992,7 +1010,7 @@ def _adjust_groups(groups, n):
 def _clear_toc_widget_state():
     """목차 편집 위젯 상태 초기화(구조 변경 후 재시딩용)."""
     for k in list(st.session_state.keys()):
-        if k.startswith(("toctitle_", "tocsub_", "tocpage_")):
+        if k.startswith(("toctitle_", "tocsub_", "tocpage_", "tocitem_")):
             del st.session_state[k]
 
 
@@ -1112,6 +1130,20 @@ def show_step_toc():
                     sub["page"] = st.number_input(
                         "└ 원본 페이지 (0=미지정)", min_value=0,
                         max_value=(total if total else 999), step=1, key=pk)
+                    # 그 페이지의 항목((1)(2)(3)…)이 잡히면 골라서 '어느 부분'인지 지정
+                    items = _page_items(pages_text, int(sub.get("page") or 0))
+                    if items:
+                        ik = f"tocitem_{gi}_{si}"
+                        opts = ["(페이지 전체)"] + items
+                        if sub.get("item") and sub["item"] in opts and ik not in st.session_state:
+                            st.session_state[ik] = sub["item"]
+                        if ik in st.session_state and st.session_state[ik] not in opts:
+                            del st.session_state[ik]
+                        picked = st.selectbox("└ 그 페이지의 어느 항목?", opts, key=ik,
+                                              help="이 소제목이 그 페이지의 어느 항목인지. (1)만 고르면 (1)만 가져옵니다.")
+                        sub["item"] = "" if picked == "(페이지 전체)" else picked
+                    else:
+                        sub["item"] = sub.get("item", "")
                     if st.button("🗑 소제목 삭제", key=f"tocdel_{gi}_{si}"):
                         pending["del"] = (gi, si)
                 if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
@@ -1123,7 +1155,7 @@ def show_step_toc():
             _clear_toc_widget_state()
             st.rerun()
         if pending["add"] is not None:
-            toc["groups"][pending["add"]]["subs"].append({"text": "", "page": 0})
+            toc["groups"][pending["add"]]["subs"].append({"text": "", "page": 0, "item": ""})
             _clear_toc_widget_state()
             st.rerun()
 
