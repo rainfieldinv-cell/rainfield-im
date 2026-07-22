@@ -972,14 +972,23 @@ def show_step_toc():
                     st.session_state.toc_view_page = cur + 1
                     st.rerun()
             # 현재 페이지를 fitz로 즉시 렌더(캐시) — 생성 버튼·다운로드 없이 바로 표시
-            cache = st.session_state.setdefault("toc_page_cache", {})
-            if cur not in cache:
-                cache[cur] = _render_pdf_page(view_pdf, cur)
-            png, err = cache[cur]
+            #   ★어떤 오류가 나도 오른쪽 폼·아래 버튼이 사라지지 않게 전부 감싼다.
+            try:
+                cache = st.session_state.setdefault("toc_page_cache", {})
+                if cur not in cache or not isinstance(cache.get(cur), tuple):
+                    cache[cur] = _render_pdf_page(view_pdf, cur)
+                png, err = cache[cur]
+            except Exception as _e:
+                png, err = None, f"이미지 표시 오류: {_e}"
             if err:
                 st.error(err)
             elif png:
-                st.image(png, use_container_width=True)
+                # ★이미지가 길어도 나머지 화면(편집 폼·버튼)을 밀어내지 않도록 높이 제한 + 스크롤
+                try:
+                    with st.container(height=560, border=False):
+                        st.image(png, use_container_width=True)
+                except TypeError:          # 옛 Streamlit: container(height=) 미지원
+                    st.image(png, use_container_width=True)
 
     # ── 오른쪽: 목차 편집 폼 (컬럼 2중첩 방지 → 세로로 쌓음) ──
     with form_col:
@@ -1179,7 +1188,11 @@ def show_step_highlight():
                         st.error(f"{p}p 이미지 실패 — {err}")
                     elif png:
                         st.markdown(f"**원본 {p}p**")
-                        st.image(png, use_container_width=True)
+                        try:
+                            with st.container(height=560, border=False):
+                                st.image(png, use_container_width=True)
+                        except TypeError:
+                            st.image(png, use_container_width=True)
 
     # ── 오른쪽: 카드 3개 편집 (컬럼 2중첩 방지 → 세로) ──
     with form_col:
