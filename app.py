@@ -999,7 +999,7 @@ def _clear_toc_widget_state():
 # 표준 목차(거의 고정) — 화면에서 수정 가능. 소제목 중 일부는 항상 들어가는 항목.
 _DEFAULT_TOC = [
     {"title": "사모사채 개요",
-     "subs": [{"text": "사모사채 개요", "page": 0, "item": ""}]},
+     "subs": [{"text": "본건 사모사채 개요", "page": 0, "item": ""}]},
     {"title": "금융개요",
      "subs": [{"text": "금융 투자구조도", "page": 0, "item": ""},
               {"text": "본건 기초자산 금융조건", "page": 0, "item": ""}]},
