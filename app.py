@@ -940,6 +940,26 @@ _ITEM_MARK = re.compile(
     r"^\s*(\(?\d{1,2}[\).]|\d{1,2}\.\d{1,2}|[①-⑳]|[■▪●◦▶]|\([가-힣]\)|[가-힣]\.|[IVXivx]{1,4}\.)")
 
 
+def _parse_pages(raw, total=0):
+    """'4,5' / '4 5' → [4,5] (중복·범위밖 제거, 오름차순). 빈 값이면 []."""
+    out = []
+    for tok in re.split(r"[,\s]+", (raw or "").strip()):
+        if not tok:
+            continue
+        try:
+            n = int(tok)
+        except ValueError:
+            continue
+        if n >= 1 and (total <= 0 or n <= total) and n not in out:
+            out.append(n)
+    return sorted(out)
+
+
+def _pages_to_str(pages):
+    """[4,5] → '4,5' (입력칸 기본값용)."""
+    return ",".join(str(p) for p in (pages or []))
+
+
 def _page_items(pages_text, page):
     """지정 페이지의 텍스트에서 '항목 머리글'로 시작하는 짧은 줄만 뽑음(그 페이지의 (1)(2)(3)…)."""
     if not pages_text or not (1 <= page <= len(pages_text)):
@@ -976,14 +996,14 @@ def _build_toc_from_parsed(parsed_pages):
             sections.setdefault(sec, [])
             if sub and sub != sec and sub not in sections[sec]:
                 sections[sec].append(sub)
-    return [{"title": k, "subs": [{"text": s, "page": 0, "item": ""} for s in v]}
+    return [{"title": k, "subs": [{"text": s, "pages": [], "items": {}} for s in v]}
             for k, v in sections.items()]
 
 
 def _adjust_groups(groups, n):
     """대분류 개수를 정확히 n개로(부족하면 빈 그룹 추가, 많으면 뒤에서 제거)."""
     while len(groups) < n:
-        groups.append({"title": "", "subs": [{"text": "", "page": 0, "item": ""}]})
+        groups.append({"title": "", "subs": [{"text": "", "pages": [], "items": {}}]})
     while len(groups) > n:
         groups.pop()
     return groups
@@ -999,14 +1019,14 @@ def _clear_toc_widget_state():
 # 표준 목차(거의 고정) — 화면에서 수정 가능. 소제목 중 일부는 항상 들어가는 항목.
 _DEFAULT_TOC = [
     {"title": "사모사채 개요",
-     "subs": [{"text": "본건 사모사채 개요", "page": 0, "item": ""}]},
+     "subs": [{"text": "본건 사모사채 개요", "pages": [], "items": {}}]},
     {"title": "금융개요",
-     "subs": [{"text": "금융 투자구조도", "page": 0, "item": ""},
-              {"text": "본건 기초자산 금융조건", "page": 0, "item": ""}]},
+     "subs": [{"text": "금융 투자구조도", "pages": [], "items": {}},
+              {"text": "본건 기초자산 금융조건", "pages": [], "items": {}}]},
     {"title": "본 건 담보개요",
-     "subs": [{"text": "", "page": 0, "item": ""}]},
+     "subs": [{"text": "", "pages": [], "items": {}}]},
     {"title": "Appendix",
-     "subs": [{"text": "", "page": 0, "item": ""}]},
+     "subs": [{"text": "", "pages": [], "items": {}}]},
 ]
 
 
@@ -1142,25 +1162,36 @@ def show_step_toc():
                     st.session_state.setdefault(sk, sub.get("text", ""))
                     sub["text"] = st.text_input(f"└ 소제목 {gi + 1}.{si + 1}", key=sk,
                                                 placeholder="예: (1) 낙찰사례 및 환가 분석")
+                    # ── 원본 페이지: 여러 장에 걸치면 "4,5"처럼 복수 입력 ──
                     pk = f"tocpage_{gi}_{si}"
-                    st.session_state.setdefault(pk, int(sub.get("page", 0) or 0))
-                    sub["page"] = st.number_input(
-                        "└ 원본 페이지 (0=미지정)", min_value=0,
-                        max_value=(total if total else 999), step=1, key=pk)
-                    # 그 페이지의 항목((1)(2)(3)…)이 잡히면 골라서 '어느 부분'인지 지정
-                    items = _page_items(pages_text, int(sub.get("page") or 0))
-                    if items:
-                        ik = f"tocitem_{gi}_{si}"
+                    st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
+                    _p_raw = st.text_input(
+                        "└ 원본 페이지 (여러 장이면 쉼표: 4,5 · 비우면 미지정)", key=pk,
+                        placeholder="예: 4  또는  4,5")
+                    sub["pages"] = _parse_pages(_p_raw, total)
+
+                    # ── 페이지마다 '그 페이지의 어느 항목'을 각각 선택 ──
+                    #    (다음 장엔 필요 없는 항목이 섞일 수 있으니 페이지별로 따로 고름)
+                    picks = dict(sub.get("items") or {})
+                    for p in sub["pages"]:
+                        items = _page_items(pages_text, p)
+                        if not items:
+                            continue
+                        ik = f"tocitem_{gi}_{si}_{p}"
                         opts = ["(페이지 전체)"] + items
-                        if sub.get("item") and sub["item"] in opts and ik not in st.session_state:
-                            st.session_state[ik] = sub["item"]
+                        prev = picks.get(str(p))
+                        if prev and prev in opts and ik not in st.session_state:
+                            st.session_state[ik] = prev
                         if ik in st.session_state and st.session_state[ik] not in opts:
                             del st.session_state[ik]
-                        picked = st.selectbox("└ 그 페이지의 어느 항목?", opts, key=ik,
-                                              help="이 소제목이 그 페이지의 어느 항목인지. (1)만 고르면 (1)만 가져옵니다.")
-                        sub["item"] = "" if picked == "(페이지 전체)" else picked
-                    else:
-                        sub["item"] = sub.get("item", "")
+                        picked = st.selectbox(
+                            f"　└ {p}p 에서 가져올 항목", opts, key=ik,
+                            help="그 페이지에서 이 소제목에 해당하는 부분만 고르세요. "
+                                 "필요 없는 항목은 안 고르면 됩니다.")
+                        picks[str(p)] = "" if picked == "(페이지 전체)" else picked
+                    # 지정에서 빠진 페이지 기록 제거
+                    sub["items"] = {k: v for k, v in picks.items()
+                                    if int(k) in sub["pages"]}
                     if st.button("🗑 소제목 삭제", key=f"tocdel_{gi}_{si}"):
                         pending["del"] = (gi, si)
                 if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
@@ -1172,14 +1203,14 @@ def show_step_toc():
             _clear_toc_widget_state()
             st.rerun()
         if pending["add"] is not None:
-            toc["groups"][pending["add"]]["subs"].append({"text": "", "page": 0, "item": ""})
+            toc["groups"][pending["add"]]["subs"].append({"text": "", "pages": [], "items": {}})
             _clear_toc_widget_state()
             st.rerun()
 
     # ── 저장 요약 + 네비게이션 (전체 폭) ──
     st.markdown("---")
     total_subs = sum(len(g["subs"]) for g in toc["groups"])
-    with_page = sum(1 for g in toc["groups"] for s in g["subs"] if s.get("page"))
+    with_page = sum(1 for g in toc["groups"] for s in g["subs"] if s.get("pages"))
     st.success(f"저장됨 · 대분류 {toc['format']}개 · 소제목 {total_subs}개 · 페이지 지정 {with_page}건")
     nc1, _ns, nc2 = st.columns([2, 4, 2])
     with nc1:
