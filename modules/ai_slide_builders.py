@@ -927,7 +927,9 @@ def build_slide_5_sasae_overview(prs, data: dict,
     page_num      : 슬라이드 번호
     """
     # skip_graphic_frames=False → 9r×2c TABLE 포함 그대로 복제
-    slide = clone_slide_layout(prs, "content", skip_graphic_frames=False)
+    # ★"bond_overview"(=레이아웃.pptx 5번) 전용 키를 사용한다.
+    #   "content"(=9번 빈 본문 템플릿)에는 표가 없어 _fill_sasae_table 이 실패한다.
+    slide = clone_slide_layout(prs, "bond_overview", skip_graphic_frames=False)
 
     intro  = data.get("intro_paragraph", "")
     fields = data.get("fields", [])
