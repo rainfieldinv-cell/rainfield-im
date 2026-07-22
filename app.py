@@ -317,6 +317,115 @@ def show_step1():
                 st.rerun()
 
 
+def _make_divider_miniature(w_px: int = 540, h_px: int = 374) -> bytes:
+    """섹션 divider 슬라이드 레이아웃을 단순화한 PNG 미니어처를 반환합니다.
+    ①②③ 표시로 각 원형 슬롯 위치를 직관적으로 안내합니다."""
+    import io as _mio
+    from PIL import Image as _Img, ImageDraw as _Draw, ImageFont as _Font
+
+    SLIDE_W = 27.52
+    SLIDE_H = 19.05
+    sx, sy = w_px / SLIDE_W, h_px / SLIDE_H
+
+    img  = _Img.new("RGB", (w_px, h_px), (248, 248, 248))
+    draw = _Draw.Draw(img)
+    draw.rectangle([0, 0, w_px - 1, h_px - 1], outline=(200, 200, 200), width=2)
+
+    # 텍스트 영역 힌트 (섹션 번호+제목 위치)
+    draw.rectangle(
+        [int(0.5 * sx), int(7.5 * sy), int(13 * sx), int(10.5 * sy)],
+        fill=(225, 225, 225), outline=(190, 190, 190),
+    )
+
+    # 3개 원형 슬롯 (outer oval 위치 기준) — _DIV_OVAL_PAIRS와 동일 순서
+    _OVALS  = [(16.3273, 0.7346, 9.70, 9.70),
+               (17.3779, 8.2234, 8.70, 8.70),
+               (13.5919, 6.1749, 6.80, 6.80)]
+    _LABELS = ["①", "②", "③"]
+    _GREEN  = (146, 208, 80)
+
+    try:
+        _fnt_path = os.path.join(os.path.dirname(__file__), "fonts", "PEOPLEFONTB.TTF")
+        _base_fnt = _Font.truetype(_fnt_path, size=28)
+    except Exception:
+        _base_fnt = _Font.load_default()
+
+    for (ol, ot, ow, oh), label in zip(_OVALS, _LABELS):
+        cx = int((ol + ow / 2) * sx)
+        cy = int((ot + oh / 2) * sy)
+        rx = int(ow / 2 * sx)
+        ry = int(oh / 2 * sy)
+        draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry],
+                     fill=(220, 220, 220), outline=_GREEN, width=5)
+        draw.text((cx, cy), label, font=_base_fnt, fill=(50, 50, 50), anchor="mm")
+
+    buf = _mio.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _make_toc_miniature(w_px: int = 540, h_px: int = 374) -> bytes:
+    """목차 슬라이드 레이아웃을 단순화한 PNG 미니어처를 반환합니다.
+    ① 표시로 원형 슬롯 위치를 직관적으로 안내합니다."""
+    import io as _mio
+    from PIL import Image as _Img, ImageDraw as _Draw, ImageFont as _Font
+
+    SLIDE_W = 27.52
+    SLIDE_H = 19.05
+    sx, sy = w_px / SLIDE_W, h_px / SLIDE_H
+
+    img  = _Img.new("RGB", (w_px, h_px), (248, 248, 248))
+    draw = _Draw.Draw(img)
+    draw.rectangle([0, 0, w_px - 1, h_px - 1], outline=(200, 200, 200), width=2)
+
+    # 오른쪽 목차 항목 힌트 (4개 행)
+    for row in range(4):
+        y_top = int((2.0 + row * 4.1) * sy)
+        draw.rectangle(
+            [int(7.5 * sx), y_top, int(26.5 * sx), int(y_top + 3.2 * sy)],
+            fill=(225, 225, 225), outline=(190, 190, 190),
+        )
+
+    # 1개 원형 슬롯 — TOC oval 위치 (left=0.84, top=6.95, w=5.26, h=5.30)
+    _GREEN = (146, 208, 80)
+    ol, ot, ow, oh = 0.8409, 6.9520, 5.2600, 5.3000
+    cx = int((ol + ow / 2) * sx)
+    cy = int((ot + oh / 2) * sy)
+    rx = int(ow / 2 * sx)
+    ry = int(oh / 2 * sy)
+
+    try:
+        _fnt_path = os.path.join(os.path.dirname(__file__), "fonts", "PEOPLEFONTB.TTF")
+        _base_fnt = _Font.truetype(_fnt_path, size=28)
+    except Exception:
+        _base_fnt = _Font.load_default()
+
+    draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry],
+                 fill=(220, 220, 220), outline=_GREEN, width=5)
+    draw.text((cx, cy), "①", font=_base_fnt, fill=(50, 50, 50), anchor="mm")
+
+    buf = _mio.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _detect_toc_count(full_text: str) -> int:
+    """
+    추출 텍스트에서 '01', '02' 같은 섹션 번호 패턴을 세어 목차 개수를 추정합니다.
+    찾지 못하면 기본값 4를 반환합니다.
+    여기를 수정하면 목차 감지 패턴이 바뀝니다.
+    """
+    matches = re.findall(r'\b0[1-9]\b', full_text)
+    unique  = len(set(matches))
+    if unique >= 5:
+        return 5
+    elif unique >= 3:
+        return 4
+    return 4  # 기본값
+
+
 # ─────────────────────────────────────────────
 # [3단계: 레이아웃 및 표지 미리 생성 화면]
 # ─────────────────────────────────────────────
@@ -983,12 +1092,8 @@ def show_step_toc():
             if err:
                 st.error(err)
             elif png:
-                # ★이미지가 길어도 나머지 화면(편집 폼·버튼)을 밀어내지 않도록 높이 제한 + 스크롤
-                try:
-                    with st.container(height=560, border=False):
-                        st.image(png, use_container_width=True)
-                except TypeError:          # 옛 Streamlit: container(height=) 미지원
-                    st.image(png, use_container_width=True)
+                # 페이지 전체를 한눈에 보이게 — 잘리지 않도록 높이 제한 없이 그대로 표시
+                st.image(png, use_container_width=True)
 
     # ── 오른쪽: 목차 편집 폼 (컬럼 2중첩 방지 → 세로로 쌓음) ──
     with form_col:
