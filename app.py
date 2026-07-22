@@ -193,8 +193,12 @@ def show_step1():
 
         st.markdown("")
 
-        # 추출 시작 버튼
-        if st.button("🔍 추출 시작", type="primary", use_container_width=False):
+        # 추출 시작 버튼 (이미 추출했으면 '다시 추출'로 표시 — 다음 단계 버튼과 헷갈리지 않게)
+        _done = bool(st.session_state.get("extracted_data"))
+        if st.button("🔄 다시 추출" if _done else "🔍 추출 시작",
+                     type=("secondary" if _done else "primary"),
+                     use_container_width=False,
+                     help="올린 파일에서 글자·사진을 다시 뽑습니다." if _done else None):
             try:
                 # 글자·목차 항목은 '워드(변환 PDF)'에서 정확히 뽑고, 사진은 '원본 PDF'로 보여준다.
                 proc_pdf = None          # 글자/항목 추출용
@@ -258,6 +262,13 @@ def show_step1():
                 except Exception:
                     st.session_state.parsed_pages = []
 
+                # 어떤 파일에서 글자/사진을 뽑았는지 기록(화면 표시용)
+                st.session_state.src_info = {
+                    "text": "워드(.docx)" if proc_from_word else "PDF",
+                    "image": ("PDF" if (proc_from_word and pdf_up is not None)
+                              else ("워드(.docx)" if proc_from_word else "PDF")),
+                }
+
                 # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3단계 새로 시작)
                 for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page",
                            "view_pdf_bytes", "highlight_cards", "hl_img_render",
@@ -284,13 +295,20 @@ def show_step1():
     if data:
         st.markdown("---")
         st.markdown("### 📌 추출 완료")
+        _src = st.session_state.get("src_info") or {}
         c1, c2, c3 = st.columns(3)
         with c1:
             st.metric("총 페이지 수", f"{data['total_pages']}페이지")
         with c2:
             st.metric("추출된 이미지 수", f"{len(data['images'])}개")
         with c3:
-            st.metric("파일 형식", data["file_type"].upper())
+            st.metric("처리 방식", "워드+PDF" if _src.get("text") != _src.get("image")
+                      else (_src.get("text") or data["file_type"].upper()))
+        # 어디서 뽑았는지 명확히 — '파일 형식 PDF'로 오해하지 않게
+        if _src:
+            st.caption(f"📄 글자·목차 항목 → **{_src.get('text','-')}**  ·  "
+                       f"🖼️ 사진 → **{_src.get('image','-')}** 에서 추출했습니다. "
+                       "(워드는 PDF로 변환해 페이지를 나눕니다)")
 
         for w in data.get("warnings", []):
             st.warning(f"⚠️ {w}")
