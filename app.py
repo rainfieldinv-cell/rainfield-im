@@ -1241,9 +1241,9 @@ def show_step_toc():
                             if ik in st.session_state and st.session_state[ik] not in opts:
                                 del st.session_state[ik]
                             picked = st.selectbox(
-                                f"　└ {p}p 에서 가져올 항목", opts, key=ik,
-                                help="그 페이지에서 이 소제목에 해당하는 부분만 고르세요. "
-                                     "필요 없는 항목은 안 고르면 됩니다.")
+                                f"　└ {p}p 에서 시작할 항목", opts, key=ik,
+                                help="고른 항목을 '시작점'으로 봅니다 → 그 항목부터 이 페이지 끝까지 가져옵니다. "
+                                     "(그 항목 앞부분은 버림) · 페이지 전체를 쓰려면 '(페이지 전체)'.")
                             picks[str(p)] = "" if picked == "(페이지 전체)" else picked
                         # 지정에서 빠진 페이지 기록 제거
                         sub["items"] = {k: v for k, v in picks.items()
@@ -1293,7 +1293,7 @@ def show_step_toc():
                         for p in pages:
                             png = _toc_page_png(_view, p)
                             item = (sub.get("items") or {}).get(str(p))
-                            cap = f"원본 {p}p" + (f" · 가져올 항목: {item}" if item else "")
+                            cap = f"원본 {p}p" + (f" · 이 항목부터 끝까지: {item}" if item else " · 페이지 전체")
                             if png:
                                 st.image(png, use_container_width=True)
                                 st.caption(cap)
