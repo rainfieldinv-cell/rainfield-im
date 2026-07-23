@@ -269,6 +269,15 @@ def show_step1():
                               else ("워드(.docx)" if proc_from_word else "PDF")),
                 }
 
+                # ★워드를 올렸는데 변환이 실패해 PDF로 폴백된 경우 — 조용히 넘기지 말고
+                #   실제 원인을 보여준다(왜 어떤 파일만 'PDF'로 나오는지 진단 가능하게).
+                if word_up is not None and not proc_from_word:
+                    st.session_state.conv_warn = (
+                        f"이 파일은 워드→PDF 변환이 실패해서 **PDF로만** 처리됐어요(글자도 PDF에서 추출). "
+                        f"원인: {conv_err or '알 수 없음'}")
+                else:
+                    st.session_state.conv_warn = None
+
                 # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3단계 새로 시작)
                 for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page",
                            "view_pdf_bytes", "highlight_cards", "hl_img_render",
@@ -309,6 +318,11 @@ def show_step1():
             st.caption(f"📄 글자·목차 항목 → **{_src.get('text','-')}**  ·  "
                        f"🖼️ 사진 → **{_src.get('image','-')}** 에서 추출했습니다. "
                        "(워드는 PDF로 변환해 페이지를 나눕니다)")
+
+        # ★워드→PDF 변환 실패로 PDF만 쓴 경우 원인 표시(왜 'PDF'로만 나오는지 진단)
+        _cw = st.session_state.get("conv_warn")
+        if _cw:
+            st.warning(f"⚠️ {_cw}")
 
         for w in data.get("warnings", []):
             st.warning(f"⚠️ {w}")

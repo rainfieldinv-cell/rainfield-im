@@ -149,20 +149,29 @@ def convert_word_to_pdf(word_bytes: bytes, filename: str = "doc.docx"):
             f.write(word_bytes)
         env = dict(os.environ)
         env["HOME"] = tmp
+        # ★호출마다 '전용 프로필'을 강제 → 이전 변환의 프로필 잠금 때문에
+        #   다음 변환이 조용히 실패하는 LibreOffice single-instance 문제 차단.
+        from pathlib import Path
+        user_inst = Path(tmp, "lo_profile").as_uri()
         try:
-            subprocess.run(
-                [soffice, "--headless", "--norestore", "--nofirststartwizard",
+            proc = subprocess.run(
+                [soffice, "-env:UserInstallation=" + user_inst,
+                 "--headless", "--norestore", "--nofirststartwizard",
                  "--convert-to", "pdf", "--outdir", tmp, src],
                 capture_output=True, timeout=240, env=env,
             )
         except subprocess.TimeoutExpired:
-            return None, "워드→PDF 변환 시간 초과(240초)."
+            return None, "워드→PDF 변환 시간 초과(240초). 파일이 크거나 이미지가 많으면 발생합니다."
         except Exception as e:
             return None, f"LibreOffice 실행 실패: {e}"
 
         pdf_path = os.path.join(tmp, "src.pdf")
         if not os.path.exists(pdf_path):
-            return None, "워드→PDF 변환 실패(PDF가 생성되지 않음)."
+            # soffice가 남긴 실제 원인을 그대로 보여준다(무음 실패 방지).
+            err = (proc.stderr or b"").decode("utf-8", "ignore").strip()
+            out = (proc.stdout or b"").decode("utf-8", "ignore").strip()
+            reason = err or out or "soffice가 PDF를 생성하지 못했습니다."
+            return None, f"워드→PDF 변환 실패 — {reason[:300]}"
         with open(pdf_path, "rb") as f:
             return f.read(), None
     except Exception as e:
