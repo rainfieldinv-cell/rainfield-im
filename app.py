@@ -470,7 +470,7 @@ def show_step3():
             st.rerun()
         return
 
-    st.markdown("## 5단계. 레이아웃 및 표지 미리 생성")
+    st.markdown("## 6단계. 레이아웃 및 표지 미리 생성")
     st.caption("레이아웃을 선택하고 날짜·표지 이미지를 지정한 뒤 표지를 미리 생성해보세요.")
     st.markdown("")
 
@@ -764,12 +764,12 @@ def show_step3():
 
     with col_prev:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 4
+            st.session_state.current_step = 5
             st.rerun()
 
     with col_next:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 6
+            st.session_state.current_step = 7
             st.rerun()
 
 
@@ -785,7 +785,7 @@ def show_step4():
             st.rerun()
         return
 
-    st.markdown("## 6단계. 전체 PPT 생성")
+    st.markdown("## 7단계. 전체 PPT 생성")
     st.caption("지금까지 설정한 내용으로 완성된 제안서 PPT를 생성합니다.")
     st.markdown("")
 
@@ -928,7 +928,7 @@ def show_step4():
     # (D) 하단 네비게이션
     # ────────────────────────────────────────
     if st.button("← 이전 단계 (설정 변경)", use_container_width=False):
-        st.session_state.current_step = 5
+        st.session_state.current_step = 6
         st.rerun()
 
 
@@ -1289,6 +1289,96 @@ def _find_toc_pages(pages_text):
 
 
 # ─────────────────────────────────────────────
+# [3단계: 배치 확인] — 목차에서 배치한 원본 페이지를 순서대로 이미지로 확인하고,
+#   여기서 바로 페이지를 수정하면 아래 이미지가 다시 그려진다(생성·다운로드 아님, 화면 확인용).
+#   2단계와 같은 위젯 키(tocpage_*)를 써서 수정이 서로 동기화된다.
+# ─────────────────────────────────────────────
+def show_step_arrange():
+    st.markdown("## 3단계. 배치 확인")
+    st.caption("목차에서 배치한 원본 페이지를 목차 순서대로 이미지로 확인합니다. "
+               "잘못됐거나 바꾸고 싶으면 각 소제목의 페이지 칸에서 바로 고치세요 — "
+               "고치면 아래 이미지가 다시 그려집니다. (다운로드 아님 · 화면 확인용)")
+
+    toc = st.session_state.get("toc_edit")
+    if not toc:
+        st.warning("먼저 2단계에서 목차를 구성해주세요.")
+        if st.button("← 2단계로"):
+            st.session_state.current_step = 2
+            st.rerun()
+        return
+
+    pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
+    total = len(pages_text)
+    view = st.session_state.get("view_pdf_bytes") or st.session_state.get("pdf_bytes")
+
+    # ── 상단: 소제목 → 배치 페이지 매핑 요약 ──
+    st.markdown("#### 🗂️ 현재 배치 요약 (어떤 소제목에 몇 페이지를 넣었는지)")
+    for gi, g in enumerate(toc["groups"]):
+        for si, sub in enumerate(g["subs"]):
+            stext = (sub.get("text") or "").strip() or "(소제목 없음)"
+            head = f"**{gi + 1}.{si + 1} {stext}**"
+            if sub.get("fixed"):
+                st.markdown(f"- {head} — 🔒 고정 페이지(원본 없음, 자동 생성)")
+            elif sub.get("pages"):
+                st.markdown(f"- {head} — 📄 {_pages_to_str(sub['pages'])}p "
+                            f"({len(sub['pages'])}장, 이 순서)")
+            else:
+                st.markdown(f"- {head} — ⚪ 미지정(본문에 안 들어감)")
+
+    st.markdown("---")
+
+    if not view:
+        st.warning("원본 PDF가 없어 이미지를 못 띄웁니다. 1단계에서 PDF(또는 워드→PDF)를 올리세요.")
+    else:
+        # ── 소제목별: 페이지 수정칸 + 배치 순서대로 이미지 ──
+        with st.spinner("배치한 원본 페이지를 순서대로 렌더링하는 중..."):
+            for gi, g in enumerate(toc["groups"]):
+                gtitle = (g.get("title") or "").strip() or f"목차 {gi + 1}"
+                st.markdown(f"### {gtitle}")
+                for si, sub in enumerate(g["subs"]):
+                    stext = (sub.get("text") or "").strip() or "(소제목 없음)"
+                    label = f"{gi + 1}.{si + 1} {stext}"
+                    if sub.get("fixed"):
+                        st.markdown(f"**{label}**　🔒 고정 페이지 (원본 없이 자동 생성)")
+                        continue
+                    st.markdown(f"**{label}**")
+                    # 인라인 수정칸 — 2단계와 같은 key로 동기화(고치면 rerun되어 이미지 갱신)
+                    pk = f"tocpage_{gi}_{si}"
+                    st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
+                    _raw = st.text_input(
+                        "원본 페이지 (적은 순서대로! 범위 8-12 · 재배치 8,9,11,10 · 뺄 건 생략)",
+                        key=pk, placeholder="예: 8,9,11,10,12,16-19",
+                        label_visibility="collapsed")
+                    sub["pages"] = _parse_pages(_raw, total)
+                    pages = sub["pages"]
+                    if not pages:
+                        st.caption("⚪ 페이지 미지정 (본문에 안 들어감)")
+                        continue
+                    st.caption(f"이 순서로 들어감 → {_pages_to_str(pages)} (총 {len(pages)}장)")
+                    for order, p in enumerate(pages, start=1):
+                        png = _toc_page_png(view, p)
+                        if png:
+                            st.image(png, use_container_width=True)
+                            st.caption(f"{order}번째 · 원본 {p}p")
+                        else:
+                            st.caption(f"⚠️ {p}p 렌더 실패")
+                st.markdown("")
+
+    # ── 네비게이션 ──
+    st.markdown("---")
+    st.info("여기서 확인·수정한 배치 순서가 마지막 단계에서 그대로 PPT 본문 순서가 됩니다.")
+    nc1, _ns, nc2 = st.columns([2, 4, 2])
+    with nc1:
+        if st.button("← 이전 단계", use_container_width=True):
+            st.session_state.current_step = 2
+            st.rerun()
+    with nc2:
+        if st.button("다음 단계 →", use_container_width=True, type="primary"):
+            st.session_state.current_step = 4
+            st.rerun()
+
+
+# ─────────────────────────────────────────────
 # [4단계: 하이라이트(Executive Summary) 구성] — 원본 ES 페이지 확인 + 카드 3개 편집
 # ─────────────────────────────────────────────
 def _find_es_pages(pages_text):
@@ -1343,7 +1433,7 @@ def _clear_highlight_widget_state():
 
 
 def show_step_highlight():
-    st.markdown("## 3단계. 하이라이트 (Executive Summary) 구성")
+    st.markdown("## 4단계. 하이라이트 (Executive Summary) 구성")
     st.caption("왼쪽에서 원본 IM의 Executive Summary 페이지를 확인하고, 오른쪽에서 카드 3개를 편집하세요. "
                "(이 단계는 편집·저장까지만 · 완성 이미지는 다음 단계에서)")
 
@@ -1435,11 +1525,11 @@ def show_step_highlight():
     nc1, _n, nc2 = st.columns([2, 4, 2])
     with nc1:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 2
+            st.session_state.current_step = 3
             st.rerun()
     with nc2:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 4
+            st.session_state.current_step = 5
             st.rerun()
 
 
@@ -1477,15 +1567,15 @@ def _build_highlight_ppt_bytes(cards, business_name=""):
 
 
 def show_step_highlight_preview():
-    st.markdown("## 4단계. 하이라이트 완성본 확인")
+    st.markdown("## 5단계. 하이라이트 완성본 확인")
     st.caption("4단계에서 만든 카드 3개로 Executive Summary 슬라이드를 만들어 이미지로 보여줍니다. "
                "(화면 확인용 · 다운로드 없음 · 수정은 이전 단계에서)")
 
     cards = st.session_state.get("highlight_cards")
     if not cards:
         st.warning("4단계에서 하이라이트 카드를 먼저 작성해주세요.")
-        if st.button("← 3단계로"):
-            st.session_state.current_step = 3
+        if st.button("← 4단계로"):
+            st.session_state.current_step = 4
             st.rerun()
         return
 
@@ -1526,11 +1616,11 @@ def show_step_highlight_preview():
     with nc1:
         if st.button("← 이전 (수정하러 가기)", use_container_width=True):
             st.session_state.pop("hl_done_render", None)   # 수정하면 완성본은 다시 만들도록
-            st.session_state.current_step = 3
+            st.session_state.current_step = 4
             st.rerun()
     with nc2:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 5
+            st.session_state.current_step = 6
             st.rerun()
 
 
@@ -1594,12 +1684,14 @@ def show_conversion_tab():
     elif st.session_state.current_step == 2:
         show_step_toc()
     elif st.session_state.current_step == 3:
-        show_step_highlight()
+        show_step_arrange()
     elif st.session_state.current_step == 4:
-        show_step_highlight_preview()
+        show_step_highlight()
     elif st.session_state.current_step == 5:
-        show_step3()
+        show_step_highlight_preview()
     elif st.session_state.current_step == 6:
+        show_step3()
+    elif st.session_state.current_step == 7:
         show_step4()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
