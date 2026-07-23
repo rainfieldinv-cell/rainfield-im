@@ -1590,7 +1590,10 @@ def show_step_highlight_preview():
         st.error(f"이미지 생성 실패 — {rend['err']}")
     elif rend.get("imgs"):
         st.markdown("#### ✅ 완성본 Executive Summary")
-        st.image(rend["imgs"][0], use_container_width=True)
+        # 사진이 너무 커서 가운데 좁게(약 60%) 표시
+        _ic1, _ic2, _ic3 = st.columns([1, 3, 1])
+        with _ic2:
+            st.image(rend["imgs"][0], use_container_width=True)
     else:
         st.warning("표시할 이미지가 없습니다.")
 
