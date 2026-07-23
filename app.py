@@ -858,9 +858,14 @@ def show_step4():
     if st.button("📄 완성 PPT 생성하기", type="primary", use_container_width=False):
         try:
             with st.spinner("PPT를 생성하는 중입니다... 잠시만 기다려주세요."):
-                # ── 4/5형식 분기: 5형식이면 자동 분할 후 pages·toc_map 재구성 ──
+                # ── 목차: 4단계에서 짠 사용자 목차를 최우선 사용 ──
                 toc_choice = st.session_state.toc_count
-                if pages and toc_choice == 5:
+                _u_cnt, _u_map = _toc_edit_to_maps()
+                if _u_map and _u_map.get("_labels"):
+                    final_pages     = pages
+                    final_toc_map   = _u_map                 # 사용자 제목·소제목
+                    final_toc_count = _u_cnt if _u_cnt in (4, 5) else toc_choice
+                elif pages and toc_choice == 5:
                     try:
                         _toc4   = extract_toc_map(pages)
                         _lbl4   = extract_section_labels(pages)
@@ -868,7 +873,7 @@ def show_step4():
                         _pages5 = remap_pages_for_5sections(pages, _split, _lbl5)
                         final_pages     = _pages5
                         final_toc_map   = dict(_toc5)
-                        final_toc_map["_labels"] = _lbl5  # 섹션 제목 레이블 주입
+                        final_toc_map["_labels"] = _lbl5
                         final_toc_count = 5
                     except Exception as _e:
                         st.warning(f"⚠️ 5섹션 자동 분할 실패({_e}). 4섹션으로 생성합니다.")
@@ -877,36 +882,18 @@ def show_step4():
                         final_toc_count = 4
                 else:
                     final_pages     = pages
-                    final_toc_map   = None   # build_full_presentation 내부에서 자동 추출
+                    final_toc_map   = None
                     final_toc_count = toc_choice
 
-                # ── ★LLM 구조화 파이프라인 적용(테스트 하니스와 동일) ─────────────
-                #   본문 슬라이드를 LLM 페이지 구조화 경로로 생성하고, Executive
-                #   Summary 는 '지금 업로드한 PDF' 의 ES 페이지만 보고 생성한다.
-                os.environ["RAINFIELD_LLM"] = "1"   # _build_content_block LLM 경로 ON
-                exec_summary_data = None
-                try:
-                    from modules.llm_structure import enrich_and_number
-                    # ★PDF 원본을 임시파일로 넘겨 좌표기반 사진(조감도)·표복원(매매사례)·썸네일 활성화
-                    _pdf_b = st.session_state.get("pdf_bytes")
-                    _pdf_path = None
-                    if _pdf_b:
-                        import tempfile
-                        _tf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-                        _tf.write(_pdf_b); _tf.close(); _pdf_path = _tf.name
-                    enrich_and_number(final_pages, pdf_path=_pdf_path)
-                    from modules.ai_slide_builders import generate_executive_summary
-                    _es_text = "\n".join(
-                        (p.get("raw_text", "") or "") for p in final_pages
-                        if "Executive Summary" in (p.get("raw_text", "") or ""))
-                    if not _es_text:    # 폴백: 앞 2페이지
-                        _es_text = "\n".join((p.get("raw_text", "") or "")
-                                             for p in final_pages[:2])
-                    _es = generate_executive_summary(_es_text)
-                    if _es.get("ok"):
-                        exec_summary_data = _es["data"]
-                except Exception as _llm_e:
-                    st.warning(f"⚠️ LLM 구조화 일부 실패({_llm_e}) — 기본 경로로 진행합니다.")
+                # ── LLM 경로 OFF: 느리고 불안정한 API 호출 제거(클라우드 생성 실패 원인) ──
+                #   본문은 안정적인 기본(비-LLM) 빌더로 생성한다.
+                os.environ["RAINFIELD_LLM"] = "0"
+
+                # ── 하이라이트: 2단계에서 직접 쓴 카드 3개 → Executive Summary 섹션 ──
+                _es_sections = None
+                _cards = st.session_state.get("highlight_cards")
+                if _cards and any((c.get("title") or c.get("content")) for c in _cards):
+                    _es_sections = _cards_to_sections(_cards)
 
                 ppt_bytes = build_full_presentation(
                     business_name=st.session_state.business_name,
@@ -914,11 +901,12 @@ def show_step4():
                     month_en=st.session_state.month_en,
                     pages=final_pages,
                     cover_image_bytes=st.session_state.cover_image_bytes,
+                    executive_summary_sections=_es_sections,   # 수동 하이라이트 카드
                     section_image_bytes_list=st.session_state.section_img_bytes_list,
                     toc_count=final_toc_count,
                     toc_map=final_toc_map,
                     toc_image_bytes_list=[st.session_state.toc_img_bytes],
-                    exec_summary_data=exec_summary_data,
+                    exec_summary_data=None,
                 )
 
             # ★5단계 내용검수에서 쓰도록 생성 PPT 보관
