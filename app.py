@@ -949,14 +949,11 @@ def _is_toc_heading(t):
     return True
 
 
-# 항목 머리글 패턴: (1) / 1) / 1. / 1.1 / ①~⑳ / ■▪●▶ / (가) / 가. / I. II.
-_ITEM_MARK = re.compile(
-    r"^\s*(\(?\d{1,2}[\).]|\d{1,2}\.\d{1,2}|[①-⑳]|[■▪●◦▶]|\([가-힣]\)|[가-힣]\.|[IVXivx]{1,4}\.)")
-
-
 def _parse_pages(raw, total=0):
-    """'4,5' / '4 5' / '3-8' / '3, 9-11' → [정수 페이지] (중복·범위밖 제거, 오름차순).
-       범위 표기 'a-b'(또는 a~b)를 펼쳐서 넣는다. 빈 값이면 []."""
+    """적은 '순서 그대로' 페이지 리스트로. 정렬하지 않는다.
+       '8,9,11,10,12,16-19' → [8,9,11,10,12,16,17,18,19].
+       범위 'a-b'/'a~b'는 방향대로 펼침(19-16 → 19,18,17,16).
+       중복(뒤에 또 나온 페이지)·범위밖은 제거. 빈 값이면 []."""
     out = []
 
     def _add(n):
@@ -966,37 +963,23 @@ def _parse_pages(raw, total=0):
     for tok in re.split(r"[,\s]+", (raw or "").strip()):
         if not tok:
             continue
-        m = re.match(r"^(\d+)\s*[-~]\s*(\d+)$", tok)   # 범위: 3-8 / 3~8
+        m = re.match(r"^(\d+)\s*[-~]\s*(\d+)$", tok)   # 범위: 8-12 / 8~12 / 12-8
         if m:
             a, b = int(m.group(1)), int(m.group(2))
-            if a > b:
-                a, b = b, a
-            for n in range(a, b + 1):
+            step = 1 if a <= b else -1
+            for n in range(a, b + step, step):       # 방향(오름/내림) 유지
                 _add(n)
             continue
         try:
             _add(int(tok))
         except ValueError:
             continue
-    return sorted(out)
+    return out                                        # ★정렬 안 함 — 순서 보존
 
 
 def _pages_to_str(pages):
     """[4,5] → '4,5' (입력칸 기본값용)."""
     return ",".join(str(p) for p in (pages or []))
-
-
-def _page_items(pages_text, page):
-    """지정 페이지의 텍스트에서 '항목 머리글'로 시작하는 짧은 줄만 뽑음(그 페이지의 (1)(2)(3)…)."""
-    if not pages_text or not (1 <= page <= len(pages_text)):
-        return []
-    out, seen = [], set()
-    for ln in (pages_text[page - 1] or "").split("\n"):
-        s = re.sub(r"\s+", " ", ln.strip())
-        if 2 < len(s) <= 60 and _ITEM_MARK.match(s) and s not in seen:
-            seen.add(s)
-            out.append(s)
-    return out
 
 
 def _build_toc_from_parsed(parsed_pages):
@@ -1022,14 +1005,14 @@ def _build_toc_from_parsed(parsed_pages):
             sections.setdefault(sec, [])
             if sub and sub != sec and sub not in sections[sec]:
                 sections[sec].append(sub)
-    return [{"title": k, "subs": [{"text": s, "pages": [], "items": {}} for s in v]}
+    return [{"title": k, "subs": [{"text": s, "pages": []} for s in v]}
             for k, v in sections.items()]
 
 
 def _adjust_groups(groups, n):
     """대분류 개수를 정확히 n개로(부족하면 빈 그룹 추가, 많으면 뒤에서 제거)."""
     while len(groups) < n:
-        groups.append({"title": "", "subs": [{"text": "", "pages": [], "items": {}, "fixed": False}]})
+        groups.append({"title": "", "subs": [{"text": "", "pages": [], "fixed": False}]})
     while len(groups) > n:
         groups.pop()
     return groups
@@ -1038,7 +1021,7 @@ def _adjust_groups(groups, n):
 def _clear_toc_widget_state():
     """목차 편집 위젯 상태 초기화(구조 변경 후 재시딩용)."""
     for k in list(st.session_state.keys()):
-        if k.startswith(("toctitle_", "tocsub_", "tocpage_", "tocitem_", "tocfix_")):
+        if k.startswith(("toctitle_", "tocsub_", "tocpage_", "tocfix_")):
             del st.session_state[k]
 
 
@@ -1047,14 +1030,14 @@ _DEFAULT_TOC = [
     {"title": "사모사채 개요",
      # ★1.1 본건 사모사채 개요 = 우리가 만드는 고정표 페이지. 원본에 없으므로
      #   'fixed': True → 원본 페이지 연결을 생략(요구할 수 없음).
-     "subs": [{"text": "본건 사모사채 개요", "pages": [], "items": {}, "fixed": True}]},
+     "subs": [{"text": "본건 사모사채 개요", "pages": [], "fixed": True}]},
     {"title": "금융개요",
-     "subs": [{"text": "금융 투자구조도", "pages": [], "items": {}, "fixed": False},
-              {"text": "본건 기초자산 금융조건", "pages": [], "items": {}, "fixed": False}]},
+     "subs": [{"text": "금융 투자구조도", "pages": [], "fixed": False},
+              {"text": "본건 기초자산 금융조건", "pages": [], "fixed": False}]},
     {"title": "본 건 담보개요",
-     "subs": [{"text": "", "pages": [], "items": {}, "fixed": False}]},
+     "subs": [{"text": "", "pages": [], "fixed": False}]},
     {"title": "Appendix",
-     "subs": [{"text": "", "pages": [], "items": {}, "fixed": False}]},
+     "subs": [{"text": "", "pages": [], "fixed": False}]},
 ]
 
 
@@ -1213,41 +1196,18 @@ def show_step_toc():
                     if sub["fixed"]:
                         st.caption("　└ 이 페이지는 원본과 연결하지 않습니다(자동 생성 고정 페이지).")
                         sub["pages"] = []
-                        sub["items"] = {}
                     else:
-                        # ── 원본 페이지: 범위(3-8) · 쉼표(4,5) · 섞어서(3, 9-11) 모두 가능 ──
+                        # ── 원본 페이지: 적은 '순서 그대로' 들어간다.
+                        #    범위 8-12 · 재배치 8,9,11,10 · 뺄 페이지는 그냥 생략 · 섞어서 8,9,11,10,12,16-19
                         pk = f"tocpage_{gi}_{si}"
                         st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
                         _p_raw = st.text_input(
-                            "└ 원본 페이지 (범위 3-8 · 쉼표 4,5 · 섞어서 3, 9-11 · 비우면 미지정)",
-                            key=pk, placeholder="예: 3-8  또는  3, 9-11")
+                            "└ 원본 페이지 (적은 순서대로! 범위 8-12 · 재배치 8,9,11,10 · 뺄 건 생략)",
+                            key=pk, placeholder="예: 8,9,11,10,12,16-19")
                         sub["pages"] = _parse_pages(_p_raw, total)
                         if sub["pages"]:
-                            st.caption(f"　└ 지정된 원본 페이지: {_pages_to_str(sub['pages'])} "
+                            st.caption(f"　└ 이 순서로 들어감 → {_pages_to_str(sub['pages'])} "
                                        f"(총 {len(sub['pages'])}장)")
-
-                        # ── 페이지마다 '그 페이지의 어느 항목'을 각각 선택 ──
-                        #    (다음 장엔 필요 없는 항목이 섞일 수 있으니 페이지별로 따로 고름)
-                        picks = dict(sub.get("items") or {})
-                        for p in sub["pages"]:
-                            items = _page_items(pages_text, p)
-                            if not items:
-                                continue
-                            ik = f"tocitem_{gi}_{si}_{p}"
-                            opts = ["(페이지 전체)"] + items
-                            prev = picks.get(str(p))
-                            if prev and prev in opts and ik not in st.session_state:
-                                st.session_state[ik] = prev
-                            if ik in st.session_state and st.session_state[ik] not in opts:
-                                del st.session_state[ik]
-                            picked = st.selectbox(
-                                f"　└ {p}p 에서 시작할 항목", opts, key=ik,
-                                help="고른 항목을 '시작점'으로 봅니다 → 그 항목부터 이 페이지 끝까지 가져옵니다. "
-                                     "(그 항목 앞부분은 버림) · 페이지 전체를 쓰려면 '(페이지 전체)'.")
-                            picks[str(p)] = "" if picked == "(페이지 전체)" else picked
-                        # 지정에서 빠진 페이지 기록 제거
-                        sub["items"] = {k: v for k, v in picks.items()
-                                        if int(k) in sub["pages"]}
                     if st.button("🗑 소제목 삭제", key=f"tocdel_{gi}_{si}"):
                         pending["del"] = (gi, si)
                 if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
@@ -1259,7 +1219,7 @@ def show_step_toc():
             _clear_toc_widget_state()
             st.rerun()
         if pending["add"] is not None:
-            toc["groups"][pending["add"]]["subs"].append({"text": "", "pages": [], "items": {}, "fixed": False})
+            toc["groups"][pending["add"]]["subs"].append({"text": "", "pages": [], "fixed": False})
             _clear_toc_widget_state()
             st.rerun()
 
@@ -1289,14 +1249,12 @@ def show_step_toc():
                         if not pages:
                             st.markdown(f"**{label}**　⚪ 페이지 미지정 (본문에 안 들어감)")
                             continue
-                        st.markdown(f"**{label}**　📄 원본 {_pages_to_str(pages)}p")
-                        for p in pages:
+                        st.markdown(f"**{label}**　📄 원본 {_pages_to_str(pages)}p (이 순서대로)")
+                        for order, p in enumerate(pages, start=1):
                             png = _toc_page_png(_view, p)
-                            item = (sub.get("items") or {}).get(str(p))
-                            cap = f"원본 {p}p" + (f" · 이 항목부터 끝까지: {item}" if item else " · 페이지 전체")
                             if png:
                                 st.image(png, use_container_width=True)
-                                st.caption(cap)
+                                st.caption(f"{order}번째 · 원본 {p}p")
                             else:
                                 st.caption(f"⚠️ {p}p 렌더 실패")
                     st.markdown("")
