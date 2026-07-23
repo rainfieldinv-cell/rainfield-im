@@ -1399,35 +1399,11 @@ def _find_es_pages(pages_text):
     return hits
 
 
-def _es_source_text():
-    """요약 자동추출에 넣을 원본 텍스트 — ES 페이지 우선, 없으면 앞 2페이지."""
-    pages = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
-    es = _find_es_pages(pages)
-    if es:
-        return "\n".join(pages[p - 1] for p in es)
-    return "\n".join(pages[:2])
-
-
 def _init_highlight_cards():
-    """카드 3개 기본값 — IM에서 자동 추출한 요약으로 채움(실패해도 빈 카드로 진행)."""
-    cards = [{"title": "", "use_sub": False, "subtitle": "", "content": ""} for _ in range(3)]
-    try:
-        from modules.ai_slide_builders import generate_executive_summary
-        with st.spinner("IM에서 요약(Executive Summary)을 자동 추출하는 중..."):
-            res = generate_executive_summary(_es_source_text())
-        if res.get("ok"):
-            secs = (res.get("data") or {}).get("sections") or []
-            for i, sec in enumerate(secs[:3]):
-                sub = (sec.get("subtitle") or "").strip()
-                cards[i] = {
-                    "title": (sec.get("title") or "").strip(),
-                    "use_sub": bool(sub),
-                    "subtitle": sub,
-                    "content": (sec.get("content") or sec.get("body") or "").strip(),
-                }
-    except Exception as e:
-        st.info(f"자동 추출을 건너뜁니다({e}). 카드를 직접 입력하세요.")
-    st.session_state.highlight_cards = cards
+    """카드 3개 빈 값 — 하이라이트 내용은 사용자가 '직접' 입력한다(자동 추출 안 함)."""
+    st.session_state.highlight_cards = [
+        {"title": "", "use_sub": False, "subtitle": "", "content": ""} for _ in range(3)
+    ]
 
 
 def _clear_highlight_widget_state():
@@ -1438,63 +1414,49 @@ def _clear_highlight_widget_state():
 
 def show_step_highlight():
     st.markdown("## 4단계. 하이라이트 (Executive Summary) 구성")
-    st.caption("왼쪽에서 원본 IM의 Executive Summary 페이지를 확인하고, 오른쪽에서 카드 3개를 편집하세요. "
-               "(이 단계는 편집·저장까지만 · 완성 이미지는 다음 단계에서)")
+    st.caption("왼쪽에서 원본 IM의 Executive Summary 페이지를 보고, 오른쪽 카드 3개를 **직접** 입력하세요. "
+               "(자동으로 채우지 않습니다 · 편집·저장까지만 · 완성 이미지는 다음 단계에서)")
 
     pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
     view_pdf = st.session_state.get("view_pdf_bytes") or st.session_state.get("pdf_bytes")
+    total = len(pages_text)
     if "highlight_cards" not in st.session_state:
         _init_highlight_cards()
     cards = st.session_state.highlight_cards
 
-    if st.button("🤖 IM에서 다시 자동 추출", help="원본 요약을 다시 읽어 카드에 채웁니다(편집 내용 덮어씀)."):
+    if st.button("🧹 카드 3개 비우기", help="입력한 카드 내용을 모두 지우고 처음부터 다시 씁니다."):
         _init_highlight_cards()
         _clear_highlight_widget_state()
         st.rerun()
 
     img_col, form_col = st.columns([1, 1])
 
-    # ── 왼쪽: 원본 Executive Summary 페이지 (버튼 눌렀을 때만 변환) ──
+    # ── 왼쪽: 원본 Executive Summary 페이지 (2단계처럼 자동 표시 · 버튼 없음) ──
+    #    ES를 찾으면 그 페이지만, 못 찾으면 시작 5장(1~5p)을 대체로 보여준다.
     with img_col:
-        st.markdown("#### 📄 원본 Executive Summary")
-        es_pages = _find_es_pages(pages_text)
-        if not view_pdf:
+        if not view_pdf or total == 0:
+            st.markdown("#### 📄 원본 Executive Summary")
             st.warning("원본 PDF가 없어 이미지를 못 띄웁니다. 1단계에서 워드/PDF를 올려주세요.")
         else:
+            es_pages = _find_es_pages(pages_text)
+            npage = _pdf_page_count(view_pdf)
+            if npage <= 0:
+                npage = total
             if es_pages:
-                st.caption(f"Executive Summary로 추정되는 페이지: {', '.join(map(str, es_pages))}p")
+                show_pages = [p for p in es_pages if 1 <= p <= npage]
+                st.markdown("#### 📄 원본 Executive Summary")
+                st.caption(f"Executive Summary로 추정되는 페이지: {_pages_to_str(show_pages)}p")
             else:
-                st.caption("Executive Summary 페이지를 못 찾았습니다 — 아래에 직접 지정하세요.")
-            default_p = ",".join(map(str, es_pages)) if es_pages else "1"
-            p_str = st.text_input("표시할 페이지(쉼표)", value=default_p, key="hl_img_pages")
-            if st.button("🖼️ 원본 이미지 보기", type="primary"):
-                try:
-                    pgs = [int(x) for x in re.split(r"[,\s]+", p_str.strip()) if x]
-                except ValueError:
-                    pgs = []
-                if not pgs:
-                    st.error("페이지 번호를 올바르게 입력하세요. (예: 2)")
+                show_pages = list(range(1, min(5, npage) + 1))
+                st.markdown("#### 📄 원본 시작 5장 (Executive Summary 못 찾음 → 대체)")
+                st.caption("Executive Summary 페이지를 못 찾아 시작 5장을 보여줍니다.")
+            for p in show_pages:
+                png = _toc_page_png(view_pdf, p)
+                if png:
+                    st.image(png, use_container_width=True)
+                    st.caption(f"원본 {p}p")
                 else:
-                    out = []
-                    with st.spinner("원본 페이지를 이미지로 변환하는 중..."):
-                        for p in pgs:
-                            png, err = _render_pdf_page(view_pdf, p)
-                            out.append((p, png, err))
-                    st.session_state.hl_img_render = out
-            rend = st.session_state.get("hl_img_render")
-            if not rend:
-                st.info("‘🖼️ 원본 이미지 보기’를 누르면 여기에 표시됩니다.")
-            else:
-                for p, png, err in rend:
-                    if err:
-                        st.error(f"{p}p 이미지 실패 — {err}")
-                    elif png:
-                        st.markdown(f"**원본 {p}p**")
-                        try:
-                            with st.container(height=560, border=False):
-                                st.image(png, use_container_width=True)
-                        except TypeError:
-                            st.image(png, use_container_width=True)
+                    st.caption(f"⚠️ {p}p 렌더 실패")
 
     # ── 오른쪽: 카드 3개 편집 (컬럼 2중첩 방지 → 세로) ──
     with form_col:
