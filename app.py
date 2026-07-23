@@ -1005,14 +1005,14 @@ def _build_toc_from_parsed(parsed_pages):
             sections.setdefault(sec, [])
             if sub and sub != sec and sub not in sections[sec]:
                 sections[sec].append(sub)
-    return [{"title": k, "subs": [{"text": s, "pages": []} for s in v]}
+    return [{"title": k, "pages": [], "subs": [{"text": s, "fixed": False} for s in v]}
             for k, v in sections.items()]
 
 
 def _adjust_groups(groups, n):
     """대분류 개수를 정확히 n개로(부족하면 빈 그룹 추가, 많으면 뒤에서 제거)."""
     while len(groups) < n:
-        groups.append({"title": "", "subs": [{"text": "", "pages": [], "fixed": False}]})
+        groups.append({"title": "", "pages": [], "subs": [{"text": "", "fixed": False}]})
     while len(groups) > n:
         groups.pop()
     return groups
@@ -1021,23 +1021,24 @@ def _adjust_groups(groups, n):
 def _clear_toc_widget_state():
     """목차 편집 위젯 상태 초기화(구조 변경 후 재시딩용)."""
     for k in list(st.session_state.keys()):
-        if k.startswith(("toctitle_", "tocsub_", "tocpage_", "tocfix_")):
+        if k.startswith(("toctitle_", "tocsub_", "tocgpages_", "tocfix_")):
             del st.session_state[k]
 
 
-# 표준 목차(거의 고정) — 화면에서 수정 가능. 소제목 중 일부는 항상 들어가는 항목.
+# 표준 목차(거의 고정) — 화면에서 수정 가능.
+#   ★페이지는 '대분류(목차)' 단위로 넣는다: group["pages"] (순서·겹침 가능).
+#     소제목(subs)은 이름표 역할 + 'fixed'(1.1처럼 원본 없이 자동 생성되는 고정 페이지) 표시만.
 _DEFAULT_TOC = [
-    {"title": "사모사채 개요",
-     # ★1.1 본건 사모사채 개요 = 우리가 만드는 고정표 페이지. 원본에 없으므로
-     #   'fixed': True → 원본 페이지 연결을 생략(요구할 수 없음).
-     "subs": [{"text": "본건 사모사채 개요", "pages": [], "fixed": True}]},
-    {"title": "금융개요",
-     "subs": [{"text": "금융 투자구조도", "pages": [], "fixed": False},
-              {"text": "본건 기초자산 금융조건", "pages": [], "fixed": False}]},
-    {"title": "본 건 담보개요",
-     "subs": [{"text": "", "pages": [], "fixed": False}]},
-    {"title": "Appendix",
-     "subs": [{"text": "", "pages": [], "fixed": False}]},
+    {"title": "사모사채 개요", "pages": [],
+     # ★1.1 본건 사모사채 개요 = 우리가 만드는 고정표 페이지(원본 없음) → fixed=True.
+     "subs": [{"text": "본건 사모사채 개요", "fixed": True}]},
+    {"title": "금융개요", "pages": [],
+     "subs": [{"text": "금융 투자구조도", "fixed": False},
+              {"text": "본건 기초자산 금융조건", "fixed": False}]},
+    {"title": "본 건 담보개요", "pages": [],
+     "subs": [{"text": "", "fixed": False}]},
+    {"title": "Appendix", "pages": [],
+     "subs": [{"text": "", "fixed": False}]},
 ]
 
 
@@ -1169,7 +1170,8 @@ def show_step_toc():
             st.rerun()
 
         _cur = min(max(1, st.session_state.get("toc_view_page", 1)), total or 1)
-        st.caption(f"소제목마다 '원본 페이지'를 넣으세요 (0=미지정). 지금 왼쪽에 보이는 페이지: **{_cur}p**")
+        st.caption(f"**대분류(목차)마다** '원본 페이지'를 넣으세요. 소제목은 이름표만 답니다. "
+                   f"지금 왼쪽에 보이는 페이지: **{_cur}p**")
 
         pending = {"del": None, "add": None}
         for gi, g in enumerate(toc["groups"]):
@@ -1178,38 +1180,37 @@ def show_step_toc():
                 st.session_state.setdefault(tk, g.get("title", ""))
                 g["title"] = st.text_input(f"목차 {gi + 1} 제목", key=tk,
                                            placeholder="예: 4 리스크분석 / Executive Summary")
+
+                # ── 대분류(목차) 단위 원본 페이지: 적은 '순서 그대로' 들어간다.
+                #    범위 8-12 · 재배치 8,9,11,10 · 뺄 페이지 생략 · 겹침(다른 목차와 같은 페이지) 가능
+                gpk = f"tocgpages_{gi}"
+                st.session_state.setdefault(gpk, _pages_to_str(g.get("pages")))
+                _g_raw = st.text_input(
+                    f"목차 {gi + 1} 원본 페이지 (순서대로! 범위 8-12 · 재배치 8,9,11,10 · 뺄 건 생략)",
+                    key=gpk, placeholder="예: 8,9,11,10,12,16-19")
+                g["pages"] = _parse_pages(_g_raw, total)
+                if g["pages"]:
+                    st.caption(f"　└ 이 순서로 들어감 → {_pages_to_str(g['pages'])} "
+                               f"(총 {len(g['pages'])}장)")
+
+                st.markdown("소제목 (이름표):")
                 for si, sub in enumerate(g["subs"]):
-                    sk = f"tocsub_{gi}_{si}"
-                    st.session_state.setdefault(sk, sub.get("text", ""))
-                    sub["text"] = st.text_input(f"└ 소제목 {gi + 1}.{si + 1}", key=sk,
-                                                placeholder="예: (1) 낙찰사례 및 환가 분석")
-
-                    # ── 고정 페이지 여부: 우리가 만드는 페이지(예: 1.1 본건 사모사채 개요)는
-                    #    원본에 없어 페이지 연결이 불가능 → 켜면 페이지·항목 칸을 숨긴다.
-                    fk = f"tocfix_{gi}_{si}"
-                    st.session_state.setdefault(fk, bool(sub.get("fixed", False)))
-                    sub["fixed"] = st.checkbox(
-                        "🔒 고정 페이지 — 원본에 없음(페이지 연결 생략)", key=fk,
-                        help="사모사채 개요표처럼 원본 IM엔 없고 우리가 만들어 넣는 페이지입니다. "
-                             "원본 페이지를 연결할 필요가 없습니다.")
-
-                    if sub["fixed"]:
-                        st.caption("　└ 이 페이지는 원본과 연결하지 않습니다(자동 생성 고정 페이지).")
-                        sub["pages"] = []
-                    else:
-                        # ── 원본 페이지: 적은 '순서 그대로' 들어간다.
-                        #    범위 8-12 · 재배치 8,9,11,10 · 뺄 페이지는 그냥 생략 · 섞어서 8,9,11,10,12,16-19
-                        pk = f"tocpage_{gi}_{si}"
-                        st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
-                        _p_raw = st.text_input(
-                            "└ 원본 페이지 (적은 순서대로! 범위 8-12 · 재배치 8,9,11,10 · 뺄 건 생략)",
-                            key=pk, placeholder="예: 8,9,11,10,12,16-19")
-                        sub["pages"] = _parse_pages(_p_raw, total)
-                        if sub["pages"]:
-                            st.caption(f"　└ 이 순서로 들어감 → {_pages_to_str(sub['pages'])} "
-                                       f"(총 {len(sub['pages'])}장)")
-                    if st.button("🗑 소제목 삭제", key=f"tocdel_{gi}_{si}"):
-                        pending["del"] = (gi, si)
+                    sc1, sc2, sc3 = st.columns([6, 3, 1])
+                    with sc1:
+                        sk = f"tocsub_{gi}_{si}"
+                        st.session_state.setdefault(sk, sub.get("text", ""))
+                        sub["text"] = st.text_input(
+                            f"└ 소제목 {gi + 1}.{si + 1}", key=sk,
+                            placeholder="예: 투자구조도", label_visibility="collapsed")
+                    with sc2:
+                        # 1.1처럼 원본 없이 자동 생성되는 고정 페이지 표시(소제목 단위)
+                        fk = f"tocfix_{gi}_{si}"
+                        st.session_state.setdefault(fk, bool(sub.get("fixed", False)))
+                        sub["fixed"] = st.checkbox("🔒 고정", key=fk,
+                            help="1.1 본건 사모사채 개요처럼 원본 없이 자동 생성되는 페이지")
+                    with sc3:
+                        if st.button("🗑", key=f"tocdel_{gi}_{si}", help="이 소제목 삭제"):
+                            pending["del"] = (gi, si)
                 if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
                     pending["add"] = gi
 
@@ -1219,16 +1220,15 @@ def show_step_toc():
             _clear_toc_widget_state()
             st.rerun()
         if pending["add"] is not None:
-            toc["groups"][pending["add"]]["subs"].append({"text": "", "pages": [], "fixed": False})
+            toc["groups"][pending["add"]]["subs"].append({"text": "", "fixed": False})
             _clear_toc_widget_state()
             st.rerun()
 
-    # ── 목차 순서대로 미리보기 (전체 폭) ──
-    #   목차 순서(1.1 → 2.1 → 2.2 …)대로, 각 소제목 아래에 그 소제목이 지정한
-    #   원본 페이지들을 이미지로 붙여 보여준다. 미지정 페이지는 뭉텅이로 안 보여줌.
+    # ── 목차(대분류) 순서대로 미리보기 (전체 폭) ──
+    #   목차 순서대로, 각 목차(대분류) 아래에 그 목차에 넣은 원본 페이지를 이미지로 붙여 보여준다.
     st.markdown("---")
     _prev_on = st.checkbox("📖 목차 순서대로 미리보기 보기", key="toc_preview_on",
-                           help="네가 짠 목차 순서대로, 소제목마다 지정한 원본 페이지를 이미지로 확인합니다. "
+                           help="목차 순서대로, 대분류마다 넣은 원본 페이지를 이미지로 확인합니다. "
                                 "(다운로드 아님 · 화면에서만) 편집하면 다시 켜서 갱신하세요.")
     if _prev_on:
         _view = st.session_state.get("view_pdf_bytes") or st.session_state.get("pdf_bytes")
@@ -1239,33 +1239,33 @@ def show_step_toc():
                 for gi, g in enumerate(toc["groups"]):
                     gtitle = (g.get("title") or "").strip() or f"목차 {gi + 1}"
                     st.markdown(f"### {gtitle}")
-                    for si, sub in enumerate(g["subs"]):
-                        stext = (sub.get("text") or "").strip() or "(소제목 없음)"
-                        label = f"{gi + 1}.{si + 1} {stext}"
-                        if sub.get("fixed"):
-                            st.markdown(f"**{label}**　🔒 고정 페이지 (원본 없이 자동 생성)")
-                            continue
-                        pages = sub.get("pages") or []
-                        if not pages:
-                            st.markdown(f"**{label}**　⚪ 페이지 미지정 (본문에 안 들어감)")
-                            continue
-                        st.markdown(f"**{label}**　📄 원본 {_pages_to_str(pages)}p (이 순서대로)")
-                        for order, p in enumerate(pages, start=1):
-                            png = _toc_page_png(_view, p)
-                            if png:
-                                st.image(png, use_container_width=True)
-                                st.caption(f"{order}번째 · 원본 {p}p")
-                            else:
-                                st.caption(f"⚠️ {p}p 렌더 실패")
+                    _subnames = [f"{gi + 1}.{si + 1} {(s.get('text') or '').strip()}"
+                                 + ("　🔒" if s.get("fixed") else "")
+                                 for si, s in enumerate(g["subs"]) if (s.get("text") or "").strip()]
+                    if _subnames:
+                        st.caption("소제목: " + " · ".join(_subnames))
+                    pages = g.get("pages") or []
+                    if not pages:
+                        st.markdown("　⚪ 넣은 원본 페이지 없음")
+                        st.markdown("")
+                        continue
+                    st.markdown(f"📄 원본 {_pages_to_str(pages)}p (이 순서대로)")
+                    for order, p in enumerate(pages, start=1):
+                        png = _toc_page_png(_view, p)
+                        if png:
+                            st.image(png, use_container_width=True)
+                            st.caption(f"{order}번째 · 원본 {p}p")
+                        else:
+                            st.caption(f"⚠️ {p}p 렌더 실패")
                     st.markdown("")
 
     # ── 저장 요약 + 네비게이션 (전체 폭) ──
     st.markdown("---")
     total_subs = sum(len(g["subs"]) for g in toc["groups"])
-    with_page = sum(1 for g in toc["groups"] for s in g["subs"] if s.get("pages"))
+    with_page = sum(1 for g in toc["groups"] if g.get("pages"))
     fixed_cnt = sum(1 for g in toc["groups"] for s in g["subs"] if s.get("fixed"))
     st.success(f"저장됨 · 대분류 {toc['format']}개 · 소제목 {total_subs}개 · "
-               f"페이지 지정 {with_page}건 · 고정 페이지 {fixed_cnt}건")
+               f"페이지 넣은 목차 {with_page}개 · 고정 페이지 {fixed_cnt}건")
     nc1, _ns, nc2 = st.columns([2, 4, 2])
     with nc1:
         if st.button("← 이전 단계", use_container_width=True):
@@ -1289,14 +1289,14 @@ def _find_toc_pages(pages_text):
 
 
 # ─────────────────────────────────────────────
-# [3단계: 배치 확인] — 목차에서 배치한 원본 페이지를 순서대로 이미지로 확인하고,
+# [3단계: 배치 확인] — 목차(대분류)에 넣은 원본 페이지를 순서대로 이미지로 확인하고,
 #   여기서 바로 페이지를 수정하면 아래 이미지가 다시 그려진다(생성·다운로드 아님, 화면 확인용).
-#   2단계와 같은 위젯 키(tocpage_*)를 써서 수정이 서로 동기화된다.
+#   2단계와 같은 위젯 키(tocgpages_*)를 써서 수정이 서로 동기화된다.
 # ─────────────────────────────────────────────
 def show_step_arrange():
     st.markdown("## 3단계. 배치 확인")
-    st.caption("목차에서 배치한 원본 페이지를 목차 순서대로 이미지로 확인합니다. "
-               "잘못됐거나 바꾸고 싶으면 각 소제목의 페이지 칸에서 바로 고치세요 — "
+    st.caption("목차(대분류)에 넣은 원본 페이지를 목차 순서대로 이미지로 확인합니다. "
+               "잘못됐거나 바꾸고 싶으면 각 목차의 페이지 칸에서 바로 고치세요 — "
                "고치면 아래 이미지가 다시 그려집니다. (다운로드 아님 · 화면 확인용)")
 
     toc = st.session_state.get("toc_edit")
@@ -1311,57 +1311,57 @@ def show_step_arrange():
     total = len(pages_text)
     view = st.session_state.get("view_pdf_bytes") or st.session_state.get("pdf_bytes")
 
-    # ── 상단: 소제목 → 배치 페이지 매핑 요약 ──
-    st.markdown("#### 🗂️ 현재 배치 요약 (어떤 소제목에 몇 페이지를 넣었는지)")
+    # ── 상단: 목차(대분류) → 배치 페이지 매핑 요약 ──
+    st.markdown("#### 🗂️ 현재 배치 요약 (어떤 목차에 몇 페이지를 넣었는지)")
     for gi, g in enumerate(toc["groups"]):
-        for si, sub in enumerate(g["subs"]):
-            stext = (sub.get("text") or "").strip() or "(소제목 없음)"
-            head = f"**{gi + 1}.{si + 1} {stext}**"
-            if sub.get("fixed"):
-                st.markdown(f"- {head} — 🔒 고정 페이지(원본 없음, 자동 생성)")
-            elif sub.get("pages"):
-                st.markdown(f"- {head} — 📄 {_pages_to_str(sub['pages'])}p "
-                            f"({len(sub['pages'])}장, 이 순서)")
-            else:
-                st.markdown(f"- {head} — ⚪ 미지정(본문에 안 들어감)")
+        gtitle = (g.get("title") or "").strip() or f"목차 {gi + 1}"
+        subnames = [f"{gi + 1}.{si + 1} {(s.get('text') or '').strip()}"
+                    + ("🔒" if s.get("fixed") else "")
+                    for si, s in enumerate(g["subs"]) if (s.get("text") or "").strip()]
+        head = f"**목차 {gi + 1}. {gtitle}**"
+        if g.get("pages"):
+            st.markdown(f"- {head} — 📄 {_pages_to_str(g['pages'])}p "
+                        f"({len(g['pages'])}장, 이 순서)")
+        else:
+            st.markdown(f"- {head} — ⚪ 넣은 페이지 없음")
+        if subnames:
+            st.caption("　└ 소제목: " + " · ".join(subnames))
 
     st.markdown("---")
 
     if not view:
         st.warning("원본 PDF가 없어 이미지를 못 띄웁니다. 1단계에서 PDF(또는 워드→PDF)를 올리세요.")
     else:
-        # ── 소제목별: 페이지 수정칸 + 배치 순서대로 이미지 ──
+        # ── 목차(대분류)별: 페이지 수정칸 + 배치 순서대로 이미지 ──
         with st.spinner("배치한 원본 페이지를 순서대로 렌더링하는 중..."):
             for gi, g in enumerate(toc["groups"]):
                 gtitle = (g.get("title") or "").strip() or f"목차 {gi + 1}"
-                st.markdown(f"### {gtitle}")
-                for si, sub in enumerate(g["subs"]):
-                    stext = (sub.get("text") or "").strip() or "(소제목 없음)"
-                    label = f"{gi + 1}.{si + 1} {stext}"
-                    if sub.get("fixed"):
-                        st.markdown(f"**{label}**　🔒 고정 페이지 (원본 없이 자동 생성)")
-                        continue
-                    st.markdown(f"**{label}**")
-                    # 인라인 수정칸 — 2단계와 같은 key로 동기화(고치면 rerun되어 이미지 갱신)
-                    pk = f"tocpage_{gi}_{si}"
-                    st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
-                    _raw = st.text_input(
-                        "원본 페이지 (적은 순서대로! 범위 8-12 · 재배치 8,9,11,10 · 뺄 건 생략)",
-                        key=pk, placeholder="예: 8,9,11,10,12,16-19",
-                        label_visibility="collapsed")
-                    sub["pages"] = _parse_pages(_raw, total)
-                    pages = sub["pages"]
-                    if not pages:
-                        st.caption("⚪ 페이지 미지정 (본문에 안 들어감)")
-                        continue
-                    st.caption(f"이 순서로 들어감 → {_pages_to_str(pages)} (총 {len(pages)}장)")
-                    for order, p in enumerate(pages, start=1):
-                        png = _toc_page_png(view, p)
-                        if png:
-                            st.image(png, use_container_width=True)
-                            st.caption(f"{order}번째 · 원본 {p}p")
-                        else:
-                            st.caption(f"⚠️ {p}p 렌더 실패")
+                st.markdown(f"### 목차 {gi + 1}. {gtitle}")
+                subnames = [f"{gi + 1}.{si + 1} {(s.get('text') or '').strip()}"
+                            + ("🔒" if s.get("fixed") else "")
+                            for si, s in enumerate(g["subs"]) if (s.get("text") or "").strip()]
+                if subnames:
+                    st.caption("소제목: " + " · ".join(subnames))
+                # 인라인 수정칸 — 2단계와 같은 key로 동기화(고치면 rerun되어 이미지 갱신)
+                gpk = f"tocgpages_{gi}"
+                st.session_state.setdefault(gpk, _pages_to_str(g.get("pages")))
+                _raw = st.text_input(
+                    "원본 페이지 (적은 순서대로! 범위 8-12 · 재배치 8,9,11,10 · 뺄 건 생략)",
+                    key=gpk, placeholder="예: 8,9,11,10,12,16-19")
+                g["pages"] = _parse_pages(_raw, total)
+                pages = g["pages"]
+                if not pages:
+                    st.caption("⚪ 넣은 원본 페이지 없음")
+                    st.markdown("")
+                    continue
+                st.caption(f"이 순서로 들어감 → {_pages_to_str(pages)} (총 {len(pages)}장)")
+                for order, p in enumerate(pages, start=1):
+                    png = _toc_page_png(view, p)
+                    if png:
+                        st.image(png, use_container_width=True)
+                        st.caption(f"{order}번째 · 원본 {p}p")
+                    else:
+                        st.caption(f"⚠️ {p}p 렌더 실패")
                 st.markdown("")
 
     # ── 네비게이션 ──
