@@ -731,6 +731,7 @@ def show_step3():
 
     if st.button("🖼️ 표지·목차·섹션 미리보기 생성", type="primary"):
         try:
+            _toc_cnt, _toc_map = _toc_edit_to_maps()   # 4단계 목차 제목/소제목 반영
             with st.spinner("미리보기 PPT를 생성하는 중입니다..."):
                 preview_bytes = build_preview_presentation(
                     business_name=st.session_state.business_name,
@@ -739,15 +740,16 @@ def show_step3():
                     cover_image_bytes=st.session_state.cover_image_bytes,
                     section_image_bytes_list=st.session_state.section_img_bytes_list,
                     toc_image_bytes_list=[st.session_state.toc_img_bytes],
+                    toc_count=_toc_cnt,
+                    toc_map=_toc_map,
                 )
             from modules.preview import ppt_to_images
             with st.spinner("슬라이드를 이미지로 변환하는 중... (LibreOffice)"):
                 _imgs, _err = ppt_to_images(preview_bytes)
-            st.session_state.layout_preview_render = {
-                "imgs": _imgs, "err": _err, "bytes": preview_bytes}
+            st.session_state.layout_preview_render = {"imgs": _imgs, "err": _err}
         except Exception as e:
             st.session_state.layout_preview_render = {
-                "imgs": [], "err": f"미리보기 생성 실패: {e}", "bytes": None}
+                "imgs": [], "err": f"미리보기 생성 실패: {e}"}
 
     _lrend = st.session_state.get("layout_preview_render")
     if not _lrend:
@@ -756,8 +758,9 @@ def show_step3():
         st.error(f"이미지 변환 실패 — {_lrend['err']}")
     elif _lrend.get("imgs"):
         st.success(f"✅ 미리보기 {len(_lrend['imgs'])}장 (표지·목차·섹션)")
-        _labels = ["표지", "목차", "섹션 01", "섹션 02", "섹션 03", "섹션 04"]
         _imgs = _lrend["imgs"]
+        # 라벨: 표지 · 목차 · 섹션 01,02,… (섹션 수는 목차 형식에 따라 4~5)
+        _labels = ["표지", "목차"] + [f"섹션 {i + 1:02d}" for i in range(len(_imgs) - 2)]
         for _i in range(0, len(_imgs), 2):     # 가로 2장씩
             _row = _imgs[_i:_i + 2]
             _cs = st.columns(2)
@@ -766,14 +769,6 @@ def show_step3():
                     _lab = _labels[_i + _j] if _i + _j < len(_labels) else f"{_i + _j + 1}장"
                     st.image(_png, use_container_width=True)
                     st.caption(_lab)
-        if _lrend.get("bytes"):
-            st.download_button(
-                label="⬇️ 이 미리보기 PPT 다운로드 (선택)",
-                data=_lrend["bytes"],
-                file_name=(f"preview_{st.session_state.business_name}"
-                           f"_{datetime.now().strftime('%y%m%d')}.pptx"),
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            )
     else:
         st.warning("표시할 이미지가 없습니다.")
 
@@ -1307,6 +1302,30 @@ def show_step_toc():
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
             st.session_state.current_step = 5
             st.rerun()
+
+
+def _toc_edit_to_maps():
+    """4단계 목차(toc_edit) → (toc_count, toc_map).
+       toc_map = {"01":[소제목...], ..., "_labels":{"01":제목,...}}
+       → 미리보기/최종 생성의 목차 슬라이드·섹션 divider가 같은 제목을 쓰게 한다.
+       toc_edit이 없으면 (None, None)."""
+    toc = st.session_state.get("toc_edit")
+    if not toc:
+        return None, None
+    count = toc.get("format", 4)
+    labels, tmap = {}, {}
+    for gi, g in enumerate(toc.get("groups", [])):
+        num = f"0{gi + 1}"
+        title = (g.get("title") or "").strip()
+        if title:
+            labels[num] = title
+        subs = [(s.get("text") or "").strip() for s in g.get("subs", [])]
+        subs = [s for s in subs if s]
+        if subs:
+            tmap[num] = subs
+    if labels:
+        tmap["_labels"] = labels
+    return count, tmap
 
 
 def _find_toc_pages(pages_text):

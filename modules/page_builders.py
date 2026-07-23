@@ -1524,6 +1524,8 @@ def build_preview_presentation(
     cover_image_bytes: bytes = None,
     section_image_bytes_list: list = None,
     toc_image_bytes_list: list = None,
+    toc_count: int = None,
+    toc_map: dict = None,
 ) -> bytes:
     """
     표지 1장 + 목차 1장 + 섹션 구분 슬라이드 4장 = 총 6장짜리 미리보기 PPT를 반환합니다.
@@ -1546,15 +1548,27 @@ def build_preview_presentation(
 
     build_cover_slide(prs, business_name, year, month_en, cover_image_bytes)
 
-    build_toc_slide(prs, num_sections=4, toc_map=DEFAULT_TOC_MAP,
+    # ── 목차·섹션 제목을 '같은 출처'로 통일 ────────────────
+    #   사용자 목차(toc_map, _labels 포함)가 오면 그걸 쓰고, 없으면 기본값.
+    #   → 목차 슬라이드와 섹션 divider가 항상 동일한 제목을 갖는다.
+    n = toc_count if toc_count in (4, 5) else 4
+    _tmap = dict(toc_map) if toc_map else dict(DEFAULT_TOC_MAP)
+    _labels = _tmap.get("_labels") or {}
+
+    build_toc_slide(prs, num_sections=n, toc_map=_tmap,
                     toc_image_bytes_list=toc_image_bytes_list)
 
-    for sec_num, sec_label in _PREVIEW_SECTIONS:
+    if _labels:
+        sections = [(f"0{i + 1}", _labels.get(f"0{i + 1}", "")) for i in range(n)]
+    else:
+        sections = _PREVIEW_SECTIONS[:n]
+
+    for sec_num, sec_label in sections:
         build_section_divider_slide(
             prs, sec_num, sec_label,
             business_name=business_name,
             section_image_bytes_list=section_image_bytes_list,
-            subtitles=DEFAULT_TOC_MAP.get(sec_num, []),
+            subtitles=_tmap.get(sec_num, []),
         )
 
     finalize_presentation(prs, template_count)
