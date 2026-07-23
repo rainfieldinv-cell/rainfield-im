@@ -1090,6 +1090,22 @@ def _toc_page_png(view_pdf, page):
     return cache.get(page)
 
 
+def _render_pages_grid(view_pdf, pages, cols=5):
+    """페이지 목록을 가로 최대 cols개(기본 5) 그리드로 렌더 — 화면폭에 맞춰 축소.
+       칸은 항상 cols개 만들어 이미지 크기를 일정하게 유지한다."""
+    for i in range(0, len(pages), cols):
+        row = pages[i:i + cols]
+        cells = st.columns(cols)
+        for j, p in enumerate(row):
+            with cells[j]:
+                png = _toc_page_png(view_pdf, p)
+                if png:
+                    st.image(png, use_container_width=True)
+                    st.caption(f"{i + j + 1}번째 · {p}p")
+                else:
+                    st.caption(f"⚠️ {p}p 렌더 실패")
+
+
 def show_step_toc():
     st.markdown("## 2단계. 목차 구성")
     st.caption("왼쪽에서 원본 IM을 표지부터 넘겨보고, 오른쪽에서 목차 제목·소제목을 직접 만드세요. "
@@ -1250,13 +1266,7 @@ def show_step_toc():
                         st.markdown("")
                         continue
                     st.markdown(f"📄 원본 {_pages_to_str(pages)}p (이 순서대로)")
-                    for order, p in enumerate(pages, start=1):
-                        png = _toc_page_png(_view, p)
-                        if png:
-                            st.image(png, use_container_width=True)
-                            st.caption(f"{order}번째 · 원본 {p}p")
-                        else:
-                            st.caption(f"⚠️ {p}p 렌더 실패")
+                    _render_pages_grid(_view, pages)
                     st.markdown("")
 
     # ── 저장 요약 + 네비게이션 (전체 폭) ──
@@ -1355,13 +1365,7 @@ def show_step_arrange():
                     st.markdown("")
                     continue
                 st.caption(f"이 순서로 들어감 → {_pages_to_str(pages)} (총 {len(pages)}장)")
-                for order, p in enumerate(pages, start=1):
-                    png = _toc_page_png(view, p)
-                    if png:
-                        st.image(png, use_container_width=True)
-                        st.caption(f"{order}번째 · 원본 {p}p")
-                    else:
-                        st.caption(f"⚠️ {p}p 렌더 실패")
+                _render_pages_grid(view, pages)
                 st.markdown("")
 
     # ── 네비게이션 ──
