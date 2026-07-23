@@ -281,7 +281,7 @@ def show_step1():
                 # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3단계 새로 시작)
                 for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page",
                            "toc_png_cache", "view_pdf_bytes", "highlight_cards", "hl_img_render",
-                           "hl_done_render", "hl_view_idx"):
+                           "hl_done_render", "hl_view_page"):
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
 
@@ -1431,49 +1431,39 @@ def show_step_highlight():
 
     img_col, form_col = st.columns([1, 1])
 
-    # ── 왼쪽: 원본 Executive Summary 페이지 (목차 4단계처럼 ◀▶로 한 장씩 넘김) ──
-    #    ES를 찾으면 그 페이지만, 못 찾으면 시작 5장(1~5p)을 대상으로 넘긴다.
+    # ── 왼쪽: 원본 IM 전체 페이지 뷰어 (목차 4단계처럼 ◀▶로 전체를 한 장씩 넘김) ──
     with img_col:
+        st.markdown("#### 📄 원본 IM (표지부터 한 장씩)")
         if not view_pdf or total == 0:
-            st.markdown("#### 📄 원본 Executive Summary")
             st.warning("원본 PDF가 없어 이미지를 못 띄웁니다. 1단계에서 워드/PDF를 올려주세요.")
         else:
-            es_pages = _find_es_pages(pages_text)
             npage = _pdf_page_count(view_pdf)
             if npage <= 0:
                 npage = total
+            es_pages = _find_es_pages(pages_text)
             if es_pages:
-                show_pages = [p for p in es_pages if 1 <= p <= npage]
-                st.markdown("#### 📄 원본 Executive Summary")
-                st.caption(f"Executive Summary로 추정되는 페이지: {_pages_to_str(show_pages)}p")
-            else:
-                show_pages = list(range(1, min(5, npage) + 1))
-                st.markdown("#### 📄 원본 시작 5장 (Executive Summary 못 찾음 → 대체)")
-                st.caption("Executive Summary 페이지를 못 찾아 시작 5장을 보여줍니다.")
-            if not show_pages:
-                show_pages = [1]
-            # 목차 단계와 동일한 ◀이전/다음▶ 넘김 (대상: show_pages 안에서 한 장씩)
-            idx = min(max(0, st.session_state.get("hl_view_idx", 0)), len(show_pages) - 1)
+                st.caption(f"Executive Summary로 추정되는 페이지: {_pages_to_str(es_pages)}p "
+                           "(참고용 · 전체를 넘겨볼 수 있어요)")
+            cur = min(max(1, st.session_state.get("hl_view_page", 1)), npage)
             pc1, pc2, pc3 = st.columns([1, 2, 1])
             with pc1:
                 if st.button("◀ 이전", key="hl_prev", use_container_width=True,
-                             disabled=(idx <= 0)):
-                    st.session_state.hl_view_idx = idx - 1
+                             disabled=(cur <= 1)):
+                    st.session_state.hl_view_page = cur - 1
                     st.rerun()
             with pc2:
                 st.markdown(f"<div style='text-align:center; padding-top:6px;'>"
-                            f"<b>{show_pages[idx]}</b>p　({idx + 1}/{len(show_pages)})</div>",
-                            unsafe_allow_html=True)
+                            f"<b>{cur}</b> / {npage} 페이지</div>", unsafe_allow_html=True)
             with pc3:
                 if st.button("다음 ▶", key="hl_next", use_container_width=True,
-                             disabled=(idx >= len(show_pages) - 1)):
-                    st.session_state.hl_view_idx = idx + 1
+                             disabled=(cur >= npage)):
+                    st.session_state.hl_view_page = cur + 1
                     st.rerun()
-            png = _toc_page_png(view_pdf, show_pages[idx])
+            png = _toc_page_png(view_pdf, cur)
             if png:
                 st.image(png, use_container_width=True)
             else:
-                st.caption(f"⚠️ {show_pages[idx]}p 렌더 실패")
+                st.caption(f"⚠️ {cur}p 렌더 실패")
 
     # ── 오른쪽: 카드 3개 편집 (컬럼 2중첩 방지 → 세로) ──
     with form_col:
