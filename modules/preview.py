@@ -132,9 +132,62 @@ def pdf_pages_to_images(pdf_bytes: bytes, pages=None, dpi: int = 120):
 # [워드 → PDF 변환] — 자금판(전)처럼 워드를 LibreOffice로 PDF로 바꿔 페이지·레이아웃·이미지를 살린다.
 #   (python-docx 직독은 '1페이지'로 뭉치고 좌표가 없어 IM 재현이 안 됨 → PDF 변환이 필요)
 # ─────────────────────────────────────────────
+def _salvage_docx_zip(word_bytes: bytes):
+    """손상된 docx(중앙 디렉토리/EOCD가 없거나 깨진 zip) 복구 시도.
+       파일 안에 남아있는 로컬 파일 헤더(PK0304)들을 순서대로 읽어 새 zip으로 재조립한다.
+       반환: (새 docx bytes|None, 살린 항목 수). 본문(word/document.xml)이 없으면 실패로 본다."""
+    import struct, zlib
+    try:
+        import zipfile as _zf
+    except Exception:
+        return None, 0
+    data = word_bytes
+    entries = []          # (name, raw_uncompressed_bytes)
+    i = 0
+    while True:
+        j = data.find(b"PK\x03\x04", i)
+        if j < 0 or j + 30 > len(data):
+            break
+        try:
+            (ver, flag, method, mt, md, crc,
+             csize, usize, fnl, efl) = struct.unpack("<HHHHHIIIHH", data[j + 4:j + 30])
+        except struct.error:
+            break
+        name_end = j + 30 + fnl
+        body = name_end + efl
+        # 데이터 디스크립터(크기가 헤더에 없음)나 크기 이상 → 재조립 불가 항목, 중단
+        if (flag & 0x08) or csize == 0 and usize == 0 and method != 0:
+            break
+        comp = data[body:body + csize]
+        if len(comp) < csize:                       # 파일이 여기서 잘림
+            break
+        name = data[j + 30:name_end].decode("utf-8", "replace")
+        try:
+            raw = comp if method == 0 else zlib.decompress(comp, -15)
+            entries.append((name, raw))
+        except Exception:
+            pass                                    # 이 조각만 버리고 계속
+        i = body + csize
+
+    if not entries or not any(n == "word/document.xml" for n, _ in entries):
+        return None, 0
+
+    import io as _io
+    out = _io.BytesIO()
+    seen = set()
+    with _zf.ZipFile(out, "w", _zf.ZIP_DEFLATED) as z:
+        for name, raw in entries:
+            if name in seen:
+                continue
+            seen.add(name)
+            z.writestr(name, raw)
+    return out.getvalue(), len(seen)
+
+
 def convert_word_to_pdf(word_bytes: bytes, filename: str = "doc.docx"):
     """워드(.doc/.docx) → PDF bytes. 반환: (pdf_bytes: bytes|None, error: str|None).
-       LibreOffice(soffice) 사용. 실패해도 앱이 죽지 않게 graceful 처리."""
+       LibreOffice(soffice) 사용. 실패해도 앱이 죽지 않게 graceful 처리.
+       soffice가 파일을 못 열면(손상 docx) zip 재조립으로 한 번 더 시도한다."""
     if not word_bytes:
         return None, "워드 파일이 없습니다."
     soffice = _find_soffice()
@@ -142,39 +195,57 @@ def convert_word_to_pdf(word_bytes: bytes, filename: str = "doc.docx"):
         return None, "LibreOffice(soffice)가 없어 워드→PDF 변환을 못 합니다(로컬 실행 시 LibreOffice 필요)."
 
     ext = ".doc" if filename.lower().endswith(".doc") else ".docx"
-    tmp = tempfile.mkdtemp(prefix="rf_word_")
-    try:
-        src = os.path.join(tmp, "src" + ext)
-        with open(src, "wb") as f:
-            f.write(word_bytes)
-        env = dict(os.environ)
-        env["HOME"] = tmp
-        # ★호출마다 '전용 프로필'을 강제 → 이전 변환의 프로필 잠금 때문에
-        #   다음 변환이 조용히 실패하는 LibreOffice single-instance 문제 차단.
-        from pathlib import Path
-        user_inst = Path(tmp, "lo_profile").as_uri()
-        try:
-            proc = subprocess.run(
-                [soffice, "-env:UserInstallation=" + user_inst,
-                 "--headless", "--norestore", "--nofirststartwizard",
-                 "--convert-to", "pdf", "--outdir", tmp, src],
-                capture_output=True, timeout=240, env=env,
-            )
-        except subprocess.TimeoutExpired:
-            return None, "워드→PDF 변환 시간 초과(240초). 파일이 크거나 이미지가 많으면 발생합니다."
-        except Exception as e:
-            return None, f"LibreOffice 실행 실패: {e}"
 
-        pdf_path = os.path.join(tmp, "src.pdf")
-        if not os.path.exists(pdf_path):
-            # soffice가 남긴 실제 원인을 그대로 보여준다(무음 실패 방지).
-            err = (proc.stderr or b"").decode("utf-8", "ignore").strip()
-            out = (proc.stdout or b"").decode("utf-8", "ignore").strip()
-            reason = err or out or "soffice가 PDF를 생성하지 못했습니다."
-            return None, f"워드→PDF 변환 실패 — {reason[:300]}"
-        with open(pdf_path, "rb") as f:
-            return f.read(), None
-    except Exception as e:
-        return None, f"워드→PDF 변환 중 오류: {e}"
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    def _run(src_bytes):
+        """단일 변환 시도 → (pdf_bytes|None, reason|None)."""
+        tmp = tempfile.mkdtemp(prefix="rf_word_")
+        try:
+            src = os.path.join(tmp, "src" + ext)
+            with open(src, "wb") as f:
+                f.write(src_bytes)
+            env = dict(os.environ)
+            env["HOME"] = tmp
+            # ★호출마다 '전용 프로필' 강제 → 이전 변환의 프로필 잠금에 의한 무음 실패 차단.
+            from pathlib import Path
+            user_inst = Path(tmp, "lo_profile").as_uri()
+            try:
+                proc = subprocess.run(
+                    [soffice, "-env:UserInstallation=" + user_inst,
+                     "--headless", "--norestore", "--nofirststartwizard",
+                     "--convert-to", "pdf", "--outdir", tmp, src],
+                    capture_output=True, timeout=240, env=env,
+                )
+            except subprocess.TimeoutExpired:
+                return None, "워드→PDF 변환 시간 초과(240초). 파일이 크거나 이미지가 많으면 발생합니다."
+            except Exception as e:
+                return None, f"LibreOffice 실행 실패: {e}"
+
+            pdf_path = os.path.join(tmp, "src.pdf")
+            if not os.path.exists(pdf_path):
+                err = (proc.stderr or b"").decode("utf-8", "ignore").strip()
+                out = (proc.stdout or b"").decode("utf-8", "ignore").strip()
+                reason = err or out or "soffice가 PDF를 생성하지 못했습니다."
+                return None, reason[:300]
+            with open(pdf_path, "rb") as f:
+                return f.read(), None
+        except Exception as e:
+            return None, f"워드→PDF 변환 중 오류: {e}"
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    # 1차 시도(원본 그대로)
+    pdf, reason = _run(word_bytes)
+    if pdf is not None:
+        return pdf, None
+
+    # 2차 시도: docx가 손상돼 못 열린 경우 zip 재조립본으로 재시도
+    if ext == ".docx":
+        salvaged, n = _salvage_docx_zip(word_bytes)
+        if salvaged is not None:
+            pdf2, reason2 = _run(salvaged)
+            if pdf2 is not None:
+                return pdf2, None
+            return None, (f"워드→PDF 변환 실패 — {reason}. "
+                          f"손상 복구({n}개 조각)로 재시도했으나 실패: {reason2}")
+
+    return None, f"워드→PDF 변환 실패 — {reason}"
