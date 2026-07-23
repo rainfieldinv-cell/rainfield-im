@@ -1017,7 +1017,7 @@ def _build_toc_from_parsed(parsed_pages):
 def _adjust_groups(groups, n):
     """대분류 개수를 정확히 n개로(부족하면 빈 그룹 추가, 많으면 뒤에서 제거)."""
     while len(groups) < n:
-        groups.append({"title": "", "subs": [{"text": "", "pages": [], "items": {}}]})
+        groups.append({"title": "", "subs": [{"text": "", "pages": [], "items": {}, "fixed": False}]})
     while len(groups) > n:
         groups.pop()
     return groups
@@ -1026,21 +1026,23 @@ def _adjust_groups(groups, n):
 def _clear_toc_widget_state():
     """목차 편집 위젯 상태 초기화(구조 변경 후 재시딩용)."""
     for k in list(st.session_state.keys()):
-        if k.startswith(("toctitle_", "tocsub_", "tocpage_", "tocitem_")):
+        if k.startswith(("toctitle_", "tocsub_", "tocpage_", "tocitem_", "tocfix_")):
             del st.session_state[k]
 
 
 # 표준 목차(거의 고정) — 화면에서 수정 가능. 소제목 중 일부는 항상 들어가는 항목.
 _DEFAULT_TOC = [
     {"title": "사모사채 개요",
-     "subs": [{"text": "본건 사모사채 개요", "pages": [], "items": {}}]},
+     # ★1.1 본건 사모사채 개요 = 우리가 만드는 고정표 페이지. 원본에 없으므로
+     #   'fixed': True → 원본 페이지 연결을 생략(요구할 수 없음).
+     "subs": [{"text": "본건 사모사채 개요", "pages": [], "items": {}, "fixed": True}]},
     {"title": "금융개요",
-     "subs": [{"text": "금융 투자구조도", "pages": [], "items": {}},
-              {"text": "본건 기초자산 금융조건", "pages": [], "items": {}}]},
+     "subs": [{"text": "금융 투자구조도", "pages": [], "items": {}, "fixed": False},
+              {"text": "본건 기초자산 금융조건", "pages": [], "items": {}, "fixed": False}]},
     {"title": "본 건 담보개요",
-     "subs": [{"text": "", "pages": [], "items": {}}]},
+     "subs": [{"text": "", "pages": [], "items": {}, "fixed": False}]},
     {"title": "Appendix",
-     "subs": [{"text": "", "pages": [], "items": {}}]},
+     "subs": [{"text": "", "pages": [], "items": {}, "fixed": False}]},
 ]
 
 
@@ -1176,36 +1178,51 @@ def show_step_toc():
                     st.session_state.setdefault(sk, sub.get("text", ""))
                     sub["text"] = st.text_input(f"└ 소제목 {gi + 1}.{si + 1}", key=sk,
                                                 placeholder="예: (1) 낙찰사례 및 환가 분석")
-                    # ── 원본 페이지: 여러 장에 걸치면 "4,5"처럼 복수 입력 ──
-                    pk = f"tocpage_{gi}_{si}"
-                    st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
-                    _p_raw = st.text_input(
-                        "└ 원본 페이지 (여러 장이면 쉼표: 4,5 · 비우면 미지정)", key=pk,
-                        placeholder="예: 4  또는  4,5")
-                    sub["pages"] = _parse_pages(_p_raw, total)
 
-                    # ── 페이지마다 '그 페이지의 어느 항목'을 각각 선택 ──
-                    #    (다음 장엔 필요 없는 항목이 섞일 수 있으니 페이지별로 따로 고름)
-                    picks = dict(sub.get("items") or {})
-                    for p in sub["pages"]:
-                        items = _page_items(pages_text, p)
-                        if not items:
-                            continue
-                        ik = f"tocitem_{gi}_{si}_{p}"
-                        opts = ["(페이지 전체)"] + items
-                        prev = picks.get(str(p))
-                        if prev and prev in opts and ik not in st.session_state:
-                            st.session_state[ik] = prev
-                        if ik in st.session_state and st.session_state[ik] not in opts:
-                            del st.session_state[ik]
-                        picked = st.selectbox(
-                            f"　└ {p}p 에서 가져올 항목", opts, key=ik,
-                            help="그 페이지에서 이 소제목에 해당하는 부분만 고르세요. "
-                                 "필요 없는 항목은 안 고르면 됩니다.")
-                        picks[str(p)] = "" if picked == "(페이지 전체)" else picked
-                    # 지정에서 빠진 페이지 기록 제거
-                    sub["items"] = {k: v for k, v in picks.items()
-                                    if int(k) in sub["pages"]}
+                    # ── 고정 페이지 여부: 우리가 만드는 페이지(예: 1.1 본건 사모사채 개요)는
+                    #    원본에 없어 페이지 연결이 불가능 → 켜면 페이지·항목 칸을 숨긴다.
+                    fk = f"tocfix_{gi}_{si}"
+                    st.session_state.setdefault(fk, bool(sub.get("fixed", False)))
+                    sub["fixed"] = st.checkbox(
+                        "🔒 고정 페이지 — 원본에 없음(페이지 연결 생략)", key=fk,
+                        help="사모사채 개요표처럼 원본 IM엔 없고 우리가 만들어 넣는 페이지입니다. "
+                             "원본 페이지를 연결할 필요가 없습니다.")
+
+                    if sub["fixed"]:
+                        st.caption("　└ 이 페이지는 원본과 연결하지 않습니다(자동 생성 고정 페이지).")
+                        sub["pages"] = []
+                        sub["items"] = {}
+                    else:
+                        # ── 원본 페이지: 여러 장에 걸치면 "4,5"처럼 복수 입력 ──
+                        pk = f"tocpage_{gi}_{si}"
+                        st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
+                        _p_raw = st.text_input(
+                            "└ 원본 페이지 (여러 장이면 쉼표: 4,5 · 비우면 미지정)", key=pk,
+                            placeholder="예: 4  또는  4,5")
+                        sub["pages"] = _parse_pages(_p_raw, total)
+
+                        # ── 페이지마다 '그 페이지의 어느 항목'을 각각 선택 ──
+                        #    (다음 장엔 필요 없는 항목이 섞일 수 있으니 페이지별로 따로 고름)
+                        picks = dict(sub.get("items") or {})
+                        for p in sub["pages"]:
+                            items = _page_items(pages_text, p)
+                            if not items:
+                                continue
+                            ik = f"tocitem_{gi}_{si}_{p}"
+                            opts = ["(페이지 전체)"] + items
+                            prev = picks.get(str(p))
+                            if prev and prev in opts and ik not in st.session_state:
+                                st.session_state[ik] = prev
+                            if ik in st.session_state and st.session_state[ik] not in opts:
+                                del st.session_state[ik]
+                            picked = st.selectbox(
+                                f"　└ {p}p 에서 가져올 항목", opts, key=ik,
+                                help="그 페이지에서 이 소제목에 해당하는 부분만 고르세요. "
+                                     "필요 없는 항목은 안 고르면 됩니다.")
+                            picks[str(p)] = "" if picked == "(페이지 전체)" else picked
+                        # 지정에서 빠진 페이지 기록 제거
+                        sub["items"] = {k: v for k, v in picks.items()
+                                        if int(k) in sub["pages"]}
                     if st.button("🗑 소제목 삭제", key=f"tocdel_{gi}_{si}"):
                         pending["del"] = (gi, si)
                 if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
@@ -1217,7 +1234,7 @@ def show_step_toc():
             _clear_toc_widget_state()
             st.rerun()
         if pending["add"] is not None:
-            toc["groups"][pending["add"]]["subs"].append({"text": "", "pages": [], "items": {}})
+            toc["groups"][pending["add"]]["subs"].append({"text": "", "pages": [], "items": {}, "fixed": False})
             _clear_toc_widget_state()
             st.rerun()
 
@@ -1225,7 +1242,9 @@ def show_step_toc():
     st.markdown("---")
     total_subs = sum(len(g["subs"]) for g in toc["groups"])
     with_page = sum(1 for g in toc["groups"] for s in g["subs"] if s.get("pages"))
-    st.success(f"저장됨 · 대분류 {toc['format']}개 · 소제목 {total_subs}개 · 페이지 지정 {with_page}건")
+    fixed_cnt = sum(1 for g in toc["groups"] for s in g["subs"] if s.get("fixed"))
+    st.success(f"저장됨 · 대분류 {toc['format']}개 · 소제목 {total_subs}개 · "
+               f"페이지 지정 {with_page}건 · 고정 페이지 {fixed_cnt}건")
     nc1, _ns, nc2 = st.columns([2, 4, 2])
     with nc1:
         if st.button("← 이전 단계", use_container_width=True):
