@@ -280,7 +280,7 @@ def show_step1():
 
                 # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3단계 새로 시작)
                 for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page",
-                           "view_pdf_bytes", "highlight_cards", "hl_img_render",
+                           "toc_png_cache", "view_pdf_bytes", "highlight_cards", "hl_img_render",
                            "hl_done_render"):
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
@@ -955,17 +955,29 @@ _ITEM_MARK = re.compile(
 
 
 def _parse_pages(raw, total=0):
-    """'4,5' / '4 5' → [4,5] (중복·범위밖 제거, 오름차순). 빈 값이면 []."""
+    """'4,5' / '4 5' / '3-8' / '3, 9-11' → [정수 페이지] (중복·범위밖 제거, 오름차순).
+       범위 표기 'a-b'(또는 a~b)를 펼쳐서 넣는다. 빈 값이면 []."""
     out = []
+
+    def _add(n):
+        if n >= 1 and (total <= 0 or n <= total) and n not in out:
+            out.append(n)
+
     for tok in re.split(r"[,\s]+", (raw or "").strip()):
         if not tok:
             continue
+        m = re.match(r"^(\d+)\s*[-~]\s*(\d+)$", tok)   # 범위: 3-8 / 3~8
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            if a > b:
+                a, b = b, a
+            for n in range(a, b + 1):
+                _add(n)
+            continue
         try:
-            n = int(tok)
+            _add(int(tok))
         except ValueError:
             continue
-        if n >= 1 and (total <= 0 or n <= total) and n not in out:
-            out.append(n)
     return sorted(out)
 
 
@@ -1084,6 +1096,16 @@ def _render_pdf_page(pdf_bytes, page_num, zoom=2.0):
         return None, f"이미지 렌더 실패: {e}"
 
 
+def _toc_page_png(view_pdf, page):
+    """미리보기용 페이지 PNG(렌더 결과를 세션에 캐시 → 재실행 때 재렌더 안 함).
+       실패하면 None. 새 문서 업로드 시 toc_png_cache는 초기화된다."""
+    cache = st.session_state.setdefault("toc_png_cache", {})
+    if page not in cache:
+        png, _err = _render_pdf_page(view_pdf, page)
+        cache[page] = png
+    return cache.get(page)
+
+
 def show_step_toc():
     st.markdown("## 2단계. 목차 구성")
     st.caption("왼쪽에서 원본 IM을 표지부터 넘겨보고, 오른쪽에서 목차 제목·소제목을 직접 만드세요. "
@@ -1193,13 +1215,16 @@ def show_step_toc():
                         sub["pages"] = []
                         sub["items"] = {}
                     else:
-                        # ── 원본 페이지: 여러 장에 걸치면 "4,5"처럼 복수 입력 ──
+                        # ── 원본 페이지: 범위(3-8) · 쉼표(4,5) · 섞어서(3, 9-11) 모두 가능 ──
                         pk = f"tocpage_{gi}_{si}"
                         st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
                         _p_raw = st.text_input(
-                            "└ 원본 페이지 (여러 장이면 쉼표: 4,5 · 비우면 미지정)", key=pk,
-                            placeholder="예: 4  또는  4,5")
+                            "└ 원본 페이지 (범위 3-8 · 쉼표 4,5 · 섞어서 3, 9-11 · 비우면 미지정)",
+                            key=pk, placeholder="예: 3-8  또는  3, 9-11")
                         sub["pages"] = _parse_pages(_p_raw, total)
+                        if sub["pages"]:
+                            st.caption(f"　└ 지정된 원본 페이지: {_pages_to_str(sub['pages'])} "
+                                       f"(총 {len(sub['pages'])}장)")
 
                         # ── 페이지마다 '그 페이지의 어느 항목'을 각각 선택 ──
                         #    (다음 장엔 필요 없는 항목이 섞일 수 있으니 페이지별로 따로 고름)
@@ -1237,6 +1262,44 @@ def show_step_toc():
             toc["groups"][pending["add"]]["subs"].append({"text": "", "pages": [], "items": {}, "fixed": False})
             _clear_toc_widget_state()
             st.rerun()
+
+    # ── 목차 순서대로 미리보기 (전체 폭) ──
+    #   목차 순서(1.1 → 2.1 → 2.2 …)대로, 각 소제목 아래에 그 소제목이 지정한
+    #   원본 페이지들을 이미지로 붙여 보여준다. 미지정 페이지는 뭉텅이로 안 보여줌.
+    st.markdown("---")
+    _prev_on = st.checkbox("📖 목차 순서대로 미리보기 보기", key="toc_preview_on",
+                           help="네가 짠 목차 순서대로, 소제목마다 지정한 원본 페이지를 이미지로 확인합니다. "
+                                "(다운로드 아님 · 화면에서만) 편집하면 다시 켜서 갱신하세요.")
+    if _prev_on:
+        _view = st.session_state.get("view_pdf_bytes") or st.session_state.get("pdf_bytes")
+        if not _view:
+            st.warning("원본 PDF가 없어 미리보기를 못 띄웁니다. 1단계에서 PDF(또는 워드→PDF)를 올리세요.")
+        else:
+            with st.spinner("목차 순서대로 원본 페이지를 렌더링하는 중..."):
+                for gi, g in enumerate(toc["groups"]):
+                    gtitle = (g.get("title") or "").strip() or f"목차 {gi + 1}"
+                    st.markdown(f"### {gtitle}")
+                    for si, sub in enumerate(g["subs"]):
+                        stext = (sub.get("text") or "").strip() or "(소제목 없음)"
+                        label = f"{gi + 1}.{si + 1} {stext}"
+                        if sub.get("fixed"):
+                            st.markdown(f"**{label}**　🔒 고정 페이지 (원본 없이 자동 생성)")
+                            continue
+                        pages = sub.get("pages") or []
+                        if not pages:
+                            st.markdown(f"**{label}**　⚪ 페이지 미지정 (본문에 안 들어감)")
+                            continue
+                        st.markdown(f"**{label}**　📄 원본 {_pages_to_str(pages)}p")
+                        for p in pages:
+                            png = _toc_page_png(_view, p)
+                            item = (sub.get("items") or {}).get(str(p))
+                            cap = f"원본 {p}p" + (f" · 가져올 항목: {item}" if item else "")
+                            if png:
+                                st.image(png, use_container_width=True)
+                                st.caption(cap)
+                            else:
+                                st.caption(f"⚠️ {p}p 렌더 실패")
+                    st.markdown("")
 
     # ── 저장 요약 + 네비게이션 (전체 폭) ──
     st.markdown("---")
