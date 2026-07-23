@@ -55,3 +55,6 @@ PDF,워드(원본)/
 *.png
 !templates/*.png
 templates/*_backup.pptx
+
+# PowerPoint/Excel 임시 락파일
+~$*
