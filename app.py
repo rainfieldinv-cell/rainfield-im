@@ -281,7 +281,7 @@ def show_step1():
                 # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3단계 새로 시작)
                 for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page",
                            "toc_png_cache", "view_pdf_bytes", "highlight_cards", "hl_img_render",
-                           "hl_done_render", "hl_view_page"):
+                           "hl_done_render", "hl_view_page", "layout_preview_render"):
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
 
@@ -727,12 +727,11 @@ def show_step3():
     # (E) 표지·목차·섹션 미리보기
     # ────────────────────────────────────────
     st.markdown("### 🚀 표지·목차·섹션 미리보기")
-    st.caption("표지 1장 + 목차 1장 + 섹션 구분 페이지 4장 = 총 6장짜리 미리보기 PPT를 생성합니다. 정식 완성본이 아닙니다.")
+    st.caption("표지 1장 + 목차 1장 + 섹션 구분 4장 = 총 6장을 이미지로 보여줍니다. (정식 완성본 아님 · 화면 확인용)")
 
-    if st.button("🚀 표지·목차·섹션 미리 생성", type="primary"):
+    if st.button("🖼️ 표지·목차·섹션 미리보기 생성", type="primary"):
         try:
             with st.spinner("미리보기 PPT를 생성하는 중입니다..."):
-                import io as _io
                 preview_bytes = build_preview_presentation(
                     business_name=st.session_state.business_name,
                     year=st.session_state.year,
@@ -741,19 +740,42 @@ def show_step3():
                     section_image_bytes_list=st.session_state.section_img_bytes_list,
                     toc_image_bytes_list=[st.session_state.toc_img_bytes],
                 )
-            _preview_name = (
-                f"preview_{st.session_state.business_name}"
-                f"_{datetime.now().strftime('%y%m%d')}.pptx"
-            )
-            st.success("✅ 미리보기 생성 완료 (표지 1장 + 목차 1장 + 섹션 구분 4장)")
+            from modules.preview import ppt_to_images
+            with st.spinner("슬라이드를 이미지로 변환하는 중... (LibreOffice)"):
+                _imgs, _err = ppt_to_images(preview_bytes)
+            st.session_state.layout_preview_render = {
+                "imgs": _imgs, "err": _err, "bytes": preview_bytes}
+        except Exception as e:
+            st.session_state.layout_preview_render = {
+                "imgs": [], "err": f"미리보기 생성 실패: {e}", "bytes": None}
+
+    _lrend = st.session_state.get("layout_preview_render")
+    if not _lrend:
+        st.info("‘🖼️ 표지·목차·섹션 미리보기 생성’을 누르면 여기에 6장이 이미지로 표시됩니다.")
+    elif _lrend.get("err"):
+        st.error(f"이미지 변환 실패 — {_lrend['err']}")
+    elif _lrend.get("imgs"):
+        st.success(f"✅ 미리보기 {len(_lrend['imgs'])}장 (표지·목차·섹션)")
+        _labels = ["표지", "목차", "섹션 01", "섹션 02", "섹션 03", "섹션 04"]
+        _imgs = _lrend["imgs"]
+        for _i in range(0, len(_imgs), 2):     # 가로 2장씩
+            _row = _imgs[_i:_i + 2]
+            _cs = st.columns(2)
+            for _j, _png in enumerate(_row):
+                with _cs[_j]:
+                    _lab = _labels[_i + _j] if _i + _j < len(_labels) else f"{_i + _j + 1}장"
+                    st.image(_png, use_container_width=True)
+                    st.caption(_lab)
+        if _lrend.get("bytes"):
             st.download_button(
-                label="⬇️ 미리보기 PPT 다운로드",
-                data=preview_bytes,
-                file_name=_preview_name,
+                label="⬇️ 이 미리보기 PPT 다운로드 (선택)",
+                data=_lrend["bytes"],
+                file_name=(f"preview_{st.session_state.business_name}"
+                           f"_{datetime.now().strftime('%y%m%d')}.pptx"),
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
             )
-        except Exception as e:
-            st.error(f"❌ 미리보기 생성 중 오류가 발생했습니다: {e}")
+    else:
+        st.warning("표시할 이미지가 없습니다.")
 
     st.markdown("---")
 
