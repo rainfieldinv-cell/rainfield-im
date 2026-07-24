@@ -21,9 +21,6 @@ from modules.content_parser import (
     remap_pages_for_5sections,
 )
 
-# 텔레그램 알림 (PPT 생성 시 그룹방에 알림 — 실패해도 기능엔 영향 없음)
-from notify import notify_download
-
 # ─────────────────────────────────────────────
 # [페이지 기본 설정]
 # - page_title : 브라우저 탭에 표시되는 제목 (여기를 수정하면 탭 제목이 바뀝니다)
@@ -916,16 +913,6 @@ def show_step4():
             st.session_state.ppt_bytes = ppt_bytes
             filename = make_output_filename(st.session_state.business_name)
             st.success(f"✅ PPT 생성 완료!")
-
-            # ── 텔레그램 알림 (백그라운드, fire-and-forget) ──
-            #   이 블록은 '완성 PPT 생성하기' 버튼을 누른 rerun 에서만 실행되므로
-            #   (다운로드 버튼 클릭 등 다른 rerun 에는 재실행 안 됨) 생성 1회당 알림 1회.
-            #   토큰은 st.secrets 에서 읽어 넘깁니다(브라우저 노출 없음).
-            try:
-                _notify_token = st.secrets.get("NOTIFY_TOKEN", "")
-            except Exception:
-                _notify_token = ""
-            notify_download(_notify_token, filename)
 
             st.download_button(
                 label="⬇️ PPT 다운로드",
