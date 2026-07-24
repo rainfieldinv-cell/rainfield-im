@@ -58,3 +58,6 @@ templates/*_backup.pptx
 
 # PowerPoint/Excel 임시 락파일
 ~$*
+
+# LLM 응답 캐시(로컬)
+.claude_cache/

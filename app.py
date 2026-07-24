@@ -45,6 +45,19 @@ except Exception:
     CORRECT_CODE = "rainfield2026"  # ← 여기를 수정하면 기본 접근 코드가 바뀝니다
 
 # ─────────────────────────────────────────────
+# [Anthropic API 키 다리]
+# 클라우드에서는 키를 st.secrets["ANTHROPIC_API_KEY"]에 넣는다(Settings→Secrets).
+# LLM 엔진(modules/claude_api.py)은 os.environ["ANTHROPIC_API_KEY"]만 읽으므로
+# secrets → 환경변수로 넘겨준다. 로컬(.env)에 이미 있으면 건드리지 않는다.
+# ─────────────────────────────────────────────
+try:
+    _k = str(st.secrets.get("ANTHROPIC_API_KEY", "")).strip()
+    if _k and not os.environ.get("ANTHROPIC_API_KEY"):
+        os.environ["ANTHROPIC_API_KEY"] = _k
+except Exception:
+    pass
+
+# ─────────────────────────────────────────────
 # [세션 상태 초기화]
 # - st.session_state : 페이지가 새로고침돼도 값이 유지되는 저장공간
 # - logged_in : 로그인 여부 (True = 로그인됨, False = 로그아웃 상태)
