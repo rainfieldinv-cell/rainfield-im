@@ -456,21 +456,6 @@ def _make_toc_miniature(w_px: int = 540, h_px: int = 374) -> bytes:
     return buf.getvalue()
 
 
-def _detect_toc_count(full_text: str) -> int:
-    """
-    추출 텍스트에서 '01', '02' 같은 섹션 번호 패턴을 세어 목차 개수를 추정합니다.
-    찾지 못하면 기본값 4를 반환합니다.
-    여기를 수정하면 목차 감지 패턴이 바뀝니다.
-    """
-    matches = re.findall(r'\b0[1-9]\b', full_text)
-    unique  = len(set(matches))
-    if unique >= 5:
-        return 5
-    elif unique >= 3:
-        return 4
-    return 4  # 기본값
-
-
 # ─────────────────────────────────────────────
 # [3단계: 레이아웃 및 표지 미리 생성 화면]
 # ─────────────────────────────────────────────
@@ -484,40 +469,12 @@ def show_step3():
         return
 
     st.markdown("## 6단계. 레이아웃 및 표지 미리 생성")
-    st.caption("레이아웃을 선택하고 날짜·표지 이미지를 지정한 뒤 표지를 미리 생성해보세요.")
+    st.caption("날짜·표지 이미지를 지정하고 표지·목차·섹션을 미리 확인하세요. "
+               "(목차 형식 4/5개는 4단계 '목차 구성'에서 정합니다)")
     st.markdown("")
 
-    # ────────────────────────────────────────
-    # (A) 레이아웃 자동 추천
-    # ────────────────────────────────────────
-    st.markdown("### 📐 레이아웃 자동 추천")
-
-    detected_toc = _detect_toc_count(data.get("full_text", ""))
-    st.info(f"추출된 텍스트 분석 결과: **목차 {detected_toc}개 형식** 을 추천합니다.")
-
-    toc_choice = st.radio(
-        "목차 개수를 선택하세요",
-        options=[4, 5],
-        index=0,                       # 기본 선택값 = '목차 4개 형식'(자동추천 문구는 위에 그대로 유지)
-        format_func=lambda x: f"목차 {x}개 형식",
-        horizontal=True,
-        key="toc_radio",
-    )
-    st.session_state.toc_count = toc_choice
-
-    # Task 4: 선택한 목차 수와 실제 추출 섹션 수가 다를 때 경고
-    _parsed = st.session_state.parsed_pages
-    if _parsed:
-        _sec_titles = list(dict.fromkeys(
-            p.get("section_title", "").strip() for p in _parsed
-            if p.get("section_title", "").strip()
-        ))
-        _actual_count = len(_sec_titles)
-        if _actual_count > 0 and toc_choice > _actual_count:
-            st.warning(
-                f"⚠️ 목차 {toc_choice}개를 선택하셨지만 실제 추출된 섹션은 "
-                f"**{_actual_count}개**입니다. 생성 시 {_actual_count}개 기준으로 처리됩니다."
-            )
+    # 목차 형식(4/5)은 4단계 목차 구성에서 정한 값을 그대로 사용 (여기서 다시 고르지 않음)
+    st.caption(f"현재 목차 형식: **{st.session_state.toc_count}개 형식** (4단계에서 설정)")
 
     st.markdown("---")
 
