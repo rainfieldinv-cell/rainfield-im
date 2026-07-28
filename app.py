@@ -1277,10 +1277,11 @@ def _toc_edit_to_maps():
         title = (g.get("title") or "").strip()
         if title:
             labels[num] = title
-        subs = [(s.get("text") or "").strip() for s in g.get("subs", [])]
-        subs = [s for s in subs if s]
-        if subs:
-            tmap[num] = subs
+        raw_subs = [(s.get("text") or "").strip() for s in g.get("subs", [])]
+        raw_subs = [s for s in raw_subs if s]
+        if raw_subs:
+            # 자동 번호: 목차1 밑 → 1.1 / 목차2 밑 → 2.1, 2.2, 2.3 …
+            tmap[num] = [f"{gi + 1}.{j + 1} {t}" for j, t in enumerate(raw_subs)]
     if labels:
         tmap["_labels"] = labels
     return count, tmap

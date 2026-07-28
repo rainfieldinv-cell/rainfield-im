@@ -533,7 +533,14 @@ def build_executive_summary_slide(prs, sections: list, business_name: str = ""):
             _replace_text_frame_content(subtitle_boxes[i].text_frame, subtitle)
         if i < len(content_boxes):
             _replace_text_frame_content(content_boxes[i].text_frame, content)
-            auto_resize_text_to_fit(content_boxes[i].text_frame, max_size=9.0, min_size=8.0)
+            # ★본문 내용은 색 통일(검정)·크기 10pt 고정 (회색/8~9pt 섞임 방지 — 사용자 지시)
+            #   부제목(파랑)은 위에서 처리 → 여기선 본문 글상자만 손댐
+            for _p in content_boxes[i].text_frame.paragraphs:
+                _p.font.size = _Pt(10)
+                _p.font.color.rgb = RGBColor(0, 0, 0)
+                for _r in _p.runs:
+                    _r.font.size = _Pt(10)
+                    _r.font.color.rgb = RGBColor(0, 0, 0)
 
     if len(sections) > 3:
         print(f"[경고] Executive Summary 섹션이 3개 초과 ({len(sections)}개). 3개까지만 표시됩니다.")
