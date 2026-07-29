@@ -294,7 +294,8 @@ def show_step1():
                 # 새 문서이므로 이전 목차 편집·이미지 상태 초기화(3단계 새로 시작)
                 for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page",
                            "toc_png_cache", "view_pdf_bytes", "highlight_cards", "hl_img_render",
-                           "hl_done_render", "hl_view_page", "layout_preview_render"):
+                           "hl_done_render", "hl_view_page", "layout_preview_render",
+                           "_hl_autofill_msg"):
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
 
@@ -1427,6 +1428,45 @@ def _init_highlight_cards():
     ]
 
 
+def _es_only_text(pages_text):
+    """오직 'Executive Summary' 항목이 있는 페이지들의 텍스트만 이어붙여 반환.
+       ★전체 문서 요약이 아님 — ES 항목 부분만. ES를 못 찾으면 '' 반환(폴백 없음)."""
+    es = _find_es_pages(pages_text)
+    if not es:
+        return ""
+    return "\n".join((pages_text[p - 1] or "") for p in es
+                     if 1 <= p <= len(pages_text))
+
+
+def _autofill_highlight_from_es():
+    """'Executive Summary' 항목 내용만 LLM으로 3개 카드(각 3~5줄)로 정리해 채운다.
+       반환: (성공?, 안내메시지). ES를 못 찾으면 (False, 안내)."""
+    pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
+    es_text = _es_only_text(pages_text)
+    if not es_text.strip():
+        return False, ("이 IM에서 'Executive Summary' 항목을 못 찾았어요. "
+                       "(간혹 없는 딜이 있습니다) 카드를 직접 입력해주세요.")
+    try:
+        from modules.ai_slide_builders import generate_executive_summary
+        res = generate_executive_summary(es_text)
+    except Exception as e:
+        return False, f"자동 추출 실패: {e}"
+    if not res.get("ok"):
+        return False, f"자동 추출 실패: {res.get('error', '알 수 없음')}"
+    secs = (res.get("data") or {}).get("sections") or []
+    cards = [{"title": "", "use_sub": False, "subtitle": "", "content": ""} for _ in range(3)]
+    for i, sec in enumerate(secs[:3]):
+        sub = (sec.get("subtitle") or "").strip()
+        cards[i] = {
+            "title":    (sec.get("title") or "").strip(),
+            "use_sub":  bool(sub),
+            "subtitle": sub,
+            "content":  (sec.get("content") or sec.get("body") or "").strip(),
+        }
+    st.session_state.highlight_cards = cards
+    return True, f"'Executive Summary' 항목({_pages_to_str(_find_es_pages(pages_text))}p)을 3개 카드로 정리했어요. 확인·수정하세요."
+
+
 def _clear_highlight_widget_state():
     for k in list(st.session_state.keys()):
         if k.startswith(("hlt_", "hls_", "hlc_", "hlu_")):
@@ -1445,10 +1485,25 @@ def show_step_highlight():
         _init_highlight_cards()
     cards = st.session_state.highlight_cards
 
-    if st.button("🧹 카드 3개 비우기", help="입력한 카드 내용을 모두 지우고 처음부터 다시 씁니다."):
-        _init_highlight_cards()
-        _clear_highlight_widget_state()
-        st.rerun()
+    _hb1, _hb2, _hb3 = st.columns([2, 2, 3])
+    with _hb1:
+        if st.button("🤖 Executive Summary 자동 추출", use_container_width=True,
+                     help="IM의 'Executive Summary' 항목만 읽어 3개 카드로 정리합니다(그 뒤 직접 수정)."):
+            with st.spinner("'Executive Summary' 항목을 읽어 정리하는 중..."):
+                _ok, _msg = _autofill_highlight_from_es()
+            _clear_highlight_widget_state()
+            st.session_state["_hl_autofill_msg"] = ("success" if _ok else "warning", _msg)
+            st.rerun()
+    with _hb2:
+        if st.button("🧹 카드 3개 비우기", use_container_width=True,
+                     help="입력한 카드 내용을 모두 지우고 처음부터 다시 씁니다."):
+            _init_highlight_cards()
+            _clear_highlight_widget_state()
+            st.session_state.pop("_hl_autofill_msg", None)
+            st.rerun()
+    _amsg = st.session_state.get("_hl_autofill_msg")
+    if _amsg:
+        (st.success if _amsg[0] == "success" else st.warning)(_amsg[1])
 
     img_col, form_col = st.columns([1, 1])
 
