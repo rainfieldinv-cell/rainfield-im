@@ -1021,7 +1021,7 @@ _DEFAULT_TOC = [
      # ★1.1 본건 사모사채 개요 = 우리가 만드는 고정표 페이지(원본 없음) → fixed=True.
      "subs": [{"text": "본건 사모사채 개요", "fixed": True}]},
     {"title": "금융개요", "pages": [],
-     "subs": [{"text": "금융 투자구조도", "fixed": False},
+     "subs": [{"text": "금융 구조도", "fixed": False},
               {"text": "본건 기초자산 금융조건", "fixed": False}]},
     {"title": "본 건 담보개요", "pages": [],
      "subs": [{"text": "", "fixed": False}]},
