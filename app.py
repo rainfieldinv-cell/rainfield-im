@@ -878,6 +878,12 @@ def show_step4():
                 if _cards and any((c.get("title") or c.get("content")) for c in _cards):
                     _es_sections = _cards_to_sections(_cards)
 
+                # ── 본문: 4단계 목차 + 5단계 배치 순서대로 (섹션4개+1.1+2.1 무조건) ──
+                _toc = st.session_state.get("toc_edit") or {}
+                _toc_groups = _toc.get("groups") or None
+                _full_text = "\n".join(
+                    (st.session_state.get("extracted_data") or {}).get("pages_text", []))
+
                 ppt_bytes = build_full_presentation(
                     business_name=st.session_state.business_name,
                     year=st.session_state.year,
@@ -890,6 +896,8 @@ def show_step4():
                     toc_map=final_toc_map,
                     toc_image_bytes_list=[st.session_state.toc_img_bytes],
                     exec_summary_data=None,
+                    toc_groups=_toc_groups,   # ★네 목차·배치로 본문 생성
+                    full_text=_full_text,     # 1.1/2.1 자동추출용 원문
                 )
 
             # ★5단계 내용검수에서 쓰도록 생성 PPT 보관

@@ -1310,6 +1310,8 @@ def build_full_presentation(
     toc_image_bytes_list: list = None,
     toc_map: dict = None,
     exec_summary_data: dict = None,
+    toc_groups: list = None,
+    full_text: str = "",
 ) -> bytes:
     """
     content_parser 결과를 받아 완성된 PPT를 bytes로 반환합니다.
@@ -1358,16 +1360,27 @@ def build_full_presentation(
     unique_sections = _count_unique_sections(pages)
     # toc_map이 외부에서 주어지면 그대로 사용; 없으면 pages에서 자동 추출
     computed_toc_map = toc_map if toc_map is not None else _build_toc_map(pages)
-    num_toc = toc_count if toc_count in (4, 5) else len(unique_sections)
-    if unique_sections:
-        num_toc = min(num_toc, len(unique_sections))  # 더미 섹션 방지
+    if toc_groups:
+        # ★사용자 목차: 섹션 수는 사용자 목차 개수 그대로 (자동추출 섹션 수로 줄이지 않음)
+        num_toc = toc_count if toc_count in (4, 5) else len(toc_groups)
+    else:
+        num_toc = toc_count if toc_count in (4, 5) else len(unique_sections)
+        if unique_sections:
+            num_toc = min(num_toc, len(unique_sections))  # 더미 섹션 방지
     build_toc_slide(prs, num_sections=num_toc, toc_map=computed_toc_map,
                     toc_image_bytes_list=toc_image_bytes_list)
 
     # ── 4. 섹션 구분 + 내용 슬라이드 ─────────────────────
-    _build_content_block(prs, pages, business_name=business_name,
-                          section_image_bytes_list=section_image_bytes_list,
-                          toc_map=computed_toc_map)
+    if toc_groups:
+        # ★사용자 목차·배치 기준 본문(섹션 divider 무조건 + 1.1/2.1 고정 + 배치 페이지 순서대로)
+        build_content_from_toc(
+            prs, toc_groups, pages, business_name=business_name,
+            section_image_bytes_list=section_image_bytes_list,
+            toc_map=computed_toc_map, full_text=full_text)
+    else:
+        _build_content_block(prs, pages, business_name=business_name,
+                              section_image_bytes_list=section_image_bytes_list,
+                              toc_map=computed_toc_map)
 
     # ── 5. 연락처 슬라이드 ────────────────────────────────
     build_contact_slide(prs)
@@ -1511,6 +1524,111 @@ def _build_content_block(prs, pages: list, business_name: str = "",
                 tables=tables_data,
                 business_name=business_name,
             )
+
+
+def _build_finance_structure_asis(prs, intro_text="", business_name=""):
+    """2.1 금융 구조도: 레이아웃(7번)을 '그대로' 복제하고 상단 '본건은…' 인트로만 채운다.
+       도형/표/화살표는 손대지 않는다(사용자가 만든 구조도 원본 유지)."""
+    slide = clone_slide_layout(prs, "finance_structure", skip_graphic_frames=False)
+    if not intro_text:
+        return slide
+    # 인트로 글상자 찾기: '본건은'으로 시작하거나 상단(top<4cm)의 넓은 텍스트박스
+    target = None
+    for sh in slide.shapes:
+        if not sh.has_text_frame:
+            continue
+        t = sh.text_frame.text.strip()
+        top_cm = (sh.top or 0) / 360000
+        if t.startswith("본건은") or ("사모사채" in t and top_cm < 4.0):
+            target = sh
+            break
+    if target is not None:
+        _replace_text_frame_content(target.text_frame, intro_text)
+    return slide
+
+
+def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
+                           section_image_bytes_list=None, toc_map=None,
+                           full_text=""):
+    """★사용자 목차/배치 기준 본문 생성 (자동 파싱 순서 무시).
+       - 목차 1~N 순서대로 섹션 divider 무조건 생성
+       - 섹션1 → 1.1 본건 사모사채 개요(표 LLM 자동), 섹션2 → 2.1 금융 구조도(레이아웃 그대로 + 인트로 자동)
+       - 각 섹션에 배치한 원본 페이지를 '적은 순서대로' 내용 슬라이드로 생성
+    """
+    _toc = toc_map or {}
+
+    # page_num → parsed page
+    by_page = {}
+    for p in (parsed_pages or []):
+        pn = p.get("page_num")
+        if pn is not None:
+            try:
+                by_page[int(pn)] = p
+            except (TypeError, ValueError):
+                pass
+
+    # 1.1/2.1 공용 딜 요약 (LLM 1회만 호출)
+    _sasae = None
+    try:
+        from modules.ai_slide_builders import generate_sasae_overview
+        _r = generate_sasae_overview(full_text or "")
+        if _r.get("ok"):
+            _sasae = _r.get("data")
+    except Exception as _e:
+        print(f"[build_content_from_toc] 사모사채 요약 생성 실패: {_e}")
+
+    for gi, g in enumerate(toc_groups or []):
+        num = f"{gi + 1:02d}"                    # 01, 02, 03, 04
+        title = (g.get("title") or "").strip()
+        subtitles = _toc.get(num, [])
+
+        # 1) 섹션 divider (무조건)
+        build_section_divider_slide(
+            prs, num, title, business_name=business_name,
+            section_image_bytes_list=section_image_bytes_list,
+            subtitles=subtitles)
+
+        # 2) 섹션1 → 1.1 본건 사모사채 개요 (표 LLM 자동 채움, 무조건)
+        if gi == 0 and _sasae:
+            try:
+                from modules.ai_slide_builders import build_slide_5_sasae_overview
+                build_slide_5_sasae_overview(prs, _sasae, business_name=business_name)
+            except Exception as _e:
+                print(f"[build_content_from_toc] 1.1 실패: {_e}")
+
+        # 3) 섹션2 → 2.1 금융 구조도 (레이아웃 그대로 + 인트로 자동, 무조건)
+        if gi == 1:
+            try:
+                _intro = (_sasae or {}).get("intro_paragraph", "") if _sasae else ""
+                _build_finance_structure_asis(prs, intro_text=_intro,
+                                              business_name=business_name)
+            except Exception as _e:
+                print(f"[build_content_from_toc] 2.1 실패: {_e}")
+
+        # 4) 배치한 원본 페이지 → 내용 슬라이드 (적은 순서대로)
+        for pnum in (g.get("pages") or []):
+            try:
+                page = by_page.get(int(pnum))
+            except (TypeError, ValueError):
+                page = None
+            if not page:
+                continue
+            body_text = (page.get("body_text") or "").strip()
+            tables_data = page.get("tables") or []
+            body_to_use = (page.get("text_without_tables") or body_text) if tables_data else body_text
+            display_title = f"{num}  {title}" if title else num
+            handled = False
+            try:
+                from modules.frame_builders import build_page_auto
+                handled = build_page_auto(
+                    prs, page, title=display_title, subtitle="",
+                    body_text=body_to_use, business_name=business_name)
+            except Exception as _exc:
+                print(f"[build_content_from_toc] 라우터 실패 → 폴백: {_exc}")
+            if not handled:
+                build_content_slide(prs, title=display_title, subtitle="",
+                                    body_text=body_to_use, tables=tables_data,
+                                    business_name=business_name)
 
 
 # ─────────────────────────────────────────────
