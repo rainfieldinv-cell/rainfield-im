@@ -1023,7 +1023,7 @@ _DEFAULT_TOC = [
     {"title": "금융개요", "pages": [],
      "subs": [{"text": "금융 구조도", "fixed": False},
               {"text": "본건 기초자산 금융조건", "fixed": False}]},
-    {"title": "본 건 담보개요", "pages": [],
+    {"title": "사업개요", "pages": [],
      "subs": [{"text": "사업개요", "fixed": False}]},
     {"title": "Appendix", "pages": [],
      "subs": [{"text": "", "fixed": False}]},
