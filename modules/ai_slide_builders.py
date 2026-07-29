@@ -126,6 +126,59 @@ def generate_executive_summary(pdf_text: str) -> dict:
 
 
 # ════════════════════════════════════════════════════════
+# 목차(TOC) 자동 추출 — IM 전체를 읽어 섹션/소제목 구성
+# ════════════════════════════════════════════════════════
+
+TOC_SYSTEM_PROMPT = """당신은 부동산·금융 IM(투자설명서)을 회사 표준 제안서 목차로 정리하는 전문가입니다.
+주어진 IM 원문 전체를 읽고, 표준 4개 대분류에 맞춰 목차(소제목 포함)를 구성합니다.
+
+[표준 대분류 — 제목은 이대로 유지]
+01 사모사채 개요
+02 금융개요
+03 사업개요
+04 Appendix
+
+[규칙]
+1. 각 대분류의 '소제목'을 IM 내용에서 찾아 채운다(그 섹션에 실제로 있는 내용만).
+2. 소제목은 짧은 명사구(예: "사업개요", "입지분석", "분양사례", "차주 개요", "담보 분석").
+   서술형 문장 금지. 각 대분류당 1~6개.
+3. '01 사모사채 개요'의 소제목은 항상 ["본건 사모사채 개요"] 하나로 둔다(고정 페이지).
+4. '02 금융개요'의 첫 소제목은 항상 "금융 구조도"로 시작한다. 이어서 IM의 금융조건 관련 소제목.
+5. 소제목엔 번호(1.1 등)를 붙이지 말 것 — 텍스트만.
+6. 출력은 JSON 만. 다른 텍스트 금지.
+
+[JSON 출력 스키마]
+{
+  "sections": [
+    {"title": "사모사채 개요", "subtitles": ["본건 사모사채 개요"]},
+    {"title": "금융개요",     "subtitles": ["금융 구조도", "..."]},
+    {"title": "사업개요",     "subtitles": ["...", "..."]},
+    {"title": "Appendix",     "subtitles": ["..."]}
+  ]
+}"""
+
+TOC_USER_TEMPLATE = """[IM 원문 전체]
+{pdf_text}
+
+위 IM을 읽고 표준 4개 대분류(사모사채 개요/금융개요/사업개요/Appendix)의 소제목을 구성해 JSON으로 출력하라."""
+
+
+def generate_toc(pdf_text: str) -> dict:
+    """IM 원문 전체를 읽어 목차(대분류+소제목)를 Claude 로 구성합니다.
+       반환: call_claude() dict. data = {"sections": [{"title","subtitles":[...]}, ...]}."""
+    print("=" * 60)
+    print(f"[FORCE-DEBUG-AI] generate_toc 호출됨 - PDF 길이={len(pdf_text)}")
+    print("=" * 60)
+    return call_claude(
+        system_prompt=TOC_SYSTEM_PROMPT,
+        user_prompt=TOC_USER_TEMPLATE.format(pdf_text=pdf_text),
+        slide_num=0,
+        pdf_context=pdf_text,
+        prompt_version="toc_v1",
+    )
+
+
+# ════════════════════════════════════════════════════════
 # 슬라이드 5: 1.1 본건 사모사채 개요
 # ════════════════════════════════════════════════════════
 

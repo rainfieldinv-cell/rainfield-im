@@ -295,7 +295,7 @@ def show_step1():
                 for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page",
                            "toc_png_cache", "view_pdf_bytes", "highlight_cards", "hl_img_render",
                            "hl_done_render", "hl_view_page", "layout_preview_render",
-                           "_hl_autofill_msg"):
+                           "_hl_autofill_msg", "_toc_autofill_msg"):
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
 
@@ -1049,6 +1049,39 @@ def _init_toc_edit(parsed, auto=False):
     st.session_state.toc_count = fmt
 
 
+def _init_toc_edit_from_llm():
+    """IM 원문 전체를 LLM으로 읽어 목차(대분류+소제목) 구성 → toc_edit.
+       반환: (성공?, 안내메시지). 실패해도 기존 목차는 유지."""
+    pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
+    full_text = "\n".join(pages_text)
+    if not full_text.strip():
+        return False, "추출된 텍스트가 없어 목차를 자동 추출할 수 없습니다. 1단계에서 워드/PDF를 올려주세요."
+    try:
+        from modules.ai_slide_builders import generate_toc
+        res = generate_toc(full_text)
+    except Exception as e:
+        return False, f"목차 자동 추출 실패: {e}"
+    if not res.get("ok"):
+        return False, f"목차 자동 추출 실패: {res.get('error', '알 수 없음')}"
+    secs = (res.get("data") or {}).get("sections") or []
+    if not secs:
+        return False, "IM에서 목차를 추출하지 못했습니다. 기본 목차에서 직접 수정해주세요."
+    groups = []
+    for si, sec in enumerate(secs[:5]):
+        title = (sec.get("title") or "").strip()
+        subs_raw = [str(x).strip() for x in (sec.get("subtitles") or []) if str(x).strip()]
+        subs = [{"text": t, "fixed": (si == 0 and j == 0)}   # 1.1만 고정(자동생성)
+                for j, t in enumerate(subs_raw)]
+        if not subs:
+            subs = [{"text": "", "fixed": (si == 0)}]
+        groups.append({"title": title, "pages": [], "subs": subs})
+    fmt = max(4, min(5, len(groups) or 4))
+    _adjust_groups(groups, fmt)
+    st.session_state.toc_edit = {"format": fmt, "groups": groups}
+    st.session_state.toc_count = fmt
+    return True, "IM 전체를 읽어 목차를 구성했어요. 확인하고 필요하면 수정하세요."
+
+
 def _pdf_page_count(pdf_bytes):
     """PDF 페이지 수(실패 시 -1) — 사진 PDF와 글자 PDF 정렬 확인용."""
     try:
@@ -1118,19 +1151,25 @@ def show_step_toc():
         _init_toc_edit(parsed)
     toc = st.session_state.toc_edit
 
-    bc1, bc2, _bc = st.columns([1, 1, 3])
+    bc1, bc2, _bc = st.columns([1.4, 1, 2.6])
     with bc1:
-        if st.button("🔄 자동 추출 시도", use_container_width=True,
-                     help="원본에서 목차를 자동 추출해봅니다(IM에 따라 부정확할 수 있음)."):
-            _init_toc_edit(parsed, auto=True)
+        if st.button("🤖 IM 전체 읽어 목차 자동 추출", use_container_width=True,
+                     help="IM 원문 전체를 LLM으로 읽어 대분류·소제목을 구성합니다(그 뒤 직접 수정)."):
+            with st.spinner("IM 전체를 읽어 목차를 구성하는 중..."):
+                _ok, _msg = _init_toc_edit_from_llm()
             _clear_toc_widget_state()
+            st.session_state["_toc_autofill_msg"] = ("success" if _ok else "warning", _msg)
             st.rerun()
     with bc2:
         if st.button("🧹 기본 목차로 되돌리기", use_container_width=True,
-                     help="표준 목차(사모사채 개요/금융개요/본 건 담보개요/Appendix)로 초기화합니다."):
+                     help="표준 목차(사모사채 개요/금융개요/사업개요/Appendix)로 초기화합니다."):
             _init_toc_edit(parsed, auto=False)
             _clear_toc_widget_state()
+            st.session_state.pop("_toc_autofill_msg", None)
             st.rerun()
+    _tmsg = st.session_state.get("_toc_autofill_msg")
+    if _tmsg:
+        (st.success if _tmsg[0] == "success" else st.warning)(_tmsg[1])
 
     img_col, form_col = st.columns([1, 1])
 
