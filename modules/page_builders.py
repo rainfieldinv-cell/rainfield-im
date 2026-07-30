@@ -1598,15 +1598,19 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
     used_img_keys = set()
 
     def _dedupe_images(imgs):
+        """같은 사진(동일 xref/동일 바이트)만 제거 — 서로 다른 사진은 유지."""
         out = []
         for im in (imgs or []):
             key = None
             try:
-                b = im.get("bytes") or im.get("image_bytes") if isinstance(im, dict) else None
-                if b:
-                    key = (len(b), hash(bytes(b[:64])), hash(bytes(b[-64:])))
-                elif isinstance(im, dict):
-                    key = (im.get("page"), im.get("index"), im.get("width"), im.get("height"))
+                if isinstance(im, dict):
+                    key = im.get("xref")
+                    if key is None:
+                        b = im.get("data") or im.get("bytes") or im.get("image_bytes")
+                        if b:
+                            key = ("b", len(b), hash(bytes(b[:64])), hash(bytes(b[-64:])))
+                        else:
+                            key = ("wh", im.get("width"), im.get("height"), id(im))
                 else:
                     key = id(im)
             except Exception:
