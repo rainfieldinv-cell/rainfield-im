@@ -1650,38 +1650,42 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
             except Exception as _e:
                 print(f"[build_content_from_toc] 2.1 실패: {_e}")
 
-        # 4) 배치한 원본 페이지 → 내용 슬라이드 (★적은 순서 그대로, 재분류 없이)
-        #    build_page_auto 는 페이지를 '자기 방식'으로 재분류해 1.1/구조도를 또 만들고
-        #    순서를 엉키게 하므로 여기선 쓰지 않는다. 그 페이지의 내용만 담담히 렌더.
-        for pnum in (g.get("pages") or []):
-            try:
-                page = by_page.get(int(pnum))
-            except (TypeError, ValueError):
-                page = None
-            if not page:
+        # 4) ★소제목마다: 그 소제목에 배치한 원본 페이지를 '적은 순서 그대로' 내용 슬라이드로.
+        #    build_page_auto(재분류로 1.1/구조도 중복·순서 엉킴)는 쓰지 않음.
+        #    고정 소제목(1.1/2.1)은 위에서 이미 생성했으니 건너뜀.
+        section_label = f"{num}  {title}" if title else num
+        for si, sub in enumerate(g.get("subs") or []):
+            if sub.get("fixed"):
                 continue
-            body_text = (page.get("body_text") or "").strip()
-            tables_data = page.get("tables") or []
-            body_to_use = (page.get("text_without_tables") or body_text) if tables_data else body_text
-            display_title = f"{num}  {title}" if title else num
-            images = _dedupe_images(page.get("images"))
-            struct = page.get("_struct")
-            if isinstance(struct, dict):
-                # LLM 구조화 결과가 있으면 그대로(표/글). 단 섹션 재분류·고정페이지 삽입은 안 함.
+            stext = (sub.get("text") or "").strip()
+            sub_label = f"{gi + 1}.{si + 1} {stext}" if stext else ""
+            for pnum in (sub.get("pages") or []):
                 try:
-                    from modules.frame_builders import build_structured_slide
-                    build_structured_slide(
-                        prs, struct, business_name=business_name,
-                        section_label=display_title, subtitle="",
-                        images=images,
-                        red_texts=page.get("_red_texts"),
-                        underline_texts=page.get("_underline_texts"))
+                    page = by_page.get(int(pnum))
+                except (TypeError, ValueError):
+                    page = None
+                if not page:
                     continue
-                except Exception as _exc:
-                    print(f"[build_content_from_toc] 구조화 렌더 실패 → 폴백: {_exc}")
-            build_content_slide(prs, title=display_title, subtitle="",
-                                body_text=body_to_use, tables=tables_data,
-                                business_name=business_name)
+                body_text = (page.get("body_text") or "").strip()
+                tables_data = page.get("tables") or []
+                body_to_use = (page.get("text_without_tables") or body_text) if tables_data else body_text
+                images = _dedupe_images(page.get("images"))
+                struct = page.get("_struct")
+                if isinstance(struct, dict):
+                    try:
+                        from modules.frame_builders import build_structured_slide
+                        build_structured_slide(
+                            prs, struct, business_name=business_name,
+                            section_label=section_label, subtitle=sub_label,
+                            images=images,
+                            red_texts=page.get("_red_texts"),
+                            underline_texts=page.get("_underline_texts"))
+                        continue
+                    except Exception as _exc:
+                        print(f"[build_content_from_toc] 구조화 렌더 실패 → 폴백: {_exc}")
+                build_content_slide(prs, title=section_label, subtitle=sub_label,
+                                    body_text=body_to_use, tables=tables_data,
+                                    business_name=business_name)
 
 
 def _bold_all_table_text(slide):
