@@ -160,17 +160,17 @@ def show_login():
 def show_step1():
     st.markdown("## 1단계. 파일 업로드")
     st.markdown(
-        "📄 **워드(.docx)는 무조건 올려주세요 — 필수.** 본문 글자·목차 항목 추출에 꼭 필요합니다.  \n"
-        "🖼️ **PDF는 함께 올리면 더 좋아요 — 권장.** 페이지 사진을 원본 그대로 보여줍니다.  \n"
-        "※ 워드가 없으면 **알집(알PDF)에서 PDF를 워드로 변환**해서 올리세요.  \n"
-        "<span style='color:gray; font-size:13px;'>(PDF / Word(.doc·.docx) 지원)</span>",
+        "📑 **원본 PDF를 올려주세요 — 권장.** 글·표·사진·페이지를 전부 원본 PDF 기준으로 처리합니다"
+        "(네가 보는 페이지 = 내용 페이지가 정확히 일치).  \n"
+        "📄 워드(.docx)는 **PDF가 아예 없을 때만** 올리면 돼요(자동으로 PDF로 변환해 사용).  \n"
+        "<span style='color:gray; font-size:13px;'>(PDF / Word(.doc·.docx) 지원 · PDF 우선)</span>",
         unsafe_allow_html=True,
     )
     st.markdown("")
 
-    # 파일 업로더 (워드·PDF 함께 업로드 가능 — 자금판과 동일 방식, 워드는 PDF로 변환)
+    # 파일 업로더 (PDF 우선 — PDF 있으면 PDF로 전부 처리, 없으면 워드를 PDF로 변환)
     uploaded_files = st.file_uploader(
-        label="파일을 여기에 끌어다 놓거나 클릭해서 선택하세요 (워드/PDF 함께 가능)",
+        label="원본 PDF를 여기에 끌어다 놓거나 클릭해서 선택하세요 (PDF 우선 · PDF 없으면 워드)",
         type=["pdf", "docx", "doc"],
         accept_multiple_files=True,
         key="file_uploader_widget",
@@ -193,16 +193,15 @@ def show_step1():
         with col2:
             st.metric("합계 크기", f"{total_mb:.2f} MB")
         st.caption("파일: " + " · ".join(f.name for f in uploaded_files))
-        if pdf_up and word_up:
-            st.info("워드+PDF 둘 다 올렸습니다. 📄 **워드로 글자·항목**을 뽑고, 🖼️ **PDF로 페이지 사진**을 보여줍니다.")
-        elif word_up and not pdf_up:
-            st.info("워드만 올렸습니다. 자동으로 PDF로 변환해 사진까지 보여줍니다. "
-                    "(원본 PDF도 함께 올리면 사진이 더 원본에 가까워요)")
-        elif pdf_up and not word_up:
-            st.warning("⚠️ **워드(.docx)가 없습니다 — 워드는 필수예요.** "
-                       "PDF만으로는 글자·목차 항목이 안 잡힐 수 있습니다(내용이 이미지로 된 PDF가 많음).\n\n"
-                       "**워드 파일이 없다면?** 👉 **알집(알PDF)에서 PDF를 워드로 변환**해서 올려주세요. "
-                       "(알PDF 실행 → PDF 열기 → [PDF 변환] → Word(.docx)로 저장)")
+        if pdf_up:
+            if word_up:
+                st.info("PDF를 올려서 **PDF 기준**으로 처리합니다(워드는 사용 안 함). "
+                        "글·표·사진·페이지가 모두 원본 PDF와 정확히 일치해요.")
+            else:
+                st.success("원본 PDF로 처리합니다 — 좋아요. 👍")
+        elif word_up:
+            st.info("PDF가 없어 **워드를 PDF로 변환**해서 처리합니다. "
+                    "(원본 PDF가 있으면 그걸 올리는 게 페이지·사진이 더 정확해요)")
 
         st.markdown("")
 
