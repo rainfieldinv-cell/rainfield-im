@@ -213,45 +213,31 @@ def show_step1():
                      use_container_width=False,
                      help="올린 파일에서 글자·사진을 다시 뽑습니다." if _done else None):
             try:
-                # 글자·목차 항목은 '워드(변환 PDF)'에서 정확히 뽑고, 사진은 '원본 PDF'로 보여준다.
-                proc_pdf = None          # 글자/항목 추출용
-                proc_from_word = False   # 글자를 워드에서 뽑았는지
+                # ★(A) 원본 PDF 기준 통일: PDF가 있으면 뷰어·파싱·이미지·글 '전부' 원본 PDF로.
+                #   → 네가 보는 페이지 = 내용 페이지가 100% 일치(짤림·어긋남 없음).
+                #   워드는 'PDF가 없을 때만' 백업으로 PDF 변환해서 사용.
+                proc_pdf = None
+                proc_from_word = False   # 원본 PDF가 없어 워드→PDF로 대체했는지
                 conv_err = None
-                proc_name = word_up.name if word_up is not None else (pdf_up.name if pdf_up else "")
-                if word_up is not None:
+                if pdf_up is not None:
+                    proc_pdf = pdf_up.getvalue()             # PDF 우선(모든 소스 = 이 파일)
+                    proc_name = pdf_up.name
+                elif word_up is not None:
                     from modules.preview import convert_word_to_pdf
-                    with st.spinner("워드를 PDF로 변환하는 중입니다... (자금판과 동일 방식)"):
+                    with st.spinner("PDF가 없어 워드를 PDF로 변환하는 중입니다..."):
                         proc_pdf, conv_err = convert_word_to_pdf(word_up.getvalue(), word_up.name)
                     proc_from_word = proc_pdf is not None
-                    if not proc_pdf and pdf_up is not None:      # 변환 실패 시 PDF로
-                        proc_pdf = pdf_up.getvalue()
-                        proc_name = pdf_up.name
-                elif pdf_up is not None:
-                    proc_pdf = pdf_up.getvalue()
+                    proc_name = word_up.name
 
                 with st.spinner("파일에서 텍스트와 이미지를 추출하는 중입니다..."):
                     if proc_pdf is not None:
-                        result = extract_from_pdf(proc_pdf)          # 글자·페이지(워드 기준 = 정확)
-                        # ★사진은 원본 PDF가 화질이 훨씬 좋음(실측 2013x1108 vs 1233x727)
-                        #   → 이미지 '세트를 교체'(추가 X)해서 글·사진 각각 1세트만 남김
-                        if proc_from_word and pdf_up is not None:
-                            try:
-                                _img_res = extract_from_pdf(pdf_up.getvalue())
-                                if _img_res.get("images"):
-                                    result["images"] = _img_res["images"]
-                            except Exception:
-                                pass
-                        st.session_state.pdf_bytes = proc_pdf        # 좌표기반 표·이미지 복원용
-                        parse_bytes, parse_name = proc_pdf, "converted.pdf"
-                        # 사진 표시용 PDF: 원본 PDF 우선(글자 PDF와 페이지 수 같을 때만 정렬 유지)
-                        view_pdf = proc_pdf
-                        if pdf_up is not None:
-                            _up = pdf_up.getvalue()
-                            if _pdf_page_count(_up) == _pdf_page_count(proc_pdf):
-                                view_pdf = _up
-                        st.session_state.view_pdf_bytes = view_pdf
+                        # 뷰어·파싱·이미지·글 전부 동일 소스(proc_pdf) → 페이지 완벽 정렬
+                        result = extract_from_pdf(proc_pdf)
+                        st.session_state.pdf_bytes = proc_pdf
+                        parse_bytes, parse_name = proc_pdf, "source.pdf"
+                        st.session_state.view_pdf_bytes = proc_pdf
                     else:
-                        # 변환 실패 폴백: python-docx 텍스트만(레이아웃·사진 제한)
+                        # PDF도 없고 워드 변환도 실패 → python-docx 텍스트만(사진 제한)
                         result = extract_from_docx(word_up.getvalue())
                         st.session_state.pdf_bytes = None
                         st.session_state.view_pdf_bytes = None
@@ -267,7 +253,7 @@ def show_step1():
                 detected = detect_business_name(result["pages_text"])
                 st.session_state.business_name = detected
 
-                # 슬라이드 구조 파싱 (content_parser) — 변환된 PDF 기준
+                # 슬라이드 구조 파싱 (content_parser) — 원본 PDF 기준
                 try:
                     st.session_state.parsed_pages = parse_document_from_bytes(
                         parse_bytes, parse_name
@@ -275,19 +261,17 @@ def show_step1():
                 except Exception:
                     st.session_state.parsed_pages = []
 
-                # 어떤 파일에서 글자/사진을 뽑았는지 기록(화면 표시용)
-                st.session_state.src_info = {
-                    "text": "워드(.docx)" if proc_from_word else "PDF",
-                    "image": ("PDF" if (proc_from_word and pdf_up is not None)
-                              else ("워드(.docx)" if proc_from_word else "PDF")),
-                }
+                # 어떤 파일에서 뽑았는지 기록(화면 표시용)
+                _src = "워드(.docx)" if proc_from_word else "PDF"
+                st.session_state.src_info = {"text": _src, "image": _src}
 
-                # ★워드를 올렸는데 변환이 실패해 PDF로 폴백된 경우 — 조용히 넘기지 말고
-                #   실제 원인을 보여준다(왜 어떤 파일만 'PDF'로 나오는지 진단 가능하게).
-                if word_up is not None and not proc_from_word:
-                    st.session_state.conv_warn = (
-                        f"이 파일은 워드→PDF 변환이 실패해서 **PDF로만** 처리됐어요(글자도 PDF에서 추출). "
-                        f"원인: {conv_err or '알 수 없음'}")
+                # 안내: PDF+워드 둘 다 올리면 'PDF 기준'으로만 처리(워드 미사용)
+                if pdf_up is not None and word_up is not None:
+                    st.session_state.conv_warn = ("PDF를 올려서 **PDF 기준**으로 처리했어요"
+                                                  "(워드는 사용 안 함 — 페이지가 원본과 정확히 일치).")
+                elif word_up is not None and proc_pdf is None:
+                    st.session_state.conv_warn = (f"워드→PDF 변환 실패로 텍스트만 추출됐어요"
+                                                  f"(사진 제한). 원인: {conv_err or '알 수 없음'}")
                 else:
                     st.session_state.conv_warn = None
 
@@ -325,15 +309,12 @@ def show_step1():
         with c2:
             st.metric("추출된 이미지 수", f"{len(data['images'])}개")
         with c3:
-            st.metric("처리 방식", "워드+PDF" if _src.get("text") != _src.get("image")
-                      else (_src.get("text") or data["file_type"].upper()))
-        # 어디서 뽑았는지 명확히 — '파일 형식 PDF'로 오해하지 않게
+            st.metric("처리 방식", _src.get("text") or data["file_type"].upper())
+        # 어디서 뽑았는지 명확히
         if _src:
-            st.caption(f"📄 글자·목차 항목 → **{_src.get('text','-')}**  ·  "
-                       f"🖼️ 사진 → **{_src.get('image','-')}** 에서 추출했습니다. "
-                       "(워드는 PDF로 변환해 페이지를 나눕니다)")
+            st.caption(f"📄 글·표·사진 모두 → **{_src.get('text','-')}** 에서 추출했습니다. "
+                       "(원본 PDF 기준이라 네가 보는 페이지와 내용이 정확히 일치)")
 
-        # ★워드→PDF 변환 실패로 PDF만 쓴 경우 원인 표시(왜 'PDF'로만 나오는지 진단)
         _cw = st.session_state.get("conv_warn")
         if _cw:
             st.warning(f"⚠️ {_cw}")

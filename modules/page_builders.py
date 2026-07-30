@@ -484,42 +484,59 @@ def build_executive_summary_slide(prs, sections: list, business_name: str = ""):
     # ── 0. 레이아웃 슬라이드 복제 ─────────────────────
     slide = clone_slide_layout(prs, "executive_summary")
 
-    # ── 1. 그룹 도형 수집 (top 오름차순 → 섹션 1/2/3 순)
-    # 그룹 = ✓ 아이콘 + 섹션 제목 텍스트 포함 복합 도형
-    groups = sorted(
-        [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.GROUP],
-        key=lambda s: s.top
-    )
+    # ── 도우미: 그룹 안까지 재귀로 텍스트박스 수집 / 그룹에 그림(✓) 있는지 ──
+    def _iter_text_boxes(shapes):
+        for sh in shapes:
+            if sh.shape_type == MSO_SHAPE_TYPE.GROUP:
+                yield from _iter_text_boxes(sh.shapes)
+            elif sh.has_text_frame:
+                yield sh
 
-    # ── 2. 본문 콘텐츠 박스 수집 (너비 16cm 초과 + left 4cm 이상 → 실제 콘텐츠 박스)
-    # 레이아웃 기준: 17.61/18.51/19.35cm 너비, left 4.49/4.91/4.50cm
-    # 배경·테두리 역할의 겹친 박스들은 left 3.3~3.8cm 에 있어서 필터로 제외됨
-    # 여기를 수정하면 본문 박스 선별 기준이 바뀝니다
-    CONTENT_WIDTH_MIN = 16.0   # 너비 기준 (cm)
-    CONTENT_LEFT_MIN  = 4.0    # left 기준 (cm) — 배경 박스와 구분
+    def _group_has_picture(grp):
+        try:
+            for sh in grp.shapes:
+                if sh.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    all_groups = [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.GROUP]
+
+    # ── 1. 제목 그룹 = ✓ 아이콘(그림) 포함 그룹 (없으면 전체 그룹)
+    title_groups = [g for g in all_groups if _group_has_picture(g)] or all_groups
+    title_groups = sorted(title_groups, key=lambda s: s.top or 0)
+
+    # ── 2. 본문 콘텐츠 박스 (너비 16cm 초과) — 구 레이아웃(그룹 밖) 우선, 없으면 신 레이아웃(그룹 안)
+    CONTENT_WIDTH_MIN = 16.0
     content_boxes = sorted(
         [sh for sh in slide.shapes
-         if sh.has_text_frame
-         and sh.shape_type != MSO_SHAPE_TYPE.GROUP
-         and sh.width / 360000 > CONTENT_WIDTH_MIN
-         and sh.left  / 360000 > CONTENT_LEFT_MIN
-         and sh.top   / 360000 > 1.0
-         and sh.top   / 360000 < 18.0],
-        key=lambda s: s.top
-    )
+         if sh.has_text_frame and sh.shape_type != MSO_SHAPE_TYPE.GROUP
+         and (sh.width or 0) / 360000 > CONTENT_WIDTH_MIN
+         and (sh.left or 0) / 360000 > 4.0
+         and 1.0 < (sh.top or 0) / 360000 < 18.0],
+        key=lambda s: s.top or 0)
+    if not content_boxes:
+        # 본문 박스가 그룹 안에 있는 경우(사진 없는 '본문 그룹') → 그룹 top 순서로 각 그룹의 '진짜 본문' 박스.
+        #   ★그룹 안엔 배경 AUTO_SHAPE(더 넓음)도 있으니 '가장 넓은 것'이 아니라
+        #     실제 TEXT_BOX(글상자, shape_type 17)만 고른다. 텍스트가 이미 있는 것 우선.
+        content_groups = sorted([g for g in all_groups if not _group_has_picture(g)],
+                                key=lambda s: s.top or 0)
+        for g in content_groups:
+            tbs = [c for c in _iter_text_boxes([g])
+                   if c.shape_type == MSO_SHAPE_TYPE.TEXT_BOX and (c.width or 0) / 360000 > 12.0]
+            with_text = [c for c in tbs if c.text_frame.text.strip()]
+            pick = with_text or tbs
+            if pick:
+                content_boxes.append(pick[0])
 
-    # ── 3. 서브타이틀 박스 수집 (너비 12~14cm → "내용" 자리)
-    # 레이아웃 기준: 13.00cm 너비 / top: 3.14 / 7.33 / 15.15 cm
-    # 여기를 수정하면 서브타이틀 박스 선별 너비 기준이 바뀝니다
+    # ── 3. 서브타이틀 박스 (너비 12~14cm → "내용" 자리, 그룹 밖)
     subtitle_boxes = sorted(
         [sh for sh in slide.shapes
-         if sh.has_text_frame
-         and sh.shape_type != MSO_SHAPE_TYPE.GROUP
-         and 12.0 < sh.width / 360000 < 14.0
-         and sh.top / 360000 > 1.0
-         and sh.top / 360000 < 18.0],
-        key=lambda s: s.top
-    )
+         if sh.has_text_frame and sh.shape_type != MSO_SHAPE_TYPE.GROUP
+         and 12.0 < (sh.width or 0) / 360000 < 14.0
+         and 1.0 < (sh.top or 0) / 360000 < 18.0],
+        key=lambda s: s.top or 0)
 
     # ── 4. 각 섹션 텍스트 채우기 ────────────────────
     for i, sec in enumerate(sections[:3]):
@@ -527,8 +544,8 @@ def build_executive_summary_slide(prs, sections: list, business_name: str = ""):
         subtitle = sec.get("subtitle", "")
         content  = sec.get("content", "")
 
-        if i < len(groups):
-            _replace_group_title(groups[i], title)
+        if i < len(title_groups):
+            _replace_group_title(title_groups[i], title)
         if i < len(subtitle_boxes):
             _replace_text_frame_content(subtitle_boxes[i].text_frame, subtitle)
         if i < len(content_boxes):
@@ -1577,6 +1594,29 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
     except Exception as _e:
         print(f"[build_content_from_toc] 사모사채 요약 생성 실패: {_e}")
 
+    # ★사진 중복 방지: 이미 넣은 이미지는 다시 안 넣는다(전역 추적)
+    used_img_keys = set()
+
+    def _dedupe_images(imgs):
+        out = []
+        for im in (imgs or []):
+            key = None
+            try:
+                b = im.get("bytes") or im.get("image_bytes") if isinstance(im, dict) else None
+                if b:
+                    key = (len(b), hash(bytes(b[:64])), hash(bytes(b[-64:])))
+                elif isinstance(im, dict):
+                    key = (im.get("page"), im.get("index"), im.get("width"), im.get("height"))
+                else:
+                    key = id(im)
+            except Exception:
+                key = id(im)
+            if key in used_img_keys:
+                continue
+            used_img_keys.add(key)
+            out.append(im)
+        return out
+
     for gi, g in enumerate(toc_groups or []):
         num = f"{gi + 1:02d}"                    # 01, 02, 03, 04
         title = (g.get("title") or "").strip()
@@ -1588,11 +1628,12 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
             section_image_bytes_list=section_image_bytes_list,
             subtitles=subtitles)
 
-        # 2) 섹션1 → 1.1 본건 사모사채 개요 (표 LLM 자동 채움, 무조건)
+        # 2) 섹션1 → 1.1 본건 사모사채 개요 (표 LLM 자동 채움, 무조건, 글꼴 Bold 통일)
         if gi == 0 and _sasae:
             try:
                 from modules.ai_slide_builders import build_slide_5_sasae_overview
-                build_slide_5_sasae_overview(prs, _sasae, business_name=business_name)
+                _sl = build_slide_5_sasae_overview(prs, _sasae, business_name=business_name)
+                _bold_all_table_text(_sl)   # ★표 글꼴 전부 Bold(회색/Light 섞임 방지)
             except Exception as _e:
                 print(f"[build_content_from_toc] 1.1 실패: {_e}")
 
@@ -1605,7 +1646,9 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
             except Exception as _e:
                 print(f"[build_content_from_toc] 2.1 실패: {_e}")
 
-        # 4) 배치한 원본 페이지 → 내용 슬라이드 (적은 순서대로)
+        # 4) 배치한 원본 페이지 → 내용 슬라이드 (★적은 순서 그대로, 재분류 없이)
+        #    build_page_auto 는 페이지를 '자기 방식'으로 재분류해 1.1/구조도를 또 만들고
+        #    순서를 엉키게 하므로 여기선 쓰지 않는다. 그 페이지의 내용만 담담히 렌더.
         for pnum in (g.get("pages") or []):
             try:
                 page = by_page.get(int(pnum))
@@ -1617,18 +1660,45 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
             tables_data = page.get("tables") or []
             body_to_use = (page.get("text_without_tables") or body_text) if tables_data else body_text
             display_title = f"{num}  {title}" if title else num
-            handled = False
-            try:
-                from modules.frame_builders import build_page_auto
-                handled = build_page_auto(
-                    prs, page, title=display_title, subtitle="",
-                    body_text=body_to_use, business_name=business_name)
-            except Exception as _exc:
-                print(f"[build_content_from_toc] 라우터 실패 → 폴백: {_exc}")
-            if not handled:
-                build_content_slide(prs, title=display_title, subtitle="",
-                                    body_text=body_to_use, tables=tables_data,
-                                    business_name=business_name)
+            images = _dedupe_images(page.get("images"))
+            struct = page.get("_struct")
+            if isinstance(struct, dict):
+                # LLM 구조화 결과가 있으면 그대로(표/글). 단 섹션 재분류·고정페이지 삽입은 안 함.
+                try:
+                    from modules.frame_builders import build_structured_slide
+                    build_structured_slide(
+                        prs, struct, business_name=business_name,
+                        section_label=display_title, subtitle="",
+                        images=images,
+                        red_texts=page.get("_red_texts"),
+                        underline_texts=page.get("_underline_texts"))
+                    continue
+                except Exception as _exc:
+                    print(f"[build_content_from_toc] 구조화 렌더 실패 → 폴백: {_exc}")
+            build_content_slide(prs, title=display_title, subtitle="",
+                                body_text=body_to_use, tables=tables_data,
+                                business_name=business_name)
+
+
+def _bold_all_table_text(slide):
+    """슬라이드 내 모든 표의 글꼴을 Bold·10.5pt로 통일(사모사채 개요표 뒤죽박죽 방지)."""
+    try:
+        for sh in slide.shapes:
+            if not sh.has_table:
+                continue
+            for row in sh.table.rows:
+                for cell in row.cells:
+                    for pp in cell.text_frame.paragraphs:
+                        try:
+                            pp.font.name = FONT_BOLD
+                            pp.font.size = _Pt(10.5)
+                        except Exception:
+                            pass
+                        for rn in pp.runs:
+                            rn.font.name = FONT_BOLD
+                            rn.font.size = _Pt(10.5)
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────
