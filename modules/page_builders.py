@@ -1670,7 +1670,17 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
                 tables_data = page.get("tables") or []
                 body_to_use = (page.get("text_without_tables") or body_text) if tables_data else body_text
                 images = _dedupe_images(page.get("images"))
+                # 이 페이지만 개별 구조화(LLM) — enrich처럼 전체를 드롭·재정렬하지 않음.
                 struct = page.get("_struct")
+                if not isinstance(struct, dict):
+                    try:
+                        from modules.llm_structure import structure_page
+                        struct = structure_page(
+                            page.get("raw_text") or body_text or "",
+                            int(page.get("page_num") or 0))
+                    except Exception as _sx:
+                        print(f"[build_content_from_toc] structure_page 실패: {_sx}")
+                        struct = None
                 if isinstance(struct, dict):
                     try:
                         from modules.frame_builders import build_structured_slide

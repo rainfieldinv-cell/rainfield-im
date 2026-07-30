@@ -836,22 +836,6 @@ def show_step4():
                     final_toc_map   = None
                     final_toc_count = toc_choice
 
-                # ── 본문에만 LLM 엔진 ON: 표·그림·글을 옛날처럼 구조화 ──
-                #   하이라이트(아래 수동 카드)·목차(위 수동 map)는 LLM이 안 건드림.
-                os.environ["RAINFIELD_LLM"] = "1"
-                try:
-                    from modules.llm_structure import enrich_and_number
-                    # ★PDF 원본을 임시파일로 넘겨 좌표기반 사진·표복원·썸네일 활성화
-                    _pdf_b = st.session_state.get("pdf_bytes")
-                    _pdf_path = None
-                    if _pdf_b:
-                        import tempfile
-                        _tf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-                        _tf.write(_pdf_b); _tf.close(); _pdf_path = _tf.name
-                    enrich_and_number(final_pages, pdf_path=_pdf_path)
-                except Exception as _llm_e:
-                    st.warning(f"⚠️ 본문 LLM 구조화 일부 실패({_llm_e}) — 기본 경로로 진행합니다.")
-
                 # ── 하이라이트: 2단계에서 직접 쓴 카드 3개 → Executive Summary 섹션 ──
                 #   (LLM 자동생성 아님 — 수동 카드를 그대로 넣는다)
                 _es_sections = None
@@ -864,6 +848,25 @@ def show_step4():
                 _toc_groups = _toc.get("groups") or None
                 _full_text = "\n".join(
                     (st.session_state.get("extracted_data") or {}).get("pages_text", []))
+
+                # ★목차 기준 생성에선 enrich_and_number(페이지 드롭·재정렬·재번호)를 쓰지 않는다.
+                #   그걸 쓰면 네가 소제목에 적은 페이지 번호가 사라져 내용을 못 찾는다.
+                #   대신 build_content_from_toc가 '소제목에 지정한 페이지'만 개별 구조화한다.
+                os.environ["RAINFIELD_LLM"] = "0"
+                if not _toc_groups:
+                    # (구) 자동 흐름에서만 enrich 사용
+                    os.environ["RAINFIELD_LLM"] = "1"
+                    try:
+                        from modules.llm_structure import enrich_and_number
+                        _pdf_b = st.session_state.get("pdf_bytes")
+                        _pdf_path = None
+                        if _pdf_b:
+                            import tempfile
+                            _tf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+                            _tf.write(_pdf_b); _tf.close(); _pdf_path = _tf.name
+                        enrich_and_number(final_pages, pdf_path=_pdf_path)
+                    except Exception as _llm_e:
+                        st.warning(f"⚠️ 본문 LLM 구조화 일부 실패({_llm_e}) — 기본 경로로 진행합니다.")
 
                 ppt_bytes = build_full_presentation(
                     business_name=st.session_state.business_name,
