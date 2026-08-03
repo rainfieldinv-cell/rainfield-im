@@ -577,29 +577,28 @@ def _extract_page_images(fitz_doc, page_idx: int) -> list:
 
 
 def _normalize_image_bytes(data: bytes, ext: str):
-    """PDF에서 추출한 이미지가 투명(RGBA/팔레트투명)·CMYK면 배경이 검게 나오므로
-       흰 배경 위에 합성하고 RGB로 변환해 PNG 바이트로 돌려준다. 실패 시 원본 그대로."""
+    """PDF에서 추출한 이미지를 '본래 모습 그대로' 깨끗한 포맷으로 재저장한다.
+       - 투명(알파) 이미지 → 투명 유지(RGBA PNG). 흰 배경 강제 X.
+       - CMYK 등 PPT가 검게 렌더하는 포맷 → RGB로 변환.
+       검정 배경 버그의 원인은 '깨진/미지원 포맷'이므로 깨끗한 PNG로 다시 저장해 해결.
+       실패 시 원본 그대로."""
     try:
         from PIL import Image
         import io as _io
         im = Image.open(_io.BytesIO(data))
-        changed = False
-        if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
-            im = im.convert("RGBA")
-            bg = Image.new("RGB", im.size, (255, 255, 255))   # 흰 배경
-            bg.paste(im, mask=im.split()[-1])                  # 알파를 마스크로 합성
-            im = bg
-            changed = True
+        has_alpha = (im.mode in ("RGBA", "LA")
+                     or (im.mode == "P" and "transparency" in im.info))
+        if has_alpha:
+            im = im.convert("RGBA")            # 투명 그대로 유지
         elif im.mode == "CMYK":
+            im = im.convert("RGB")             # CMYK는 검게 나오므로 RGB로
+        elif im.mode not in ("RGB", "L"):
             im = im.convert("RGB")
-            changed = True
-        elif im.mode != "RGB":
-            im = im.convert("RGB")
-            changed = True
-        if changed:
-            out = _io.BytesIO()
-            im.save(out, "PNG")
-            return out.getvalue(), "png"
+        else:
+            return data, ext                   # RGB/L 정상 포맷은 원본 유지
+        out = _io.BytesIO()
+        im.save(out, "PNG")                    # 깨끗한 PNG로 재저장(투명이면 알파 보존)
+        return out.getvalue(), "png"
     except Exception:
         pass
     return data, ext
