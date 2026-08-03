@@ -209,7 +209,16 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
         # ── 표 추출 (pdfplumber) — ★'내용 부족' 판단보다 먼저 ──────
         #   표만 있고 글자는 적은 페이지(거래사례·민감도·비교표 등 Appendix)를
         #   표 확인도 안 하고 버리던 버그 수정: 표를 먼저 뽑아서 판단에 반영한다.
-        table_data = _extract_page_tables(plumber_pdf.pages[i], debug=debug)
+        #   ★안전장치: 특정 페이지에서 표 추출이 실패해도 파싱 '전체'가 죽지 않게 감싼다
+        #     (이 한 페이지만 표 없이 진행 → 이전엔 여기서 터지면 parsed_pages가 통째로 비어
+        #      본문이 하나도 안 나오는 치명적 회귀가 났음).
+        try:
+            table_data = _extract_page_tables(plumber_pdf.pages[i], debug=debug)
+        except Exception as _te:
+            if debug:
+                print(f"[p{page_num:02d}/{total}] 표 추출 실패(무시): {_te}")
+            table_data = {"tables": [], "table_bboxes": [],
+                          "text_without_tables": pd.get("body_text", "")}
         pd.update(table_data)   # tables, table_bboxes, text_without_tables 추가
 
         # ── 규칙 3: 내용 부족 페이지 제외 (★단, 표가 있으면 살린다) ─
