@@ -1847,17 +1847,8 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
     #   • 표 없는 부록(현장사진·승인서) → 표 없이 크게 중앙
     big_imgs = _big_images(images)
     has_tbl = any(_parse_tdef(t)[3] > 0 and _parse_tdef(t)[2] for t in tables)
-    # ★작은 박스(side_box)는 '조감도/위치도/투시도/전경' 라벨이 실제로 있는 페이지에만.
-    #   소제목이 아니라 '그 페이지 내용'으로 판단 → 큰 지도(지역/시장 분석·네트워크도)는 side_box가
-    #   아니라 크게 나온다. (소제목만 보고 사업개요면 무조건 작게 하던 문제 해결)
-    _blob = " ".join([subtitle or "", intro or ""]
-                     + [str(b) for b in (bullets or [])]
-                     + [str(c) for t in tables for r in (t.get("rows") or []) for c in r]
-                     + [str(h) for t in tables for h in (t.get("header") or [])]
-                     + [str(t.get("title") or "") for t in tables])
-    _THUMB_LABELS = ("조감도", "조 감 도", "위치도", "위 치 도", "투시도",
-                     "전경", "건물전경", "건물 전경", "건축개요", "배치도")
-    labeled_img = bool(big_imgs) and any(k in _blob for k in _THUMB_LABELS)
+    labeled_img = bool(big_imgs) and any(k in subtitle for k in
+                                         ("건축", "입지", "조감", "위치", "사업 개요", "사업개요"))
     side_box = bool(big_imgs) and has_tbl and labeled_img
     top_bare = bool(big_imgs) and has_tbl and not labeled_img
     _IMG_W, _IMG_GAP_LR = 4.0, 0.25
