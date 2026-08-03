@@ -190,8 +190,11 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
                 print(f"[p{page_num:02d}/{total}] SKIP — 표지 (1페이지 자동 제외)")
             continue
 
-        # ── 규칙 2: 목차 페이지 제외 ───────────────────────────
-        if any(marker in full_text_lower for marker in _TOC_MARKERS):
+        # ── 규칙 2: 목차 페이지 제외 (★제목 위치=맨 위 3줄에 있을 때만) ──
+        #   본문에 '목차/contents'를 언급만 한 Appendix 페이지가 통째로
+        #   사라지던 문제 방지 — 진짜 목차 페이지는 그 단어가 상단 제목에 있음.
+        _head_lower = "\n".join(full_text_lower.splitlines()[:3])
+        if any(marker in _head_lower for marker in _TOC_MARKERS):
             if debug:
                 print(f"[p{page_num:02d}/{total}] SKIP — 목차 페이지")
             continue
@@ -203,9 +206,15 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
                 print(f"[p{page_num:02d}/{total}] SKIP — 텍스트 없음")
             continue
 
-        # ── 규칙 3: 내용 부족 페이지 제외 ─────────────────────
+        # ── 표 추출 (pdfplumber) — ★'내용 부족' 판단보다 먼저 ──────
+        #   표만 있고 글자는 적은 페이지(거래사례·민감도·비교표 등 Appendix)를
+        #   표 확인도 안 하고 버리던 버그 수정: 표를 먼저 뽑아서 판단에 반영한다.
+        table_data = _extract_page_tables(plumber_pdf.pages[i], debug=debug)
+        pd.update(table_data)   # tables, table_bboxes, text_without_tables 추가
+
+        # ── 규칙 3: 내용 부족 페이지 제외 (★단, 표가 있으면 살린다) ─
         combined = (pd["section_title"] + pd["subtitle"] + pd["body_text"]).strip()
-        if len(combined) < 15:
+        if len(combined) < 15 and not pd.get("tables"):
             # ★이미지만 있는 페이지(조감도·광역입지 등): 버리면 그림이 사라진다.
             #   큰 이미지가 있으면 직전 본문 페이지(건축개요 등)에 y좌표 순으로 첨부 →
             #   build_structured_slide 의 side_box(표 옆 라벨 박스) 경로로 렌더된다.
@@ -227,10 +236,6 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
             elif debug:
                 print(f"[p{page_num:02d}/{total}] SKIP — 내용 부족 ({len(combined)}자)")
             continue
-
-        # ── 표 추출 (pdfplumber) ───────────────────────────────
-        table_data = _extract_page_tables(plumber_pdf.pages[i], debug=debug)
-        pd.update(table_data)   # tables, table_bboxes, text_without_tables 추가
 
         # ── 섹션 제목 전파 ─────────────────────────────────────
         _SEC_NUM = re.compile(r'^0[1-9][\s\.\-]')
