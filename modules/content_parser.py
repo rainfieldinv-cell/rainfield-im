@@ -199,8 +199,13 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
                 print(f"[p{page_num:02d}/{total}] SKIP — 목차 페이지")
             continue
 
-        # ── 페이지 텍스트 추출 (fitz) ──────────────────────────
-        pd = _extract_pdf_page(pdf_page, debug=debug)
+        # ── 페이지 텍스트 추출 (fitz) — 실패 시 그 페이지만 건너뜀 ──
+        try:
+            pd = _extract_pdf_page(pdf_page, debug=debug)
+        except Exception as _pe:
+            if debug:
+                print(f"[p{page_num:02d}/{total}] SKIP — 텍스트 추출 실패: {_pe}")
+            continue
         if pd is None:
             if debug:
                 print(f"[p{page_num:02d}/{total}] SKIP — 텍스트 없음")
@@ -260,15 +265,28 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
                 "subtitle":      pd["subtitle"] or pd["section_title"],
             }
 
-        # ── 페이지 이미지 추출 ──────────────────────────────
-        pd["images"] = _extract_page_images(fitz_doc, i)
+        # ── 페이지 이미지/원문/강조 추출 (★각각 감싸 실패해도 페이지는 살린다) ──
         pd["page_num"] = page_num
-        # ── 원문 텍스트 보관 (LLM 페이지 구조화용) ───────────
-        pd["raw_text"] = pdf_page.get_text("text") or ""
-        # ── 빨간 글씨 / 밑줄 추출(원본 강조 재현용) ───────────
-        pd["_red_texts"] = _extract_red_texts(pdf_page)
-        pd["_underline_texts"] = _extract_underline_texts(pdf_page, pd.get("table_bboxes"))
-        pd["_filled_texts"] = _extract_filled_texts(pdf_page)
+        try:
+            pd["images"] = _extract_page_images(fitz_doc, i)
+        except Exception:
+            pd["images"] = []
+        try:
+            pd["raw_text"] = pdf_page.get_text("text") or ""
+        except Exception:
+            pd["raw_text"] = pd.get("body_text", "")
+        try:
+            pd["_red_texts"] = _extract_red_texts(pdf_page)
+        except Exception:
+            pd["_red_texts"] = []
+        try:
+            pd["_underline_texts"] = _extract_underline_texts(pdf_page, pd.get("table_bboxes"))
+        except Exception:
+            pd["_underline_texts"] = []
+        try:
+            pd["_filled_texts"] = _extract_filled_texts(pdf_page)
+        except Exception:
+            pd["_filled_texts"] = []
 
         if debug:
             sec_preview  = pd["section_title"][:30]
