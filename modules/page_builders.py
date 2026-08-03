@@ -1668,6 +1668,9 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
                 continue
             stext = (sub.get("text") or "").strip()
             sub_label = f"{gi + 1}.{si + 1} {stext}" if stext else ""
+
+            # ── 이 소제목의 지정 페이지들을 각각 개별 구조화(LLM) ──
+            structured = []      # [(page, struct-or-None), ...]  순서 그대로
             for pnum in (sub.get("pages") or []):
                 try:
                     page = by_page.get(int(pnum))
@@ -1675,36 +1678,68 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
                     page = None
                 if not page:
                     continue
-                body_text = (page.get("body_text") or "").strip()
-                tables_data = page.get("tables") or []
-                body_to_use = (page.get("text_without_tables") or body_text) if tables_data else body_text
-                images = _dedupe_images(page.get("images"))
-                # 이 페이지만 개별 구조화(LLM) — enrich처럼 전체를 드롭·재정렬하지 않음.
                 struct = page.get("_struct")
                 if not isinstance(struct, dict):
                     try:
                         from modules.llm_structure import structure_page
                         struct = structure_page(
-                            page.get("raw_text") or body_text or "",
+                            page.get("raw_text") or (page.get("body_text") or ""),
                             int(page.get("page_num") or 0))
                     except Exception as _sx:
                         print(f"[build_content_from_toc] structure_page 실패: {_sx}")
                         struct = None
-                if isinstance(struct, dict):
-                    try:
-                        from modules.frame_builders import build_structured_slide
+                structured.append((page, struct))
+            if not structured:
+                continue
+
+            # ── ★섹션2(금융개요) 다중 페이지: '표 안의 표'로 병합(대출개요 grid를 금융조건 표 행에 중첩) ──
+            _merged_done = False
+            _valid = [(p, s) for p, s in structured if isinstance(s, dict)]
+            if gi == 1 and len(_valid) >= 2:
+                try:
+                    from modules.llm_structure import _merge_section2_financing
+                    from modules.frame_builders import build_structured_slide
+                    temp = []
+                    for p, s in _valid:
+                        p2 = dict(p)
+                        p2["_struct"] = s
+                        p2["_sec_int"] = 2
+                        temp.append(p2)
+                    _merge_section2_financing(temp)       # temp → [병합된 1페이지]
+                    if temp:
+                        m = temp[0]
                         build_structured_slide(
-                            prs, struct, business_name=business_name,
+                            prs, m["_struct"], business_name=business_name,
                             section_label=section_label, subtitle=sub_label,
-                            images=images,
-                            red_texts=page.get("_red_texts"),
-                            underline_texts=page.get("_underline_texts"))
-                        continue
-                    except Exception as _exc:
-                        print(f"[build_content_from_toc] 구조화 렌더 실패 → 폴백: {_exc}")
-                build_content_slide(prs, title=section_label, subtitle=sub_label,
-                                    body_text=body_to_use, tables=tables_data,
-                                    business_name=business_name)
+                            images=_dedupe_images(m.get("images")),
+                            red_texts=m.get("_red_texts"),
+                            underline_texts=m.get("_underline_texts"))
+                        _merged_done = True
+                except Exception as _mx:
+                    print(f"[build_content_from_toc] 금융조건 병합 실패 → 개별 렌더: {_mx}")
+
+            # ── 병합 안 했으면: 페이지별로 그대로 렌더 ──
+            if not _merged_done:
+                for page, struct in structured:
+                    images = _dedupe_images(page.get("images"))
+                    if isinstance(struct, dict):
+                        try:
+                            from modules.frame_builders import build_structured_slide
+                            build_structured_slide(
+                                prs, struct, business_name=business_name,
+                                section_label=section_label, subtitle=sub_label,
+                                images=images,
+                                red_texts=page.get("_red_texts"),
+                                underline_texts=page.get("_underline_texts"))
+                            continue
+                        except Exception as _exc:
+                            print(f"[build_content_from_toc] 구조화 렌더 실패 → 폴백: {_exc}")
+                    body_text = (page.get("body_text") or "").strip()
+                    tables_data = page.get("tables") or []
+                    body_to_use = (page.get("text_without_tables") or body_text) if tables_data else body_text
+                    build_content_slide(prs, title=section_label, subtitle=sub_label,
+                                        body_text=body_to_use, tables=tables_data,
+                                        business_name=business_name)
 
 
 def _bold_all_table_text(slide):
