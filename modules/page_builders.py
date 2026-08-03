@@ -1723,6 +1723,7 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
                 for page, struct in structured:
                     images = _dedupe_images(page.get("images"))
                     if isinstance(struct, dict):
+                        _nest_grids_by_title(struct)   # ★표 안의 표(배치계획 등) 일반 복원
                         try:
                             from modules.frame_builders import build_structured_slide
                             build_structured_slide(
@@ -1740,6 +1741,45 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
                     build_content_slide(prs, title=section_label, subtitle=sub_label,
                                         body_text=body_to_use, tables=tables_data,
                                         business_name=business_name)
+
+
+def _nest_grids_by_title(struct):
+    """★일반 표 안의 표 복원: grid의 title이 label_value 표의 어떤 '구분 행' 라벨과 같으면,
+       그 grid를 그 행 '안'에 중첩(_nested_grids)한다. (배치계획·Rack밀도 등 모든 섹션 공통)"""
+    if not isinstance(struct, dict):
+        return
+    tables = struct.get("tables") or []
+    lv = next((t for t in tables if (t.get("kind") or "") == "label_value"), None)
+    if not lv:
+        return
+    lv_rows = lv.get("rows") or []
+    labels = [str(r[0]).strip() for r in lv_rows if r and str(r[0] if r else "").strip()]
+
+    def _match(title):
+        t = (title or "").strip()
+        if not t:
+            return None
+        for lab in labels:
+            if lab and (lab == t or lab in t or t in lab):
+                return lab
+        return None
+
+    nested = list(struct.get("_nested_grids") or [])
+    remaining, used = [], {a for a, *_ in nested}
+    for tb in tables:
+        if tb is lv:
+            remaining.append(tb)
+            continue
+        if (tb.get("kind") or "") == "grid":
+            anchor = _match(tb.get("title"))
+            if anchor and anchor not in used:
+                nested.append((anchor, tb, ""))
+                used.add(anchor)
+                continue
+        remaining.append(tb)
+    if nested:
+        struct["tables"] = remaining
+        struct["_nested_grids"] = nested
 
 
 def _bold_all_table_text(slide):

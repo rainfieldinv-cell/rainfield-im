@@ -15,7 +15,7 @@ import re
 
 from modules.claude_api import call_claude, verify_numbers_in_pdf
 
-PROMPT_VERSION = "structure_v5"   # v5: 행수 엄수·각주 보존 강화 + max_tokens 8192
+PROMPT_VERSION = "structure_v6"   # v6: 표 안의 표(구분 라벨=grid title) 일반화
 
 # 레인필드 표준 4섹션 (고정). 섹션라벨은 항상 이 이름으로 표기.
 SECTION_NAMES = {1: "사모사채 개요", 2: "금융개요", 3: "본건 사업 개요", 4: "Appendix"}
@@ -75,6 +75,11 @@ SYSTEM_PROMPT = """당신은 부동산 금융 IM(PDF)을 가로 A4 제안서 PPT
 9. ★표 바로 아래/옆의 각주·주석(예 '1)', '2)', '주)', '*', '(단위: 백만원)', '※ …')은
    절대 버리지 말고 그 표 다음 순서로 bullets에 그대로 넣으세요. 각주 번호와 내용을 원문 그대로.
    (표 안 값에 붙은 위첨자 표시 '1)' '2)' 도 값에 그대로 유지)
+10. ★표 안의 표(구분 라벨의 내용이 그 자체로 여러 행·열의 표인 경우, 예: '배치 계획'=층별 표,
+   'Rack 밀도 및 수량'=분류/개수/IT Load 표, '대출 개요'=트랜치별 표):
+   - label_value 표에는 그 '구분 라벨' 행을 만들되 내용칸은 비워두고("")
+   - 그 표를 별도 grid 로 만들되 **title 에 그 구분 라벨을 그대로**(예 title:"배치 계획").
+   → 시스템이 title 과 같은 라벨의 행 '안'에 그 표를 중첩해 넣습니다(표 안의 표 복원).
 순수 JSON만 출력하고 그 외 텍스트·설명은 출력하지 마세요."""
 
 
