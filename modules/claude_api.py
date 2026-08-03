@@ -24,7 +24,7 @@ from pathlib import Path
 # 설정 상수
 # ─────────────────────────────────────────────
 CLAUDE_MODEL  = "claude-sonnet-4-6"
-MAX_TOKENS    = 4096
+MAX_TOKENS    = 8192   # ★큰 표(수십 행)가 잘려 뒷행·각주가 사라지는 것 방지(4096→8192)
 CACHE_DIR     = Path(".claude_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
