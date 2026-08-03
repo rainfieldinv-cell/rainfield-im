@@ -1157,10 +1157,21 @@ def show_step_toc():
     if _tmsg:
         (st.success if _tmsg[0] == "success" else st.warning)(_tmsg[1])
 
+    # ★왼쪽 PDF 칸만 화면 상단에 고정(sticky) — 오른쪽 목차를 스크롤해도 페이지가 안 사라지게.
+    #   :has()로 '왼쪽 칸'만 지목 → 소제목 줄 컬럼엔 영향 없음. 미지원 브라우저는 자동으로 원래대로.
+    st.markdown(
+        "<style>"
+        "div[data-testid='stColumn']:has(#toc-left-anchor),"
+        "div[data-testid='column']:has(#toc-left-anchor){"
+        "position:sticky; top:3.2rem; align-self:flex-start;"
+        "max-height:calc(100vh - 4rem); overflow-y:auto; z-index:5;}"
+        "</style>", unsafe_allow_html=True)
+
     img_col, form_col = st.columns([1, 1])
 
     # ── 왼쪽: 원본 IM 전체 페이지 뷰어 (표지부터 한 장씩, 버튼 없이 바로 표시) ──
     with img_col:
+        st.markdown("<div id='toc-left-anchor'></div>", unsafe_allow_html=True)
         st.markdown("#### 📄 원본 IM (표지부터 한 장씩)")
         if not pdf_bytes or total == 0:
             st.warning("원본 PDF가 없어 이미지를 못 띄웁니다. 1단계에서 PDF(또는 워드→자동 PDF변환)로 올리세요.")
@@ -1220,37 +1231,43 @@ def show_step_toc():
                 g["title"] = st.text_input(f"목차 {gi + 1} 제목", key=tk,
                                            placeholder="예: 4 리스크분석 / Executive Summary")
 
+                # ★소제목 1개 = 한 줄([번호|소제목|페이지|고정|삭제]) — 세로 공간 절약(스크롤 최소화)
                 for si, sub in enumerate(g["subs"]):
-                    sc1, sc2, sc3 = st.columns([6, 3, 1])
+                    is_fixed = bool(sub.get("fixed", False))
+                    sc0, sc1, sc2, sc3, sc4 = st.columns([0.7, 4.5, 3, 1.5, 0.8])
+                    with sc0:
+                        st.markdown(f"<div style='padding-top:8px;color:#888;'>"
+                                    f"{gi + 1}.{si + 1}</div>", unsafe_allow_html=True)
                     with sc1:
                         sk = f"tocsub_{gi}_{si}"
                         st.session_state.setdefault(sk, sub.get("text", ""))
                         sub["text"] = st.text_input(
                             f"소제목 {gi + 1}.{si + 1}", key=sk,
-                            placeholder="예: 투자구조도", label_visibility="collapsed")
+                            placeholder="소제목", label_visibility="collapsed")
                     with sc2:
-                        # 1.1/2.1처럼 원본 없이 자동 생성되는 고정 페이지 표시
-                        fk = f"tocfix_{gi}_{si}"
-                        st.session_state.setdefault(fk, bool(sub.get("fixed", False)))
-                        sub["fixed"] = st.checkbox("🔒 고정", key=fk,
-                            help="1.1 사모사채 개요·2.1 금융 구조도처럼 원본 없이 자동 생성(페이지 불필요)")
+                        # ── 소제목별 원본 페이지 (고정 소제목은 페이지 불필요) ──
+                        if is_fixed:
+                            sub["pages"] = []
+                            rok = f"tocpgro_{gi}_{si}"
+                            st.session_state[rok] = "🔒 자동생성(원본 불필요)"
+                            st.text_input("페이지", key=rok, disabled=True,
+                                          label_visibility="collapsed")
+                        else:
+                            pk = f"tocpage_{gi}_{si}"
+                            st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
+                            _p_raw = st.text_input(
+                                f"페이지 {gi + 1}.{si + 1}", key=pk,
+                                placeholder="페이지 예: 8,9,11,10",
+                                label_visibility="collapsed")
+                            sub["pages"] = _parse_pages(_p_raw, total)
                     with sc3:
+                        fk = f"tocfix_{gi}_{si}"
+                        st.session_state.setdefault(fk, is_fixed)
+                        sub["fixed"] = st.checkbox("🔒고정", key=fk,
+                            help="1.1 사모사채 개요·2.1 금융 구조도처럼 원본 없이 자동 생성(페이지 불필요)")
+                    with sc4:
                         if st.button("🗑", key=f"tocdel_{gi}_{si}", help="이 소제목 삭제"):
                             pending["del"] = (gi, si)
-                    # ── 소제목별 원본 페이지 (고정 소제목은 페이지 불필요 → 숨김) ──
-                    if sub.get("fixed"):
-                        sub["pages"] = []
-                        st.caption(f"　└ 🔒 {gi + 1}.{si + 1} 자동 생성 페이지 (원본 연결 불필요)")
-                    else:
-                        pk = f"tocpage_{gi}_{si}"
-                        st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
-                        _p_raw = st.text_input(
-                            f"└ {gi + 1}.{si + 1} 원본 페이지 (순서대로! 예: 8,9,11,10,16-19)",
-                            key=pk, placeholder="예: 8  또는  8,9,11,10")
-                        sub["pages"] = _parse_pages(_p_raw, total)
-                        if sub["pages"]:
-                            st.caption(f"　└ 이 순서로 → {_pages_to_str(sub['pages'])} "
-                                       f"({len(sub['pages'])}장)")
                 if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
                     pending["add"] = gi
 
