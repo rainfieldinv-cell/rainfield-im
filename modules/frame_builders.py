@@ -2112,13 +2112,19 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                           and any(k in str(subtitle) for k in ("시세", "분양", "입지"))) else "")
             if _side_text:
                 _map_w = _TBL_W * 0.56
-                _place_images_row(slide, big_imgs[:1], _TBL_L, t, _map_w, t + _IMG_TOP_H)
+                # ★지도/사진 '전부'(1장이면 그대로, 여러 장이면 그리드) — 개수 캡 없음
+                _place_images_grid(slide, big_imgs, _TBL_L, t, _map_w, t + _IMG_TOP_H)
                 _add_textbox(slide, _TBL_L + _map_w + 0.2, t, _TBL_W - _map_w - 0.2,
                              _IMG_TOP_H, _side_text, size=10.5, bullet=True,
                              line_spacing=1.5, red_set=red_set, ul_set=ul_set)
                 btext = ""   # 지도 옆에 이미 적었으니 표 아래엔 안 찍음
+            elif len(big_imgs) >= 3:
+                # ★표 위 사진 3장 이상(트랙레코드 조감도 등) → 그리드로 '전부'
+                _place_images_grid(slide, big_imgs, _TBL_L, t, _TBL_W, t + _IMG_TOP_H + 1.2)
+                t += 1.2
             else:
-                _place_images_row(slide, big_imgs[:1], _TBL_L, t, _TBL_W, t + _IMG_TOP_H)
+                # ★차트/조감도 등 1~2장은 나란히 '전부' (예전엔 1장만 나와 누락)
+                _place_images_row(slide, big_imgs, _TBL_L, t, _TBL_W, t + _IMG_TOP_H)
             t += _IMG_TOP_H + 0.12
         tbl_start = t   # 표가 시작되는 y(사진 옆배치 기준)
         for (lbl, kind, header, rows, ncol, fp, rh, anchors, tbl_notes, thumb_imgs) in plan["items"]:
@@ -2240,12 +2246,12 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         if side_box and idx == img_plan_idx and big_imgs:
             if "입지" in subtitle:
                 # ★입지분석: 위치도/조감도 라벨표는 답답 → 표 틀 없이 사진만 크게(사용자 지시)
-                _place_images_col_bare(slide, big_imgs[:2], img_col_L, tbl_start,
+                _place_images_col_bare(slide, big_imgs, img_col_L, tbl_start,
                                        _IMG_W, _BODY_BOTTOM)
             else:
-                labels = _img_labels_for(subtitle, min(2, len(big_imgs)))
-                # 원본이 '표 안 사진'(조감도·광역위치도) → 라벨 헤더 표박스(각 1:1), 표 오른쪽
-                _place_images_col(slide, big_imgs[:2], img_col_L, tbl_start,
+                labels = _img_labels_for(subtitle, len(big_imgs))
+                # 원본이 '표 안 사진'(조감도·광역위치도) → 라벨 헤더 표박스(각 1:1), 표 오른쪽 '전부'
+                _place_images_col(slide, big_imgs, img_col_L, tbl_start,
                                   _IMG_W, _BODY_BOTTOM, labels=labels)
         elif idx == n - 1 and big_imgs and not top_bare and not side_box and not has_tbl:
             # 표 없는 사진 페이지 → (분석 글이 있으면 글을 위에 먼저 쓰고 지도는 그 아래 = 겹침 방지),
