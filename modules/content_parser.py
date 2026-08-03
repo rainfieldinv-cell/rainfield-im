@@ -561,16 +561,48 @@ def _extract_page_images(fitz_doc, page_idx: int) -> list:
             w, h = base["width"], base["height"]
             if w * h < _IMG_MIN_PX:
                 continue
+            data, ext = base["image"], base["ext"]
+            # ★배경 검정 방지: 투명(알파)·CMYK 이미지를 '흰 배경 합성 + RGB'로 정규화
+            data, ext = _normalize_image_bytes(data, ext)
             result.append({
                 "xref":   xref,
                 "width":  w,
                 "height": h,
-                "ext":    base["ext"],
-                "data":   base["image"],
+                "ext":    ext,
+                "data":   data,
             })
         except Exception:
             pass
     return result
+
+
+def _normalize_image_bytes(data: bytes, ext: str):
+    """PDF에서 추출한 이미지가 투명(RGBA/팔레트투명)·CMYK면 배경이 검게 나오므로
+       흰 배경 위에 합성하고 RGB로 변환해 PNG 바이트로 돌려준다. 실패 시 원본 그대로."""
+    try:
+        from PIL import Image
+        import io as _io
+        im = Image.open(_io.BytesIO(data))
+        changed = False
+        if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+            im = im.convert("RGBA")
+            bg = Image.new("RGB", im.size, (255, 255, 255))   # 흰 배경
+            bg.paste(im, mask=im.split()[-1])                  # 알파를 마스크로 합성
+            im = bg
+            changed = True
+        elif im.mode == "CMYK":
+            im = im.convert("RGB")
+            changed = True
+        elif im.mode != "RGB":
+            im = im.convert("RGB")
+            changed = True
+        if changed:
+            out = _io.BytesIO()
+            im.save(out, "PNG")
+            return out.getvalue(), "png"
+    except Exception:
+        pass
+    return data, ext
 
 
 # ──────────────────────────────────────────────────────
