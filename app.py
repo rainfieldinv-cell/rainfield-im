@@ -278,7 +278,8 @@ def show_step1():
                 for _k in ("toc_edit", "toc_hashtags", "toc_page_cache", "toc_view_page",
                            "toc_png_cache", "view_pdf_bytes", "highlight_cards", "hl_img_render",
                            "hl_done_render", "hl_view_page", "layout_preview_render",
-                           "_hl_autofill_msg", "_toc_autofill_msg"):
+                           "_hl_autofill_msg", "_toc_autofill_msg",
+                           "hl_es_pages_str", "hl_es_idx"):
                     st.session_state.pop(_k, None)
                 _clear_toc_widget_state()
 
@@ -1435,15 +1436,14 @@ def show_step_arrange():
 # [4단계: 하이라이트(Executive Summary) 구성] — 원본 ES 페이지 확인 + 카드 3개 편집
 # ─────────────────────────────────────────────
 def _find_es_pages(pages_text):
-    """원본에서 Executive Summary / 요약 페이지(1-based) 추정.
-       페이지 앞부분에 'Executive Summary' 표기가 있거나, 제목처럼 '요약'만 있는 줄이 있으면 해당."""
+    """원본에서 'Executive Summary' 표기가 있는 페이지(1-based)를 추정 — 보통 시작 1페이지.
+       ★여러 페이지로 이어지는 ES는 자동 경계 감지가 러닝헤더 때문에 불안정하므로,
+         여기선 '표기가 있는 페이지'만 반환하고 실제 범위는 사용자가 화면에서 조정한다."""
     hits = []
     for i, t in enumerate(pages_text or [], start=1):
         head = (t or "")[:400]
-        if "executive summary" in head.lower():
-            hits.append(i)
-            continue
-        if re.search(r"(^|\n)\s*(투자|사업|핵심)?\s*요약\s*(\n|$)", head):
+        if "executive summary" in head.lower() or \
+           re.search(r"(^|\n)\s*(투자|사업|핵심)?\s*요약\s*(\n|$)", head):
             hits.append(i)
     return hits
 
@@ -1456,9 +1456,11 @@ def _init_highlight_cards():
 
 
 def _es_only_text(pages_text):
-    """오직 'Executive Summary' 항목이 있는 페이지들의 텍스트만 이어붙여 반환.
-       ★전체 문서 요약이 아님 — ES 항목 부분만. ES를 못 찾으면 '' 반환(폴백 없음)."""
-    es = _find_es_pages(pages_text)
+    """오직 'Executive Summary' 페이지 텍스트만 이어붙여 반환.
+       ★사용자가 화면에서 지정한 ES 페이지 범위(hl_es_pages_str)를 우선 사용,
+         없으면 자동 감지. 전체 문서 요약이 아님. 페이지가 없으면 '' 반환."""
+    _raw = (st.session_state.get("hl_es_pages_str") or "").strip()
+    es = _parse_pages(_raw, len(pages_text)) if _raw else _find_es_pages(pages_text)
     if not es:
         return ""
     return "\n".join((pages_text[p - 1] or "") for p in es
@@ -1491,7 +1493,9 @@ def _autofill_highlight_from_es():
             "content":  (sec.get("content") or sec.get("body") or "").strip(),
         }
     st.session_state.highlight_cards = cards
-    return True, f"'Executive Summary' 항목({_pages_to_str(_find_es_pages(pages_text))}p)을 3개 카드로 정리했어요. 확인·수정하세요."
+    _used = (st.session_state.get("hl_es_pages_str") or "").strip() \
+        or _pages_to_str(_find_es_pages(pages_text))
+    return True, f"'Executive Summary' 항목({_used}p)을 3개 카드로 정리했어요. 확인·수정하세요."
 
 
 def _clear_highlight_widget_state():
@@ -1534,39 +1538,53 @@ def show_step_highlight():
 
     img_col, form_col = st.columns([1, 1])
 
-    # ── 왼쪽: 원본 IM 전체 페이지 뷰어 (목차 4단계처럼 ◀▶로 전체를 한 장씩 넘김) ──
+    # ── 왼쪽: 'Executive Summary' 페이지만 보여줌(전체 X). 범위는 자동감지+사용자 조정 ──
     with img_col:
-        st.markdown("#### 📄 원본 IM (표지부터 한 장씩)")
+        st.markdown("#### 📄 원본 Executive Summary")
         if not view_pdf or total == 0:
             st.warning("원본 PDF가 없어 이미지를 못 띄웁니다. 1단계에서 워드/PDF를 올려주세요.")
         else:
             npage = _pdf_page_count(view_pdf)
             if npage <= 0:
                 npage = total
-            es_pages = _find_es_pages(pages_text)
-            if es_pages:
-                st.caption(f"Executive Summary로 추정되는 페이지: {_pages_to_str(es_pages)}p "
-                           "(참고용 · 전체를 넘겨볼 수 있어요)")
-            cur = min(max(1, st.session_state.get("hl_view_page", 1)), npage)
-            pc1, pc2, pc3 = st.columns([1, 2, 1])
-            with pc1:
-                if st.button("◀ 이전", key="hl_prev", use_container_width=True,
-                             disabled=(cur <= 1)):
-                    st.session_state.hl_view_page = cur - 1
-                    st.rerun()
-            with pc2:
-                st.markdown(f"<div style='text-align:center; padding-top:6px;'>"
-                            f"<b>{cur}</b> / {npage} 페이지</div>", unsafe_allow_html=True)
-            with pc3:
-                if st.button("다음 ▶", key="hl_next", use_container_width=True,
-                             disabled=(cur >= npage)):
-                    st.session_state.hl_view_page = cur + 1
-                    st.rerun()
-            png = _toc_page_png(view_pdf, cur)
-            if png:
-                st.image(png, use_container_width=True)
+            _detected = [p for p in _find_es_pages(pages_text) if 1 <= p <= npage]
+            # ES 페이지 범위 입력(자동감지값 기본 · 여러 장이면 '2-5'처럼)
+            _default = _pages_to_str(_detected) if _detected else ""
+            st.session_state.setdefault("hl_es_pages_str", _default)
+            _raw = st.text_input(
+                "Executive Summary 페이지 (여러 장이면 2-5 · 한 장이면 3)",
+                key="hl_es_pages_str",
+                placeholder="예: 3  또는  2-5",
+                help="자동으로 찾은 값이에요. ES가 여러 페이지면 여기서 범위를 고치세요(예: 2-5).")
+            es_pages = _parse_pages(_raw, npage)
+            if _detected:
+                st.caption(f"자동 감지: {_pages_to_str(_detected)}p (필요하면 위에서 조정)")
+            if not es_pages:
+                st.warning("표시할 Executive Summary 페이지가 없어요. 위에 페이지를 적거나, "
+                           "없는 딜이면 오른쪽 카드를 직접 입력하세요.")
             else:
-                st.caption(f"⚠️ {cur}p 렌더 실패")
+                idx = min(max(0, st.session_state.get("hl_es_idx", 0)), len(es_pages) - 1)
+                if len(es_pages) > 1:
+                    pc1, pc2, pc3 = st.columns([1, 2, 1])
+                    with pc1:
+                        if st.button("◀ 이전", key="hl_prev", use_container_width=True,
+                                     disabled=(idx <= 0)):
+                            st.session_state.hl_es_idx = idx - 1
+                            st.rerun()
+                    with pc2:
+                        st.markdown(f"<div style='text-align:center; padding-top:6px;'>"
+                                    f"ES <b>{es_pages[idx]}</b>p ({idx + 1}/{len(es_pages)})</div>",
+                                    unsafe_allow_html=True)
+                    with pc3:
+                        if st.button("다음 ▶", key="hl_next", use_container_width=True,
+                                     disabled=(idx >= len(es_pages) - 1)):
+                            st.session_state.hl_es_idx = idx + 1
+                            st.rerun()
+                png = _toc_page_png(view_pdf, es_pages[idx])
+                if png:
+                    st.image(png, use_container_width=True)
+                else:
+                    st.caption(f"⚠️ {es_pages[idx]}p 렌더 실패")
 
     # ── 오른쪽: 카드 3개 편집 (컬럼 2중첩 방지 → 세로) ──
     with form_col:
