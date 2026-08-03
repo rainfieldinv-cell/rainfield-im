@@ -76,6 +76,9 @@ SLIDE_2_SYSTEM_PROMPT = """당신은 부동산 PF 투자제안서 작성 전문�
 5. 보통 1번 섹션=거래 개요(차주·사업지·금액·구조), 2번=핵심 포인트(인허가/시공/토지 등 리스크),
    3번=나머지 핵심(사업 구조·책임준공 등). 단 원문 내용에 맞춰 유연하게.
 6. 한국어. 출력은 JSON 만.
+7. ★입력 텍스트에는 'Executive Summary'가 아닌 다른 내용(그 페이지의 나머지 절반, 표·상세
+   금융조건·주석 등)이 섞여 있을 수 있다. 오직 'Executive Summary(핵심요약/투자포인트)'에
+   해당하는 서술만 보고 정리하라. 그 외 상세표·부수 내용은 요약에 넣지 말고 무시하라.
 
 [JSON 출력 스키마]
 {
@@ -90,7 +93,8 @@ SLIDE_2_SYSTEM_PROMPT = """당신은 부동산 PF 투자제안서 작성 전문�
 SLIDE_2_USER_TEMPLATE = """[PDF 원문 — Executive Summary 페이지]
 {pdf_text}
 
-위 Executive Summary 내용을 '3개 섹션'으로 요약해 JSON 으로 출력하라.
+위 텍스트 중 'Executive Summary(핵심요약)'에 해당하는 부분만 보고 '3개 섹션'으로 요약해
+JSON 으로 출력하라. (다른 상세표·부수 내용이 섞여 있으면 무시)
 원문에 없는 내용은 만들지 말 것(특히 분양성·만기일자). sections 는 정확히 3개."""
 
 
@@ -112,7 +116,7 @@ def generate_executive_summary(pdf_text: str) -> dict:
         user_prompt=SLIDE_2_USER_TEMPLATE.format(pdf_text=pdf_text),
         slide_num=2,
         pdf_context=pdf_text,
-        prompt_version="exec_v2_3sections",
+        prompt_version="exec_v3_es_only",
     )
 
     if result["ok"]:

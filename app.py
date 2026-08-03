@@ -1506,8 +1506,21 @@ def _clear_highlight_widget_state():
 
 def show_step_highlight():
     st.markdown("## 2단계. 하이라이트 (Executive Summary) 구성")
-    st.caption("왼쪽에서 원본 IM의 Executive Summary 페이지를 보고, 오른쪽 카드 3개를 **직접** 입력하세요. "
-               "(자동으로 채우지 않습니다 · 편집·저장까지만 · 완성 이미지는 다음 단계에서)")
+    st.caption("제안서 표지 다음에 들어가는 '핵심 요약(Executive Summary)' 3줄 카드를 만드는 단계입니다.")
+    with st.expander("📖 사용법 (처음이면 눌러보세요)", expanded=False):
+        st.markdown(
+            "**순서**\n"
+            "1. **왼쪽에서 Executive Summary 페이지를 확인**하세요. 자동으로 찾아서 보여줍니다.\n"
+            "2. ES가 **여러 페이지**면(가끔 5장 이상) 왼쪽 위 칸에 **`2-5`처럼 범위를 고치세요**. "
+            "한 페이지면 그대로 두면 됩니다.\n"
+            "3. **`🤖 Executive Summary 자동 추출`** 버튼을 누르면, **왼쪽에 보이는 그 페이지의 "
+            "Executive Summary 내용만** 읽어 오른쪽 카드 3개로 정리해 줍니다.\n"
+            "4. 오른쪽 카드를 **직접 수정**하세요(제목·내용). 이게 최종 하이라이트가 됩니다.\n\n"
+            "**중요**\n"
+            "- **왼쪽에 보이는 페이지 = 자동 추출이 읽는 페이지**입니다. 둘은 항상 같습니다.\n"
+            "- **페이지 범위를 먼저 맞춘 뒤** 자동 추출 버튼을 누르세요. "
+            "이미 추출한 뒤 범위를 바꿨다면 **버튼을 다시** 누르면 새 범위로 다시 정리합니다.\n"
+            "- 한 페이지에 ES와 다른 내용이 섞여 있어도, **Executive Summary 부분만** 골라 정리합니다.")
 
     pages_text = (st.session_state.get("extracted_data") or {}).get("pages_text", [])
     view_pdf = st.session_state.get("view_pdf_bytes") or st.session_state.get("pdf_bytes")
