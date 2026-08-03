@@ -548,31 +548,53 @@ def _extract_page_images(fitz_doc, page_idx: int) -> list:
     -------
     [{"xref": int, "width": int, "height": int, "ext": str, "data": bytes}, ...]
     """
+    import fitz
     page = fitz_doc[page_idx]
     result = []
     seen_xrefs = set()
     for img in page.get_images(full=True):
         xref = img[0]
+        smask_xref = img[1] if len(img) > 1 else 0   # 별도 투명 마스크(SMask) xref
         if xref in seen_xrefs:
             continue
         seen_xrefs.add(xref)
         try:
-            base = fitz_doc.extract_image(xref)
-            w, h = base["width"], base["height"]
+            # ★Pixmap으로 렌더 + SMask(별도 투명마스크)를 합쳐 '보이는 그대로' 만든다.
+            #   (extract_image는 본체만 뽑아 투명영역이 검게 나옴 → 검정 배경 버그의 진짜 원인)
+            pix = fitz.Pixmap(fitz_doc, xref)
+            if smask_xref:
+                try:
+                    if pix.alpha:                     # 결합 전 base는 알파가 없어야 함
+                        pix = fitz.Pixmap(pix, 0)     # 알파 제거
+                    mpix = fitz.Pixmap(fitz_doc, smask_xref)
+                    pix = fitz.Pixmap(pix, mpix)      # 마스크를 알파로 결합 → 투명 복원
+                except Exception:
+                    pass
+            # CMYK/기타 → RGB(알파 유지)
+            if (pix.n - pix.alpha) >= 4 or (pix.colorspace and pix.colorspace.name not in ("DeviceRGB", "DeviceGray")):
+                pix = fitz.Pixmap(fitz.csRGB, pix)
+            w, h = pix.width, pix.height
             if w * h < _IMG_MIN_PX:
                 continue
-            data, ext = base["image"], base["ext"]
-            # ★배경 검정 방지: 투명(알파)·CMYK 이미지를 '흰 배경 합성 + RGB'로 정규화
-            data, ext = _normalize_image_bytes(data, ext)
+            data = pix.tobytes("png")             # 투명이면 알파 보존한 PNG
             result.append({
                 "xref":   xref,
                 "width":  w,
                 "height": h,
-                "ext":    ext,
+                "ext":    "png",
                 "data":   data,
             })
         except Exception:
-            pass
+            # Pixmap 실패 시 원본 추출로 폴백(+ 포맷 정규화)
+            try:
+                base = fitz_doc.extract_image(xref)
+                w, h = base["width"], base["height"]
+                if w * h < _IMG_MIN_PX:
+                    continue
+                data, ext = _normalize_image_bytes(base["image"], base["ext"])
+                result.append({"xref": xref, "width": w, "height": h, "ext": ext, "data": data})
+            except Exception:
+                pass
     return result
 
 
