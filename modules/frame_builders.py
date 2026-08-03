@@ -344,14 +344,26 @@ _SRC_L, _SRC_T, _SRC_W = 0.43, 7.19, 8.65
 
 
 def _est_text_height(text, W, size):
-    """글상자 높이(in) 추정 — 자동줄바꿈 고려. 빈 줄 군더더기 없이 내용에 딱 맞춤."""
-    char_w = size * 0.78 / 72.0           # 한글 기준 글자폭 근사
-    cpl = max(1, int(W / char_w))
-    line_h = size * 1.20 / 72.0           # 한 줄 높이 — 셀 줄간격 100%(spcBef/aft 0)에 맞춰 촘촘
+    """글상자 높이(in) 추정 — 자동줄바꿈 고려. 빈 줄 군더더기 없이 내용에 딱 맞춤.
+       ★글자별 실제 폭 누적으로 줄바꿈 추정: 한글/전각 ≈1em, 영문/숫자/기호 ≈0.5em.
+         (한글을 일괄 0.78em로 좁게 잡아 줄 수를 적게 추정→다음 요소가 겹치던 문제 교정)"""
+    em = size / 72.0
+    kor_w = em * 1.02                     # 한글/전각 글자폭
+    asc_w = em * 0.52                     # 영문/숫자/공백/반각기호 글자폭
+    avail = max(0.1, float(W))
+    line_h = size * 1.22 / 72.0           # 한 줄 높이
     lines = 0
     for ln in str(text).split("\n"):
-        lines += max(1, -(-len(ln) // cpl))   # ceil
-    return max(line_h, lines * line_h) + 0.03
+        w, ln_lines = 0.0, 1
+        for ch in ln:
+            cw = kor_w if ord(ch) > 0x1100 else asc_w
+            if w + cw > avail:
+                ln_lines += 1
+                w = cw
+            else:
+                w += cw
+        lines += ln_lines
+    return max(line_h, lines * line_h) + 0.06
 
 
 def _emph_segments(line, red_set, ul_set=None):
@@ -1486,8 +1498,11 @@ def _render_table_chunk(slide, kind, header, rows, ncol, L, T, W, font_pt, row_h
     #   원본처럼: '숫자/비율 전용' 컬럼 = 오른쪽 / '텍스트 섞인 긴(≥10자)' 컬럼 = 왼쪽 / 그 외(짧은) = 가운데.
     #   (금액·세대수·면적·비율·매매대금 → 오른쪽 / 진행일정·관계법령·단지명·구분 라벨 → 왼쪽)
     # ★비교대상 사례표(조감도 사진 or 전세가율/도급순위 행)는 원본처럼 데이터칸 전부 가운데 정렬.
-    _is_comp = bool(thumb_imgs) or any(
-        any(k in str((data[ri][0] if data[ri] else "") or "") for k in ("전세가율", "도급순위"))
+    _comp_kw = ("전세가율", "도급순위", "거래사례", "매매사례", "분양사례",
+                "실거래", "민감도", "사례", "Cap Rate", "cap rate")
+    _hdr_blob = " ".join(str(h or "") for h in (header or []))
+    _is_comp = bool(thumb_imgs) or any(k in _hdr_blob for k in _comp_kw) or any(
+        any(k in str((data[ri][0] if data[ri] else "") or "") for k in _comp_kw)
         for ri in range(hdr_rows, nrow))
     if kind != "label_value" and header and _is_comp:
         for ci in range(ncol):
@@ -1718,6 +1733,49 @@ _GAP = 0.22       # 표 간 간격
 _LABEL_H = 0.34   # 표 미니라벨 높이
 
 
+_FN_MARK_RE = re.compile(r"^\(?\s*(\*+\)|주\s*\d*\)|주\s+|※|\d+\))")
+
+
+def _is_footnote_line(s):
+    """*) **) ***) / 주N) / ※ / N) 로 시작하는 각주 줄인가."""
+    return bool(_FN_MARK_RE.match(str(s or "").lstrip("(").lstrip()))
+
+
+def _split_footnote_tables(tables):
+    """각주만 모인 '가짜 표'를 골라내 (남길 표들, 각주줄 리스트)로 분리.
+       - 좁은 표(≤2 유효열)이고
+       - 헤더가 비었거나 헤더 자체가 각주이고
+       - 데이터 행 대부분(≥70%)이 각주 줄이면 → 표가 아니라 각주로 본다.
+       원본에서 각주는 표 밖 작은 글상자이므로, 표로 굳어진 걸 되돌린다."""
+    kept, fn_lines = [], []
+
+    def _row_text(r):
+        return " ".join(str(c or "").strip() for c in (r or [])).strip()
+
+    for t in (tables or []):
+        if not isinstance(t, dict):
+            kept.append(t)
+            continue
+        header = t.get("header") or []
+        rows = t.get("rows") or []
+        ncol = max([len(header)] + [len(r) for r in rows] + [0])
+        body = [_row_text(r) for r in rows]
+        body = [b for b in body if b]
+        if not body:
+            kept.append(t)
+            continue
+        hdr_txt = _row_text(header)
+        header_ok = (not hdr_txt) or _is_footnote_line(hdr_txt)
+        fn_cnt = sum(1 for b in body if _is_footnote_line(b))
+        if ncol <= 2 and header_ok and fn_cnt >= max(1, int(len(body) * 0.7)):
+            if hdr_txt and _is_footnote_line(hdr_txt):
+                fn_lines.append(hdr_txt)
+            fn_lines.extend(body)
+        else:
+            kept.append(t)
+    return kept, fn_lines
+
+
 def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                            section_label: str = None, subtitle: str = None,
                            images=None, red_texts=None, underline_texts=None, fill_texts=None):
@@ -1729,6 +1787,11 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
     intro = (struct.get("intro") or "").strip()
     bullets = [b for b in (struct.get("bullets") or []) if str(b).strip()]
     tables = struct.get("tables") or []
+    # ★각주(*) **) ***) 주N) ※)만 있는 표 → 표가 아니라 각주(글상자)로. 원본이 표 밖 작은 글상자라서.
+    #   LLM/파서가 각주 줄을 표로 잘못 묶던 것 교정 → 아래 _is_note 경로로 맨 아래 각주 처리됨.
+    tables, _fn_from_tbl = _split_footnote_tables(tables)
+    if _fn_from_tbl:
+        bullets = bullets + _fn_from_tbl
     # ★기업개요(시행사·시공사 기본정보) label_value → 4열(구분|내용|구분|내용)로(원본처럼)
     tables = [_corp_to_4col(t) if _is_corp_info(t) else t for t in tables]
     source = (struct.get("source") or "").strip()
@@ -2195,10 +2258,11 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                                        red_set=red_set, ul_set=ul_set)
                 _img_top = tbl_start + _bhh + 0.15
                 btext = ""        # 위에 이미 썼으니 아래에서 또 안 찍음
-            if len(big_imgs) >= 4:
+            if len(big_imgs) >= 3:
+                # ★3장 이상 = 그리드(크게 1장 + 3열)로 '전부' 배치 — 사진 누락 방지(사용자: 다 뽑아).
                 _place_images_grid(slide, big_imgs, _TBL_L, _img_top, _TBL_W, _BODY_BOTTOM)
             else:
-                _place_images_row(slide, big_imgs[:2], _TBL_L, _img_top, _TBL_W, _BODY_BOTTOM)
+                _place_images_row(slide, big_imgs, _TBL_L, _img_top, _TBL_W, _BODY_BOTTOM)
         # ★순서(원본): 표 → 주N) 각주(표 바로 밑, 9pt 회색) → 본문 산문(10pt 검정).
         #   주N)는 표에 딱 붙고, 분석 프로즈는 그 아래(원본: 인근 주요…는 주N) 다음).
         if idx == n - 1 and notes_text:
