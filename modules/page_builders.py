@@ -252,17 +252,34 @@ def _replace_text_frame_content(tf, new_text: str):
 def _replace_footer_business_name(slide, business_name: str):
     """
     슬라이드 하단 푸터의 '사업명' 자리표시자를 실제 사업명으로 교체합니다.
-    left < 1.0cm, top > 17.5cm 조건으로 푸터 도형을 찾습니다.
+    ★푸터는 좌·우 어디든 올 수 있으므로 '위치'가 아니라 '텍스트'(사업명/구분자 ｜|)로 찾는다.
+      페이지번호(｜ N)는 그대로 두고 '사업명' 부분만 실제 사업명으로 바꾼다.
     """
     if not business_name:
         return
     FOOTER_TOP_MIN = 17.5
     for shape in slide.shapes:
-        if (shape.has_text_frame
-                and shape.left / 360000 < 1.0
-                and shape.top  / 360000 > FOOTER_TOP_MIN):
-            _replace_text_frame_content(shape.text_frame, business_name)
-            return
+        if not shape.has_text_frame:
+            continue
+        if (shape.top or 0) / 360000 <= FOOTER_TOP_MIN:   # 하단만
+            continue
+        txt = shape.text_frame.text or ""
+        if ("사업명" not in txt) and ("｜" not in txt) and ("|" not in txt):
+            continue
+        if "사업명" in txt:
+            new = txt.replace("사업명", business_name)
+        else:
+            sep = "｜" if "｜" in txt else "|"
+            new = business_name + txt[txt.index(sep):]   # 사업명 + '｜ N'
+        # 서식(Light 8pt 회색 우측정렬) 유지하며 텍스트만 교체
+        _p = shape.text_frame.paragraphs[0]
+        if _p.runs:
+            _p.runs[0].text = new
+            for _r in _p.runs[1:]:
+                _r.text = ""
+        else:
+            _replace_text_frame_content(shape.text_frame, new)
+        return
 
 
 # ─────────────────────────────────────────────
@@ -562,17 +579,8 @@ def build_executive_summary_slide(prs, sections: list, business_name: str = ""):
     if len(sections) > 3:
         print(f"[경고] Executive Summary 섹션이 3개 초과 ({len(sections)}개). 3개까지만 표시됩니다.")
 
-    # ── 5. 좌하단 사업명 텍스트박스 교체 ──────────────
-    # 레이아웃 기준: left=0, top=18.35cm (슬라이드 하단)
-    # 여기를 수정하면 좌하단 사업명 위치 기준이 바뀝니다
-    if business_name:
-        FOOTER_TOP_MIN = 17.5
-        for shape in slide.shapes:
-            if (shape.has_text_frame
-                    and shape.left / 360000 < 1.0          # 왼쪽 끝
-                    and shape.top  / 360000 > FOOTER_TOP_MIN):  # 하단
-                _replace_text_frame_content(shape.text_frame, business_name)
-                break
+    # ── 5. 하단 사업명 푸터 교체 (좌·우 어디든 텍스트로 찾음, 페이지번호 유지) ──
+    _replace_footer_business_name(slide, business_name)
 
     return slide
 
@@ -1561,6 +1569,7 @@ def _build_finance_structure_asis(prs, intro_text="", business_name=""):
             break
     if target is not None:
         _replace_text_frame_content(target.text_frame, intro_text)
+    _replace_footer_business_name(slide, business_name)   # 하단 '사업명' 푸터 교체
     return slide
 
 
