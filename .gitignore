@@ -65,3 +65,9 @@ templates/*_backup.pptx
 # 로컬 렌더 검증 결과물
 _test.pptx
 _render_out/
+_tr*.pdf
+_tr*.pptx
+_tr*.pkl
+_ph.pptx
+_render_tr/
+_render_ph/

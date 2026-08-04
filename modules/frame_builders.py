@@ -1608,27 +1608,36 @@ def _place_images_row(slide, imgs, L, top, W, bottom, *, labels=None):
 
 
 def _place_images_grid(slide, imgs, L, top, W, bottom):
-    """사진 여러 장(사업지 전경 등): 첫 장 크게(상단) + 나머지 3열 그리드 — 원본 레이아웃 재현."""
+    """사진 여러 장(트랙레코드 조감도·사업지 전경 등)을 '균등 그리드'로 ★전부 배치.
+       - 열 수는 개수에 맞춰(≤4장→그만큼, 5~8→4열, 그 이상→5열), 나머지는 다음 줄.
+       - 각 칸을 남은 높이에 맞춰 축소해 넣으므로 8장이든 12장이든 다 들어간다.
+         (예전엔 '첫 장 크게+3열'인데 각 행이 0.6in 미만이면 스킵돼 1장만 나오던 버그 수정)"""
     imgs = [im for im in (imgs or []) if im.get("data")]
     if not imgs:
         return 0.0
-    if len(imgs) <= 2:
-        return _place_images_row(slide, imgs, L, top, W, bottom)
     avail = bottom - top
-    gap = 0.14
-    rest = imgs[1:]
-    cols = 3
-    grows = (len(rest) + cols - 1) // cols
-    big_h = min(avail * 0.46, W * 0.48)
-    _place_images_row(slide, imgs[:1], L, top, W, top + big_h)
-    gy = top + big_h + gap
-    if grows > 0:
-        row_h = (bottom - gy - gap * (grows - 1)) / grows
-        if row_h > 0.5:
-            for r in range(grows):
-                chunk = rest[r * cols:(r + 1) * cols]
-                _place_images_row(slide, chunk, L, gy + r * (row_h + gap), W,
-                                  gy + r * (row_h + gap) + row_h)
+    if avail < 0.4:
+        return 0.0
+    n = len(imgs)
+    cols = n if n <= 4 else (4 if n <= 8 else 5)
+    rows = (n + cols - 1) // cols
+    gap = 0.12
+    cell_w = (W - gap * (cols - 1)) / cols
+    cell_h = (avail - gap * (rows - 1)) / rows
+    for i, im in enumerate(imgs):
+        r, c = divmod(i, cols)
+        cx = L + c * (cell_w + gap)
+        cy = top + r * (cell_h + gap)
+        iw, ih = im.get("width", 1) or 1, im.get("height", 1) or 1
+        scale = min(cell_w / iw, cell_h / ih)
+        w_in, h_in = iw * scale, ih * scale
+        px = cx + (cell_w - w_in) / 2
+        py = cy + (cell_h - h_in) / 2
+        try:
+            slide.shapes.add_picture(io.BytesIO(im["data"]), Inches(px), Inches(py),
+                                     Inches(w_in), Inches(h_in))
+        except Exception:
+            pass
     return avail
 
 
