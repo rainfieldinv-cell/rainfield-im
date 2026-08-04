@@ -1039,6 +1039,29 @@ def _init_toc_edit(parsed, auto=False):
     st.session_state.toc_count = fmt
 
 
+def _build_keywords_from_parsed(parsed):
+    """★키워드 방식: 파싱된 각 내용 페이지에서 '키워드(항목명)+그 페이지 번호'를 뽑는다.
+       - 라벨 = 그 페이지의 소제목(없으면 섹션제목). 연속된 같은 라벨 페이지는 하나로 묶음.
+       - 페이지 매핑은 parsed_pages의 실제 page_num에서 오므로 100% 정확(LLM 추측 아님).
+       반환: [{"label": "표시용(항목 · Np)", "base": "항목", "pages": [..]}]"""
+    kws = []
+    for p in (parsed or []):
+        pn = p.get("page_num")
+        if pn is None:
+            continue
+        base = re.sub(r"\s+", " ",
+                      (p.get("subtitle") or p.get("section_title") or "").strip())[:40]
+        if not base:
+            base = f"{pn}페이지"
+        if kws and kws[-1]["base"] == base:
+            kws[-1]["pages"].append(pn)
+        else:
+            kws.append({"base": base, "pages": [pn]})
+    for k in kws:
+        k["label"] = f"{k['base']}  ·  {_pages_to_str(k['pages'])}p"
+    return kws
+
+
 def _init_toc_edit_from_llm():
     """IM 원문 전체를 LLM으로 읽어 목차(대분류+소제목) 구성 → toc_edit.
        반환: (성공?, 안내메시지). 실패해도 기존 목차는 유지."""
@@ -1225,9 +1248,17 @@ def show_step_toc():
             st.rerun()
 
         _cur = min(max(1, st.session_state.get("toc_view_page", 1)), total or 1)
-        st.caption(f"**소제목마다** 그 소제목에 해당하는 '원본 페이지'를 넣으세요. "
-                   f"지금 왼쪽에 보이는 페이지: **{_cur}p** "
-                   f"(범위 8-12 · 재배치 8,9,11,10 · 여러 장 쉼표 · 겹침 가능)")
+        # ★키워드 방식: 파싱된 페이지에서 '키워드(항목)+페이지'를 뽑아 소제목에서 골라 연결.
+        _kw_list = _build_keywords_from_parsed(parsed)
+        _kw_labels = [k["label"] for k in _kw_list]
+        _kw_pages = {k["label"]: k["pages"] for k in _kw_list}
+        if _kw_labels:
+            st.caption(f"🔖 **키워드 {len(_kw_labels)}개** 자동 추출됨 — 각 소제목에서 "
+                       f"**키워드를 골라 연결**하면 페이지가 자동으로 채워집니다. "
+                       f"(키워드가 안 맞으면 '✏️ 페이지 직접'으로 수정 가능)")
+        else:
+            st.caption(f"소제목마다 원본 페이지를 넣으세요. 지금 왼쪽 페이지: **{_cur}p** "
+                       f"(범위 8-12 · 재배치 8,9,11,10 · 겹침 가능)")
 
         pending = {"del": None, "add": None}
         for gi, g in enumerate(toc["groups"]):
@@ -1240,7 +1271,7 @@ def show_step_toc():
                 # ★소제목 1개 = 한 줄([번호|소제목|페이지|고정|삭제]) — 세로 공간 절약(스크롤 최소화)
                 for si, sub in enumerate(g["subs"]):
                     is_fixed = bool(sub.get("fixed", False))
-                    sc0, sc1, sc2, sc3, sc4 = st.columns([0.7, 4.5, 3, 1.5, 0.8])
+                    sc0, sc1, sc2, sc3, sc4 = st.columns([0.6, 3.5, 4.3, 1.2, 0.7])
                     with sc0:
                         st.markdown(f"<div style='padding-top:8px;color:#888;'>"
                                     f"{gi + 1}.{si + 1}</div>", unsafe_allow_html=True)
@@ -1250,22 +1281,29 @@ def show_step_toc():
                         sub["text"] = st.text_input(
                             f"소제목 {gi + 1}.{si + 1}", key=sk,
                             placeholder="소제목", label_visibility="collapsed")
+                    chosen = []
                     with sc2:
-                        # ── 소제목별 원본 페이지 (고정 소제목은 페이지 불필요) ──
+                        # ── ★키워드 선택(고르면 페이지 자동). 고정 소제목은 불필요 ──
                         if is_fixed:
                             sub["pages"] = []
                             rok = f"tocpgro_{gi}_{si}"
                             st.session_state[rok] = "🔒 자동생성(원본 불필요)"
-                            st.text_input("페이지", key=rok, disabled=True,
+                            st.text_input("키워드", key=rok, disabled=True,
                                           label_visibility="collapsed")
                         else:
-                            pk = f"tocpage_{gi}_{si}"
-                            st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
-                            _p_raw = st.text_input(
-                                f"페이지 {gi + 1}.{si + 1}", key=pk,
-                                placeholder="페이지 예: 8,9,11,10",
+                            kwk = f"tockw_{gi}_{si}"
+                            # 현재 키워드 목록에 없는 이전 선택은 제거(옵션 불일치 크래시 방지)
+                            if kwk in st.session_state:
+                                st.session_state[kwk] = [x for x in st.session_state[kwk]
+                                                         if x in _kw_labels]
+                            else:
+                                st.session_state[kwk] = [x for x in (sub.get("_keywords") or [])
+                                                         if x in _kw_labels]
+                            chosen = st.multiselect(
+                                "키워드", options=_kw_labels, key=kwk,
+                                placeholder="키워드 선택… (여러 개 가능)",
                                 label_visibility="collapsed")
-                            sub["pages"] = _parse_pages(_p_raw, total)
+                            sub["_keywords"] = chosen
                     with sc3:
                         fk = f"tocfix_{gi}_{si}"
                         st.session_state.setdefault(fk, is_fixed)
@@ -1274,6 +1312,25 @@ def show_step_toc():
                     with sc4:
                         if st.button("🗑", key=f"tocdel_{gi}_{si}", help="이 소제목 삭제"):
                             pending["del"] = (gi, si)
+                    # ── 페이지 결정: 키워드가 있으면 그 페이지 자동, 없으면 직접 입력 ──
+                    if not is_fixed:
+                        if chosen:
+                            _pgs = []
+                            for _lab in chosen:
+                                for _p in _kw_pages.get(_lab, []):
+                                    if _p not in _pgs:
+                                        _pgs.append(_p)
+                            sub["pages"] = _pgs
+                            st.caption(f"　└ 📄 {_pages_to_str(_pgs)}p · 키워드 "
+                                       f"{len(chosen)}개 연결(자동)")
+                        else:
+                            pk = f"tocpage_{gi}_{si}"
+                            st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
+                            _p_raw = st.text_input(
+                                f"페이지 직접 {gi + 1}.{si + 1}", key=pk,
+                                placeholder="✏️ 키워드 없으면 페이지 직접: 8,9,11",
+                                label_visibility="collapsed")
+                            sub["pages"] = _parse_pages(_p_raw, total)
                 if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
                     pending["add"] = gi
 
