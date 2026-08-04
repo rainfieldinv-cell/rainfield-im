@@ -7,7 +7,6 @@ from ui_components import render_stepper, render_image_gallery, render_text_prev
 # PPT 생성 모듈 불러오기
 import os
 import re
-import json
 from datetime import datetime
 from modules.page_builders import (
     make_output_filename,
@@ -1007,55 +1006,6 @@ def _clear_toc_widget_state():
             del st.session_state[k]
 
 
-# ─────────────────────────────────────────────
-# [목차·배치 영구 저장] — 세션이 초기화돼도(새로고침·타임아웃) 다시 불러온다.
-#   · 서버 파일(_state/): 같은 배포 안에서는 유지 (배포/재빌드 시엔 사라짐)
-#   · 진짜 안전한 백업은 화면의 '💾 저장(내 PC)/📂 불러오기' (배포에도 안 지워짐)
-# ─────────────────────────────────────────────
-_STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_state")
-
-
-def _doc_key():
-    """현재 문서 식별자(파일명+페이지수) — 다른 문서면 다른 저장본을 쓴다."""
-    name = st.session_state.get("uploaded_file") or "nodoc"
-    n = len((st.session_state.get("extracted_data") or {}).get("pages_text", []))
-    return re.sub(r"[^0-9A-Za-z가-힣._-]", "_", f"{name}_{n}")[:120]
-
-
-def _toc_state_path():
-    try:
-        os.makedirs(_STATE_DIR, exist_ok=True)
-    except Exception:
-        pass
-    return os.path.join(_STATE_DIR, f"toc_{_doc_key()}.json")
-
-
-def _save_toc_state():
-    """현재 toc_edit을 서버 파일로 자동 저장."""
-    toc = st.session_state.get("toc_edit")
-    if not toc or not toc.get("groups"):
-        return
-    try:
-        with open(_toc_state_path(), "w", encoding="utf-8") as f:
-            json.dump(toc, f, ensure_ascii=False)
-    except Exception:
-        pass
-
-
-def _load_toc_state():
-    """저장된 toc_edit(현재 문서 것)을 불러온다. 없으면 None."""
-    try:
-        p = _toc_state_path()
-        if os.path.exists(p):
-            with open(p, encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict) and data.get("groups"):
-                return data
-    except Exception:
-        pass
-    return None
-
-
 # 표준 목차(거의 고정) — 화면에서 수정 가능.
 #   ★페이지는 '소제목(sub)' 단위로 넣는다: sub["pages"] (순서·겹침 가능).
 #     → 어떤 페이지가 어느 소제목 내용인지 명확 → 소제목별 내용 슬라이드가 정확히 생성.
@@ -1184,13 +1134,7 @@ def show_step_toc():
     pdf_bytes = st.session_state.get("pdf_bytes")           # 글자/항목 소스(워드 변환)
     view_pdf = st.session_state.get("view_pdf_bytes") or pdf_bytes   # 사진(원본 PDF 우선)
     if "toc_edit" not in st.session_state:
-        # ★세션이 초기화됐어도(새로고침·타임아웃) 저장돼 있던 목차·배치를 먼저 복원
-        _saved = _load_toc_state()
-        if _saved:
-            st.session_state.toc_edit = _saved
-            st.session_state.toc_count = _saved.get("format", 4)
-        else:
-            _init_toc_edit(parsed)
+        _init_toc_edit(parsed)
     toc = st.session_state.toc_edit
 
     bc1, bc2, _bc = st.columns([1.4, 1, 2.6])
@@ -1212,36 +1156,6 @@ def show_step_toc():
     _tmsg = st.session_state.get("_toc_autofill_msg")
     if _tmsg:
         (st.success if _tmsg[0] == "success" else st.warning)(_tmsg[1])
-
-    # ── 💾 목차·배치 저장/불러오기 (내 PC) — 배포·재빌드에도 안 지워지는 백업 ──
-    with st.expander("💾 목차·배치 저장 / 📂 불러오기 (내 PC — 배포돼도 안 지워짐)", expanded=False):
-        st.caption("서버는 새 배포 때 초기화될 수 있어요. 여기서 **내 PC로 저장**해두면, "
-                   "나중에 **불러오기**로 목차·페이지 배치를 2클릭에 그대로 복원할 수 있어요.")
-        sc_a, sc_b = st.columns(2)
-        with sc_a:
-            st.download_button(
-                "💾 저장 (내 PC로 내려받기)",
-                data=json.dumps(st.session_state.toc_edit, ensure_ascii=False, indent=2),
-                file_name=f"목차배치_{_doc_key()}.json",
-                mime="application/json", use_container_width=True)
-        with sc_b:
-            _up = st.file_uploader("📂 불러오기 (저장한 .json)", type=["json"],
-                                   key="toc_restore_up", label_visibility="collapsed")
-            if _up is not None and st.session_state.get("_toc_restored") != _up.name:
-                try:
-                    _data = json.loads(_up.getvalue().decode("utf-8"))
-                    if isinstance(_data, dict) and _data.get("groups"):
-                        st.session_state.toc_edit = _data
-                        st.session_state.toc_count = _data.get("format", 4)
-                        st.session_state["_toc_restored"] = _up.name
-                        _clear_toc_widget_state()
-                        _save_toc_state()
-                        st.success("불러왔어요! 아래 목차가 복원됐습니다.")
-                        st.rerun()
-                    else:
-                        st.error("올바른 목차 파일이 아니에요.")
-                except Exception as _e:
-                    st.error(f"불러오기 실패: {_e}")
 
     # ★왼쪽 PDF 칸만 화면 상단에 고정(sticky) — 오른쪽 목차를 스크롤해도 페이지가 안 사라지게.
     #   :has()로 '왼쪽 칸'만 지목 → 소제목 줄 컬럼엔 영향 없음. 미지원 브라우저는 자동으로 원래대로.
@@ -1398,7 +1312,6 @@ def show_step_toc():
 
     # ── 저장 요약 + 네비게이션 (전체 폭) ──
     st.markdown("---")
-    _save_toc_state()   # ★편집 내용 서버 파일에 자동 저장(새로고침·타임아웃 대비)
     total_subs = sum(len(g["subs"]) for g in toc["groups"])
     with_page = sum(1 for g in toc["groups"] for s in g["subs"] if s.get("pages"))
     fixed_cnt = sum(1 for g in toc["groups"] for s in g["subs"] if s.get("fixed"))
@@ -1524,7 +1437,6 @@ def show_step_arrange():
 
     # ── 네비게이션 ──
     st.markdown("---")
-    _save_toc_state()   # ★배치(페이지) 수정도 서버 파일에 자동 저장
     st.info("여기서 확인·수정한 배치 순서가 마지막 단계에서 그대로 PPT 본문 순서가 됩니다.")
     nc1, _ns, nc2 = st.columns([2, 4, 2])
     with nc1:

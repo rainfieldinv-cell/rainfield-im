@@ -61,4 +61,3 @@ templates/*_backup.pptx
 
 # LLM 응답 캐시(로컬)
 .claude_cache/
-_state/
