@@ -1742,12 +1742,12 @@ def _is_footnote_line(s):
 
 
 def _split_footnote_tables(tables):
-    """각주만 모인 '가짜 표'를 골라내 (남길 표들, 각주줄 리스트)로 분리.
-       - 좁은 표(≤2 유효열)이고
-       - 헤더가 비었거나 헤더 자체가 각주이고
-       - 데이터 행 대부분(≥70%)이 각주 줄이면 → 표가 아니라 각주로 본다.
-       원본에서 각주는 표 밖 작은 글상자이므로, 표로 굳어진 걸 되돌린다."""
-    kept, fn_lines = [], []
+    """각주만 모인 '가짜 표'를 골라내 → ★바로 앞의 '진짜 표' 각주(_notes)로 붙인다.
+       - 좁은 표(≤2 유효열)이고 헤더가 비었거나 헤더 자체가 각주이고
+         데이터 행 대부분(≥70%)이 각주 줄이면 → 표가 아니라 각주로 본다.
+       원본에서 각주는 '그 표 바로 밑' 작은 글상자이므로, 각주를 앞 표에 되돌려
+       붙여 순서·소속을 원본과 같게 한다(앞 표가 없으면 orphan으로 반환)."""
+    kept, orphan = [], []
 
     def _row_text(r):
         return " ".join(str(c or "").strip() for c in (r or [])).strip()
@@ -1759,8 +1759,7 @@ def _split_footnote_tables(tables):
         header = t.get("header") or []
         rows = t.get("rows") or []
         ncol = max([len(header)] + [len(r) for r in rows] + [0])
-        body = [_row_text(r) for r in rows]
-        body = [b for b in body if b]
+        body = [b for b in (_row_text(r) for r in rows) if b]
         if not body:
             kept.append(t)
             continue
@@ -1768,12 +1767,16 @@ def _split_footnote_tables(tables):
         header_ok = (not hdr_txt) or _is_footnote_line(hdr_txt)
         fn_cnt = sum(1 for b in body if _is_footnote_line(b))
         if ncol <= 2 and header_ok and fn_cnt >= max(1, int(len(body) * 0.7)):
-            if hdr_txt and _is_footnote_line(hdr_txt):
-                fn_lines.append(hdr_txt)
-            fn_lines.extend(body)
+            these = ([hdr_txt] if (hdr_txt and _is_footnote_line(hdr_txt)) else []) + body
+            # ★바로 앞 '진짜 표'에 각주로 붙임(원본처럼 그 표 밑에). 앞 표 없으면 orphan.
+            if kept and isinstance(kept[-1], dict):
+                prev = kept[-1]
+                prev["_notes"] = list(prev.get("_notes") or []) + these
+            else:
+                orphan.extend(these)
         else:
             kept.append(t)
-    return kept, fn_lines
+    return kept, orphan
 
 
 def build_structured_slide(prs, struct: dict, *, business_name: str = "",
