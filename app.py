@@ -1040,19 +1040,42 @@ def _init_toc_edit(parsed, auto=False):
 
 
 def _build_keywords_from_parsed(parsed):
-    """★키워드 방식: 파싱된 각 내용 페이지에서 '키워드(항목명)+그 페이지 번호'를 뽑는다.
-       - 라벨 = 그 페이지의 소제목(없으면 섹션제목). 연속된 같은 라벨 페이지는 하나로 묶음.
-       - 페이지 매핑은 parsed_pages의 실제 page_num에서 오므로 100% 정확(LLM 추측 아님).
+    """★키워드 방식: 파싱된 각 내용 페이지에서 '진짜 내용 제목(키워드)+그 페이지 번호'를 뽑는다.
+       - 매 페이지 반복되는 머리말/꼬리말(사업명·Strictly Private·페이지번호)을 자동 감지해 걸러내고,
+         그 페이지의 '첫 진짜 제목' 줄을 키워드로 쓴다(광역입지·선임차인 등).
+       - 페이지 매핑은 parsed_pages의 실제 page_num이라 100% 정확(LLM 추측 아님).
        반환: [{"label": "표시용(항목 · Np)", "base": "항목", "pages": [..]}]"""
+    from collections import Counter
+    rows = [(p.get("page_num"),
+             p.get("raw_text") or p.get("subtitle") or p.get("section_title") or "")
+            for p in (parsed or []) if p.get("page_num") is not None]
+    if not rows:
+        return []
+
+    # 1) 여러 페이지에 반복되는 줄 = 머리말/꼬리말 → 제외 집합
+    freq = Counter()
+    for _, txt in rows:
+        for s in {re.sub(r"\s+", " ", ln.strip()) for ln in txt.splitlines() if ln.strip()}:
+            freq[s] += 1
+    npg = len(rows)
+    common = {s for s, c in freq.items() if c >= max(2, int(npg * 0.3))}
+
+    def _title_of(txt):
+        for ln in txt.splitlines():
+            s = re.sub(r"\s+", " ", ln.strip())
+            if not s or s in common or len(s) < 2:
+                continue
+            low = s.lower()
+            if "strictly" in low or "confidential" in low:
+                continue
+            if re.fullmatch(r"[\d\s|·.\-]+", s):          # 페이지번호/구분선만
+                continue
+            return s
+        return ""
+
     kws = []
-    for p in (parsed or []):
-        pn = p.get("page_num")
-        if pn is None:
-            continue
-        raw = re.sub(r"\s+", " ",
-                     (p.get("subtitle") or p.get("section_title") or "").strip())
-        # ★제목 부분만 짧게(본문이 붙어 길어지는 것 방지) — 26자 넘으면 단어경계에서 자름
-        base = raw
+    for pn, txt in rows:
+        base = _title_of(txt)
         if len(base) > 26:
             cut = base[:26]
             sp = cut.rfind(" ")
@@ -1270,11 +1293,15 @@ def show_step_toc():
         _kw_pages = {k["label"]: k["pages"] for k in _kw_list}
         if _kw_labels:
             st.caption(f"🔖 **키워드 {len(_kw_labels)}개** 자동 추출됨 — 각 소제목에서 "
-                       f"**키워드를 골라 연결**하면 페이지가 자동으로 채워집니다. "
-                       f"(키워드가 안 맞으면 '✏️ 페이지 직접'으로 수정 가능)")
+                       f"**키워드를 골라 연결**하면 페이지가 자동으로 채워집니다.")
         else:
             st.caption(f"소제목마다 원본 페이지를 넣으세요. 지금 왼쪽 페이지: **{_cur}p** "
                        f"(범위 8-12 · 재배치 8,9,11,10 · 겹침 가능)")
+        # ★기본은 키워드만(깔끔). 번호로 직접 넣고 싶을 때만 켜기 → '페이지 직접' 칸 표시
+        _manual_mode = st.checkbox("✏️ 페이지 번호로 직접 입력 (키워드 대신)",
+                                   key="toc_manual_mode",
+                                   help="켜면 소제목마다 페이지 직접 입력칸이 생깁니다. "
+                                        "평소엔 꺼두고 키워드만 골라 쓰면 깔끔해요.")
 
         pending = {"del": None, "add": None}
         for gi, g in enumerate(toc["groups"]):
@@ -1328,8 +1355,10 @@ def show_step_toc():
                     with sc4:
                         if st.button("🗑", key=f"tocdel_{gi}_{si}", help="이 소제목 삭제"):
                             pending["del"] = (gi, si)
-                    # ── 페이지 결정: 키워드가 있으면 그 페이지 자동, 없으면 직접 입력 ──
+                    # ── 페이지 결정 ──
+                    #   키워드 선택 → 그 페이지 자동. 아니면 '직접 입력 모드'일 때만 입력칸(깔끔).
                     if not is_fixed:
+                        pk = f"tocpage_{gi}_{si}"
                         if chosen:
                             _pgs = []
                             for _lab in chosen:
@@ -1337,16 +1366,22 @@ def show_step_toc():
                                     if _p not in _pgs:
                                         _pgs.append(_p)
                             sub["pages"] = _pgs
+                            st.session_state[pk] = _pages_to_str(_pgs)   # 직접칸과 동기화
                             st.caption(f"　└ 📄 {_pages_to_str(_pgs)}p · 키워드 "
                                        f"{len(chosen)}개 연결(자동)")
-                        else:
-                            pk = f"tocpage_{gi}_{si}"
+                        elif _manual_mode:
                             st.session_state.setdefault(pk, _pages_to_str(sub.get("pages")))
                             _p_raw = st.text_input(
                                 f"페이지 직접 {gi + 1}.{si + 1}", key=pk,
-                                placeholder="✏️ 키워드 없으면 페이지 직접: 8,9,11",
+                                placeholder="페이지 직접: 8,9,11",
                                 label_visibility="collapsed")
                             sub["pages"] = _parse_pages(_p_raw, total)
+                        else:
+                            # 깔끔: 입력칸 없음. 이미 정해진 페이지만 작게 표시.
+                            _prev = st.session_state.get(pk, _pages_to_str(sub.get("pages")))
+                            sub["pages"] = _parse_pages(_prev, total)
+                            if sub["pages"]:
+                                st.caption(f"　└ 📄 {_pages_to_str(sub['pages'])}p")
                 if st.button("➕ 소제목 추가", key=f"tocadd_{gi}"):
                     pending["add"] = gi
 
