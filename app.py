@@ -1049,8 +1049,14 @@ def _build_keywords_from_parsed(parsed):
         pn = p.get("page_num")
         if pn is None:
             continue
-        base = re.sub(r"\s+", " ",
-                      (p.get("subtitle") or p.get("section_title") or "").strip())[:40]
+        raw = re.sub(r"\s+", " ",
+                     (p.get("subtitle") or p.get("section_title") or "").strip())
+        # ★제목 부분만 짧게(본문이 붙어 길어지는 것 방지) — 26자 넘으면 단어경계에서 자름
+        base = raw
+        if len(base) > 26:
+            cut = base[:26]
+            sp = cut.rfind(" ")
+            base = (cut[:sp] if sp > 8 else cut).strip() + "…"
         if not base:
             base = f"{pn}페이지"
         if kws and kws[-1]["base"] == base:
@@ -1162,6 +1168,16 @@ def show_step_toc():
     total = len(pages_text)
     pdf_bytes = st.session_state.get("pdf_bytes")           # 글자/항목 소스(워드 변환)
     view_pdf = st.session_state.get("view_pdf_bytes") or pdf_bytes   # 사진(원본 PDF 우선)
+
+    # ★파싱 결과가 비어있으면(세션 초기화 등) PDF로 즉석 재파싱 → 키워드·생성 복구
+    if not parsed and pdf_bytes:
+        try:
+            with st.spinner("원본을 다시 읽어 페이지·키워드를 준비하는 중..."):
+                parsed = parse_document_from_bytes(pdf_bytes, "source.pdf")
+            st.session_state.parsed_pages = parsed
+        except Exception as _pe:
+            st.warning(f"파싱 재시도 실패: {_pe} — 1단계에서 PDF를 다시 올려주세요.")
+            parsed = []
     if "toc_edit" not in st.session_state:
         _init_toc_edit(parsed)
     toc = st.session_state.toc_edit
