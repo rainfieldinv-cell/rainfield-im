@@ -1287,34 +1287,7 @@ def show_step_toc():
             _clear_toc_widget_state()
             st.rerun()
 
-    # ── 소제목 순서대로 미리보기 (전체 폭) ──
-    #   목차·소제목 순서대로, 각 소제목 아래에 그 소제목에 넣은 원본 페이지를 이미지로 붙여 보여준다.
-    st.markdown("---")
-    _prev_on = st.checkbox("📖 소제목 순서대로 미리보기", key="toc_preview_on",
-                           help="목차·소제목 순서대로, 소제목마다 넣은 원본 페이지를 이미지로 확인합니다. "
-                                "(다운로드 아님 · 화면에서만) 편집하면 다시 켜서 갱신하세요.")
-    if _prev_on:
-        _view = st.session_state.get("view_pdf_bytes") or st.session_state.get("pdf_bytes")
-        if not _view:
-            st.warning("원본 PDF가 없어 미리보기를 못 띄웁니다. 1단계에서 PDF를 올리세요.")
-        else:
-            with st.spinner("소제목 순서대로 원본 페이지를 렌더링하는 중..."):
-                for gi, g in enumerate(toc["groups"]):
-                    gtitle = (g.get("title") or "").strip() or f"목차 {gi + 1}"
-                    st.markdown(f"### {gi + 1}. {gtitle}")
-                    for si, sub in enumerate(g["subs"]):
-                        stext = (sub.get("text") or "").strip() or "(소제목 없음)"
-                        label = f"{gi + 1}.{si + 1} {stext}"
-                        if sub.get("fixed"):
-                            st.markdown(f"**{label}**　🔒 자동 생성(원본 없음)")
-                            continue
-                        pages = sub.get("pages") or []
-                        if not pages:
-                            st.markdown(f"**{label}**　⚪ 페이지 미지정")
-                            continue
-                        st.markdown(f"**{label}**　📄 {_pages_to_str(pages)}p (이 순서)")
-                        _render_pages_grid(_view, pages)
-                    st.markdown("")
+    # (소제목 순서대로 미리보기는 제거 — 다음 '배치 확인' 단계가 그 미리보기 역할을 함)
 
     # ── 저장 요약 + 네비게이션 (전체 폭) ──
     st.markdown("---")
