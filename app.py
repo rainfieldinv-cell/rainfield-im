@@ -450,13 +450,13 @@ def show_step3():
             st.rerun()
         return
 
-    st.markdown("## 6단계. 레이아웃 및 표지 미리 생성")
+    st.markdown("## 5단계. 레이아웃 및 표지 미리 생성")
     st.caption("날짜·표지 이미지를 지정하고 표지·목차·섹션을 미리 확인하세요. "
-               "(목차 형식 4/5개는 4단계 '목차 구성'에서 정합니다)")
+               "(목차 형식 4/5개는 3단계 '목차 구성'에서 정합니다)")
     st.markdown("")
 
     # 목차 형식(4/5)은 4단계 목차 구성에서 정한 값을 그대로 사용 (여기서 다시 고르지 않음)
-    st.caption(f"현재 목차 형식: **{st.session_state.toc_count}개 형식** (4단계에서 설정)")
+    st.caption(f"현재 목차 형식: **{st.session_state.toc_count}개 형식** (3단계에서 설정)")
 
     st.markdown("---")
 
@@ -733,12 +733,12 @@ def show_step3():
 
     with col_prev:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 5
+            st.session_state.current_step = 4   # → 배치 확인(4단계)
             st.rerun()
 
     with col_next:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 7
+            st.session_state.current_step = 6   # → 전체 PPT 생성(6단계)
             st.rerun()
 
 
@@ -754,7 +754,7 @@ def show_step4():
             st.rerun()
         return
 
-    st.markdown("## 7단계. 전체 PPT 생성")
+    st.markdown("## 6단계. 전체 PPT 생성")
     st.caption("지금까지 설정한 내용으로 완성된 제안서 PPT를 생성합니다.")
     st.markdown("")
 
@@ -909,7 +909,7 @@ def show_step4():
     # (D) 하단 네비게이션
     # ────────────────────────────────────────
     if st.button("← 이전 단계 (설정 변경)", use_container_width=False):
-        st.session_state.current_step = 6
+        st.session_state.current_step = 5   # → 레이아웃/표지(5단계)
         st.rerun()
 
 
@@ -1123,7 +1123,7 @@ def _render_pages_grid(view_pdf, pages, cols=5):
 
 
 def show_step_toc():
-    st.markdown("## 4단계. 목차 구성")
+    st.markdown("## 3단계. 목차 구성")
     st.caption("왼쪽에서 원본 IM을 표지부터 넘겨보고, 오른쪽에서 목차 제목·소제목을 직접 만드세요. "
                "소제목마다 **원본 IM의 몇 페이지인지** 번호로 지정하면 됩니다. "
                "(IM마다 목차/소제목 형식이 제각각이라 자동추출은 부정확 → 페이지 번호로 매칭)")
@@ -1284,7 +1284,7 @@ def show_step_toc():
     # ── 소제목 순서대로 미리보기 (전체 폭) ──
     #   목차·소제목 순서대로, 각 소제목 아래에 그 소제목에 넣은 원본 페이지를 이미지로 붙여 보여준다.
     st.markdown("---")
-    _prev_on = st.checkbox("📖 소제목 순서대로 미리보기 보기", key="toc_preview_on",
+    _prev_on = st.checkbox("📖 소제목 순서대로 미리보기", key="toc_preview_on",
                            help="목차·소제목 순서대로, 소제목마다 넣은 원본 페이지를 이미지로 확인합니다. "
                                 "(다운로드 아님 · 화면에서만) 편집하면 다시 켜서 갱신하세요.")
     if _prev_on:
@@ -1320,11 +1320,11 @@ def show_step_toc():
     nc1, _ns, nc2 = st.columns([2, 4, 2])
     with nc1:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 3
+            st.session_state.current_step = 2   # → 하이라이트(2단계)
             st.rerun()
     with nc2:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 5
+            st.session_state.current_step = 4   # → 배치 확인(4단계)
             st.rerun()
 
 
@@ -1370,16 +1370,16 @@ def _find_toc_pages(pages_text):
 #   4단계와 같은 위젯 키(tocpage_{gi}_{si})를 써서 수정이 서로 동기화된다.
 # ─────────────────────────────────────────────
 def show_step_arrange():
-    st.markdown("## 5단계. 배치 확인")
+    st.markdown("## 4단계. 배치 확인")
     st.caption("목차(대분류)에 넣은 원본 페이지를 목차 순서대로 이미지로 확인합니다. "
                "잘못됐거나 바꾸고 싶으면 각 목차의 페이지 칸에서 바로 고치세요 — "
                "고치면 아래 이미지가 다시 그려집니다. (다운로드 아님 · 화면 확인용)")
 
     toc = st.session_state.get("toc_edit")
     if not toc:
-        st.warning("먼저 4단계에서 목차를 구성해주세요.")
-        if st.button("← 4단계로"):
-            st.session_state.current_step = 4
+        st.warning("먼저 3단계에서 목차를 구성해주세요.")
+        if st.button("← 3단계로"):
+            st.session_state.current_step = 3   # → 목차 구성(3단계)
             st.rerun()
         return
 
@@ -1441,11 +1441,11 @@ def show_step_arrange():
     nc1, _ns, nc2 = st.columns([2, 4, 2])
     with nc1:
         if st.button("← 이전 단계", use_container_width=True):
-            st.session_state.current_step = 4
+            st.session_state.current_step = 3   # → 목차 구성(3단계)
             st.rerun()
     with nc2:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 6
+            st.session_state.current_step = 5   # → 레이아웃/표지(5단계)
             st.rerun()
 
 
@@ -1640,6 +1640,33 @@ def show_step_highlight():
                 c["content"] = st.text_area("내용", key=ck, height=110,
                                             placeholder="카드 본문 (여러 줄 입력 가능)")
 
+    # ── 하이라이트 완성본 미리보기 (버튼 · 화면 확인용) ──
+    st.markdown("---")
+    if st.checkbox("🖼️ 하이라이트 완성본 미리보기", key="hl_preview_on",
+                   help="작성한 카드 3개로 Executive Summary 슬라이드를 만들어 이미지로 보여줍니다. "
+                        "(다운로드 아님 · 화면 확인용 · 수정하면 다시 생성 눌러 갱신)"):
+        if st.button("완성본 이미지 생성/갱신", key="hl_preview_gen"):
+            try:
+                with st.spinner("완성본 슬라이드를 만드는 중..."):
+                    ppt_b = _build_highlight_ppt_bytes(
+                        cards, st.session_state.get("business_name", ""))
+                from modules.preview import ppt_to_images
+                with st.spinner("슬라이드를 이미지로 변환하는 중... (LibreOffice)"):
+                    imgs, err = ppt_to_images(ppt_b, max_pages=1)
+                st.session_state.hl_done_render = {"imgs": imgs, "err": err}
+            except Exception as e:
+                st.session_state.hl_done_render = {"imgs": [], "err": f"완성본 생성 실패: {e}"}
+        rend = st.session_state.get("hl_done_render")
+        if not rend:
+            st.info("‘완성본 이미지 생성/갱신’을 누르면 완성된 Executive Summary가 여기에 표시됩니다.")
+        elif rend.get("err"):
+            st.error(f"이미지 생성 실패 — {rend['err']}")
+        elif rend.get("imgs"):
+            st.markdown("#### ✅ 완성본 Executive Summary")
+            _ic1, _ic2, _ic3 = st.columns([1, 3, 1])
+            with _ic2:
+                st.image(rend["imgs"][0], use_container_width=True)
+
     # ── 저장 요약 + 네비게이션 ──
     st.markdown("---")
     filled = sum(1 for c in cards if (c.get("title") or c.get("content")))
@@ -1653,7 +1680,7 @@ def show_step_highlight():
             st.rerun()
     with nc2:
         if st.button("다음 단계 →", use_container_width=True, type="primary"):
-            st.session_state.current_step = 3
+            st.session_state.current_step = 3   # → 목차 구성(3단계)
             st.rerun()
 
 
@@ -1811,14 +1838,12 @@ def show_conversion_tab():
     elif st.session_state.current_step == 2:
         show_step_highlight()
     elif st.session_state.current_step == 3:
-        show_step_highlight_preview()
-    elif st.session_state.current_step == 4:
         show_step_toc()
-    elif st.session_state.current_step == 5:
+    elif st.session_state.current_step == 4:
         show_step_arrange()
-    elif st.session_state.current_step == 6:
+    elif st.session_state.current_step == 5:
         show_step3()
-    elif st.session_state.current_step == 7:
+    elif st.session_state.current_step == 6:
         show_step4()
     else:
         st.info(f"📌 {st.session_state.current_step}단계는 추후 구현 예정입니다.")
