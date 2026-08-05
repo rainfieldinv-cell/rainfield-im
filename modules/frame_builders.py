@@ -1894,9 +1894,15 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
                 red_set.add(str(line))
                 return
     # ★주1)2)3) 등 각주는 본문이 아니라 맨 아래로(원본처럼). 그 외 설명만 본문 불릿.
+    #   ※'주'는 각주(주1)/주 2))일 때만 — '주요/주주/주로' 같은 일반 단어를 각주로 오인해
+    #     본문이 각주로 빠지고 다른 불릿과 겹치던 버그 수정.
     def _is_note(b):
         s = str(b).lstrip()
-        return s.startswith(("주", "*", "※")) or s[:2] in ("1)", "2)", "3)", "4)", "5)")
+        if s.startswith(("*", "※")):
+            return True
+        if s[:2] in ("1)", "2)", "3)", "4)", "5)"):
+            return True
+        return bool(re.match(r"주\s*\d", s))   # 주1) · 주 2) 등만(주요/주주 제외)
     notes = [b for b in bullets if _is_note(b)]
     body_bullets = [b for b in bullets if b not in notes]
     btext = "\n".join(str(b) for b in body_bullets) if body_bullets else ""
