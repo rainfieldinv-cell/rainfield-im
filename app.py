@@ -1639,6 +1639,9 @@ def show_step_highlight():
                      help="IM의 'Executive Summary' 항목만 읽어 3개 카드로 정리합니다(그 뒤 직접 수정)."):
             with st.spinner("'Executive Summary' 항목을 읽어 정리하는 중..."):
                 _ok, _msg = _autofill_highlight_from_es()
+            # ★사용자가 고른 ES 페이지 유지(rerun에 위젯값이 자동감지값으로 리셋되던 문제 방지)
+            st.session_state["_es_pages_saved"] = (
+                st.session_state.get("hl_es_pages_str") or "").strip()
             _clear_highlight_widget_state()
             st.session_state["_hl_autofill_msg"] = ("success" if _ok else "warning", _msg)
             st.rerun()
@@ -1667,12 +1670,15 @@ def show_step_highlight():
             _detected = [p for p in _find_es_pages(pages_text) if 1 <= p <= npage]
             # ES 페이지 범위 입력(자동감지값 기본 · 여러 장이면 '2-5'처럼)
             _default = _pages_to_str(_detected) if _detected else ""
-            st.session_state.setdefault("hl_es_pages_str", _default)
+            # ★한번 고친 값이 있으면(백업) 그걸 우선 — 추출 후 자동감지값으로 되돌아가지 않게
+            st.session_state.setdefault(
+                "hl_es_pages_str", st.session_state.get("_es_pages_saved") or _default)
             _raw = st.text_input(
                 "Executive Summary 페이지 (여러 장이면 2-5 · 한 장이면 3)",
                 key="hl_es_pages_str",
                 placeholder="예: 3  또는  2-5",
                 help="자동으로 찾은 값이에요. ES가 여러 페이지면 여기서 범위를 고치세요(예: 2-5).")
+            st.session_state["_es_pages_saved"] = (_raw or "").strip()   # 현재 값 백업(유지용)
             es_pages = _parse_pages(_raw, npage)
             if _detected:
                 st.caption(f"자동 감지: {_pages_to_str(_detected)}p (필요하면 위에서 조정)")
