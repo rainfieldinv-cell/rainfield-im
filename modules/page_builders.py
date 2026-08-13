@@ -282,6 +282,51 @@ def _replace_footer_business_name(slide, business_name: str):
         return
 
 
+def _fix_all_footer_pagenums(prs):
+    """모든 슬라이드 하단 푸터의 '박힌 쪽번호'(정적 텍스트)를 자동 슬라이드번호 필드로 교체.
+       일부 템플릿 페이지(하이라이트·2.1 금융구조도 등)에 원본 딜의 쪽번호(22·87 등)가
+       텍스트로 박혀 있어 자동 갱신이 안 되던 문제를 최종 단계에서 일괄 보정한다.
+       이미 자동 필드(a:fld slidenum)가 있는 푸터는 건너뛴다."""
+    import re, copy
+    from pptx.oxml.ns import qn
+    for slide in prs.slides:
+        for sh in slide.shapes:
+            if not sh.has_text_frame:
+                continue
+            if (sh.top or 0) / 360000 <= 17.5:          # 하단 푸터 영역만
+                continue
+            tf = sh.text_frame
+            txt = tf.text or ""
+            if ("｜" not in txt) and ("|" not in txt):    # 사업명｜쪽번호 푸터만
+                continue
+            p = tf.paragraphs[0]
+            if p._p.findall(qn('a:fld')):                # 이미 자동 필드 → 스킵
+                break
+            nonempty = [r for r in p.runs if r.text]
+            if not nonempty:
+                break
+            last = nonempty[-1]
+            m = re.search(r'(\d+)\s*$', last.text)       # 끝의 쪽번호 숫자
+            if not m:
+                break
+            last.text = last.text[:m.start()]            # 박힌 숫자 제거(구분자 ｜는 유지)
+            # last run 서식을 복제해 slidenum 필드 생성
+            fld = p._p.makeelement(qn('a:fld'), {
+                'id': '{B7E3A1C2-0000-4000-9000-000000000042}', 'type': 'slidenum'})
+            rPr = last._r.find(qn('a:rPr'))
+            if rPr is not None:
+                fld.append(copy.deepcopy(rPr))
+            t_el = fld.makeelement(qn('a:t'), {})
+            t_el.text = m.group(1)                       # 표시용(열면 자동 갱신됨)
+            fld.append(t_el)
+            end = p._p.find(qn('a:endParaRPr'))
+            if end is not None:
+                end.addprevious(fld)
+            else:
+                p._p.append(fld)
+            break                                        # 이 슬라이드 처리 완료
+
+
 # ─────────────────────────────────────────────
 # (공통 헬퍼 b) 텍스트 교체
 # ─────────────────────────────────────────────
@@ -1448,6 +1493,12 @@ def build_full_presentation(
 
     # ── 6. 원본 템플릿 슬라이드 제거 ─────────────────────
     finalize_presentation(prs, template_count)
+
+    # ── 6-2. 박힌 쪽번호(22·87 등) → 자동 슬라이드번호 필드로 일괄 보정 ──
+    try:
+        _fix_all_footer_pagenums(prs)
+    except Exception as _e:
+        print(f"[build_full_presentation] 쪽번호 보정 실패: {_e}")
 
     # ── 7. bytes로 반환 ───────────────────────────────────
     buf = io.BytesIO()
