@@ -20,6 +20,7 @@ classify_page()로 유형을 자동 판별하고, 우리가 구현한 유형(E)�
 """
 
 import io
+import os
 import re
 from collections import Counter
 
@@ -223,6 +224,12 @@ def build_frame_e_slide(prs, *, title: str, subtitle: str, intro: str,
     return slide
 
 
+# 이 거래가 '사모사채/유동화' 건인지 판정하는 키워드.
+#   원본에 이 말이 하나도 없으면 사모사채 개요 슬라이드를 만들지 않는다(창작 방지).
+#   'SPC' 단독은 넣지 않는다 — 사업부지 소유 법인을 뜻하는 원본이 있어 오탐이 난다.
+_SASAE_KEYS = ("사모사채", "유동화", "수익증권", "자산유동화", "ABCP", "ABL")
+
+
 # ──────────────────────────────────────────────────────
 # 라우터 진입점 — _build_content_block에서 호출
 # ──────────────────────────────────────────────────────
@@ -259,7 +266,12 @@ def build_page_auto(prs, page: dict, *, title: str, subtitle: str,
         return True
 
     # ── 고정 페이지: [섹션1] 사모사채 개요 → 전용 고정 빌더(구분열 불변, 내용만 LLM) ──
-    if sec == 1 and raw.strip():
+    #   ★원본이 '사모사채/유동화' 건일 때만 만든다.
+    #     예전엔 무조건 만들어서, 사모사채가 전혀 없는 순수 담보대출 건(돈암동)에도
+    #     'TBD(신규 유동화 SPC) 제1회 무기명식 무보증 사모사채', 원본에 없는 만기(6개월)·
+    #     기초자산(Tr.B 대출채권)을 **지어내 인쇄**했다. 근거 없는 숫자 생성 = 절대 금지 사항.
+    #     ('SPC' 단독은 제외 — 이천 건처럼 사업부지 소유 법인을 뜻하는 경우가 있다.)
+    if sec == 1 and raw.strip() and any(k in raw for k in _SASAE_KEYS):
         try:
             from modules.ai_slide_builders import (
                 generate_sasae_overview, build_slide_5_sasae_overview)
@@ -282,6 +294,10 @@ def build_page_auto(prs, page: dict, *, title: str, subtitle: str,
                 return True
         except Exception as _exc:
             print(f"[build_page_auto] 사모사채개요 고정빌더 실패 → 구조화 폴백: {_exc}")
+    elif sec == 1 and raw.strip():
+        print("[build_page_auto] 원본에 사모사채·유동화 언급이 없어 "
+              "'1.1 사모사채 개요' 고정 슬라이드를 건너뜀(창작 방지) "
+              "→ 일반 본문으로 렌더")
 
     # enrich_and_number()로 미리 구조화된 결과가 있으면 사용
     struct = page.get("_struct")
@@ -1994,7 +2010,24 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
             hdr_h = _rowh(fp)
             avail = _BODY_BOTTOM - _INTRO_T - label_h - hdr_h
             rhs_all = _calc_rhs(fp)
-            # ★표 글씨는 항상 10.5(사용자 지시: 예외 없음). 길어도 폰트 줄이지 말고 페이지 분할.
+
+            # ★'원본 1페이지 = 슬라이드 1장' 방침(env RAINFIELD_ONE_PAGE_ONE_SLIDE, 기본 켬):
+            #   조금 넘치는 정도면 **분할하지 말고 글씨를 한 단계씩 줄여 한 장에 넣는다.**
+            #   (옛 규칙은 '폰트 줄이지 말고 무조건 분할'이었는데, 그 탓에 원본 1페이지가
+            #    2~4장으로 불어났다. 사용자 지시로 방침 변경 — 디자인보다 장수 유지가 우선.)
+            #   하한 9.5pt 는 지킨다(그 아래로는 읽기 어려워 분할을 허용).
+            if os.environ.get("RAINFIELD_ONE_PAGE_ONE_SLIDE", "1") == "1":
+                _fp_try = fp
+                while sum(rhs_all) > avail and _fp_try > 9.5:
+                    _fp_try = round(_fp_try - 0.5, 1)
+                    rhs_all = _calc_rhs(_fp_try)
+                if _fp_try != fp:
+                    print(f"[build_structured_slide] '{title}' 한 장에 담으려고 "
+                          f"표 글씨 {fp} → {_fp_try}pt 축소")
+                    fp = _fp_try
+                    hdr_h = _rowh(fp)
+                    avail = _BODY_BOTTOM - _INTRO_T - label_h - hdr_h
+
             _no_anchor = not any(_nested_for(r[0]) or _nested_img_for(r[0]) for r in body)
             chunks, cr, crh, cacc = [], [], [], 0.0
             for r, h in zip(body, rhs_all):
@@ -2093,14 +2126,53 @@ def build_structured_slide(prs, struct: dict, *, business_name: str = "",
         cur = {"intro": None, "items": []}
         top = _INTRO_T          # 연속 슬라이드(인트로 없음)는 인트로 자리부터 = 위로
 
-    for blk in blocks:
-        lbl, kind, header, rows, ncol, fp, rh, _anchors, _tn, _thumb = blk
-        label_h = _LABEL_H if lbl else 0.0
-        _tn_h = (_est_text_height("\n".join(_tn), tw, 9) + 0.10) if _tn else 0.0
+    # ★'원본 1페이지 = 슬라이드 1장' 방침(env RAINFIELD_ONE_PAGE_ONE_SLIDE, 기본 켬):
+    #   한 페이지에 표가 2~3개일 때 세로로 안 들어가면 여기서 새 슬라이드로 넘겨(flush)
+    #   원본 1페이지가 2~3장으로 불어났다. → 먼저 **모든 블록의 행 높이를 비례 축소**해서
+    #   한 장에 담아 본다. 축소해도 글자가 너무 작아지면(비율 0.72 미만) 그때만 분할.
+    _one_page = os.environ.get("RAINFIELD_ONE_PAGE_ONE_SLIDE", "1") == "1"
+
+    def _need_of(blk):
+        lbl, kind, header, rows, ncol, fp, rh, _a, _tn, _th = blk
+        lh = _LABEL_H if lbl else 0.0
+        tnh = (_est_text_height("\n".join(_tn), tw, 9) + 0.10) if _tn else 0.0
         if isinstance(rh, (list, tuple)):
-            need = label_h + (_rowh(fp) if header else 0) + sum(rh) + _tn_h + _GAP
-        else:
-            need = label_h + ((1 if header else 0) + len(rows)) * rh + _tn_h + _GAP
+            return lh + (_rowh(fp) if header else 0) + sum(rh) + tnh + _GAP
+        return lh + ((1 if header else 0) + len(rows)) * rh + tnh + _GAP
+
+    if _one_page and blocks:
+        _total = sum(_need_of(b) for b in blocks)
+        _room = pack_bottom - top
+        if _total > _room > 0:
+            # ★축소 대상은 '행 높이'뿐. 표 제목(label)·헤더·각주·표 간격(_GAP)은 안 줄어든다.
+            #   그래서 ratio 를 total 기준으로 잡으면 늘 모자라 결국 분할됐다.
+            #   고정분 F 를 뺀 가변분 V 에 대해서만 비율을 구해야 정확하다.
+            _fixed = _var = 0.0
+            for blk in blocks:
+                lbl, kind, header, rows, ncol, fp, rh, _a, _tn, _th = blk
+                _fixed += (_LABEL_H if lbl else 0.0) + _GAP
+                _fixed += (_rowh(fp) if header else 0.0)
+                _fixed += (_est_text_height("\n".join(_tn), tw, 9) + 0.10) if _tn else 0.0
+                _var += sum(rh) if isinstance(rh, (list, tuple)) else len(rows) * rh
+            _ratio = ((_room - _fixed) / _var) if _var > 0 else 1.0
+            if _ratio >= 0.66:            # 이 정도까지는 줄여도 읽을 만함(행높이만 축소)
+                _shrunk = []
+                for blk in blocks:
+                    lbl, kind, header, rows, ncol, fp, rh, _a, _tn, _th = blk
+                    rh2 = ([h * _ratio for h in rh]
+                           if isinstance(rh, (list, tuple)) else rh * _ratio)
+                    fp2 = max(9.5, round(fp * max(_ratio, 0.9), 1))
+                    _shrunk.append((lbl, kind, header, rows, ncol, fp2, rh2,
+                                    _a, _tn, _th))
+                blocks = _shrunk
+                print(f"[build_structured_slide] '{subtitle}' 표 {len(blocks)}개를 "
+                      f"한 장에 담으려고 행높이 {_ratio:.0%} 로 축소")
+            else:
+                print(f"[build_structured_slide] '{subtitle}' 내용이 너무 많아 "
+                      f"({_ratio:.0%} 축소 필요) 한 장에 못 담음 → 분할")
+
+    for blk in blocks:
+        need = _need_of(blk)
         if cur["items"] and top + need > pack_bottom:
             flush()
         cur["items"].append(blk)

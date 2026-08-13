@@ -576,6 +576,18 @@ def build_executive_summary_slide(prs, sections: list, business_name: str = ""):
                     _r.font.size = _Pt(10)
                     _r.font.color.rgb = RGBColor(0, 0, 0)
 
+    # ── 4-b. ★남는 자리는 반드시 비운다 (템플릿 잔여 문구 유출 방지) ──
+    #   레이아웃.pptx 에는 이전 딜의 예시 문구가 남아 있다. 사용자가 카드를 3개 다 채우지
+    #   않으면 안 채워진 칸에 그 문구가 그대로 인쇄돼 **다른 딜 내용이 제안서에 실린다.**
+    #   (build_slide_2 경로에서 실제로 '포스코이앤씨 …' 가 출고된 사고가 있었음.)
+    for j in range(len(sections[:3]), 3):
+        if j < len(title_groups):
+            _replace_group_title(title_groups[j], "")
+        if j < len(subtitle_boxes):
+            _replace_text_frame_content(subtitle_boxes[j].text_frame, "")
+        if j < len(content_boxes):
+            _replace_text_frame_content(content_boxes[j].text_frame, "")
+
     if len(sections) > 3:
         print(f"[경고] Executive Summary 섹션이 3개 초과 ({len(sections)}개). 3개까지만 표시됩니다.")
 
@@ -1154,6 +1166,20 @@ _DIV_SUBTITLE_GROUP_TOL  = _Cm(0.5)
 # ─────────────────────────────────────────────
 # (f) 섹션 구분 슬라이드 생성 함수
 # ─────────────────────────────────────────────
+def compact_mode() -> bool:
+    """요약본 모드 여부 (env RAINFIELD_COMPACT=1).
+
+    요약 = **내용을 줄여 페이지 수를 줄이는 것**이지, 페이지를 빼는 게 아니다.
+    켜면 이렇게 동작한다:
+      - 한 소제목에 배정된 여러 페이지를 **묶어서 한 번에 요약**(→ 슬라이드 1장)
+      - 표를 핵심 행만 추려 재구성(원문 100% 재현 안 함)
+      - **표 안의 표(중첩표)를 만들지 않음** — 부모 표의 아래 행을 덮어 글자가 겹치던 사고 방지
+    표지·하이라이트·목차·섹션 divider·연락처 같은 **구성 페이지는 그대로 유지**한다.
+    제목·소제목이 요약으로 바뀌면 목차와 섹션 divider도 그 이름을 따라간다.
+    """
+    return os.environ.get("RAINFIELD_COMPACT", "") == "1"
+
+
 def build_section_divider_slide(prs, section_number: str = "", section_title: str = "",
                                  business_name: str = "",
                                  section_image_bytes_list: list = None,
@@ -1434,23 +1460,37 @@ _SEC_NUM_EXTRACT = re.compile(r'^(0[1-9])\b')
 
 
 def _build_toc_map(pages: list) -> dict:
-    """pages에서 섹션 번호별 부제목 목록을 추출합니다."""
+    """pages에서 섹션 번호별 부제목 목록과 섹션 대제목(_labels)을 추출합니다.
+
+    ★_labels 를 함께 내보내야 목차 슬라이드의 섹션 대제목이 실제 이름으로 바뀐다.
+      안 내보내면 템플릿에 박힌 '01 사모사채 개요' 가 그대로 남아, 사모사채가 아닌
+      담보대출 건인데도 목차만 '사모사채 개요' 로 표시되는 불일치가 생긴다
+      (본문·섹션divider 는 page['section_name'] 을 쓰므로 이미 올바름).
+    """
     toc: dict = {}
     seen: dict = {}
+    labels: dict = {}
     for page in pages:
         if page.get("_no_toc"):          # 연락처/면책 등 고정 페이지 → 목차 제외
             continue
         section_title = page.get("section_title", "").strip()
         subtitle      = page.get("subtitle", "").strip()
         m = _SEC_NUM_EXTRACT.match(section_title)
-        if not m or not subtitle:
+        if not m:
             continue
         sec_num = m.group(1)
+        name = (page.get("section_name") or "").strip()
+        if name and sec_num not in labels:
+            labels[sec_num] = name
+        if not subtitle:
+            continue
         if sec_num not in seen:
             seen[sec_num] = set()
         if subtitle not in seen[sec_num]:
             seen[sec_num].add(subtitle)
             toc.setdefault(sec_num, []).append(subtitle)
+    if labels:
+        toc["_labels"] = labels
     return toc
 
 
@@ -1506,6 +1546,10 @@ def _build_content_block(prs, pages: list, business_name: str = "",
             # divider 제목: 이름만(번호 제외) → "01 01" 중복 방지
             divider_title = page.get("section_name") \
                 or re.sub(r'^0[1-9]\s*', '', section_title) or section_title or ""
+            # ★섹션 divider 는 요약본에서도 만든다.
+            #   (요약 = '내용을 줄이는 것'이지 페이지를 빼는 게 아니다 — 사용자 지시 2026-08-07)
+            #   제목·소제목이 요약으로 바뀌면 divider 도 그 바뀐 이름을 그대로 쓴다
+            #   (divider_title=page['section_name'], subtitles=_toc — 둘 다 요약 결과 기준).
             build_section_divider_slide(prs, num_str, divider_title,
                                         business_name=business_name,
                                         section_image_bytes_list=section_image_bytes_list,
@@ -1635,7 +1679,7 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
         title = (g.get("title") or "").strip()
         subtitles = _toc.get(num, [])
 
-        # 1) 섹션 divider (무조건)
+        # 1) 섹션 divider — 요약본에서도 만든다(제목·소제목은 요약 결과를 그대로 반영)
         build_section_divider_slide(
             prs, num, title, business_name=business_name,
             section_image_bytes_list=section_image_bytes_list,
@@ -1658,6 +1702,16 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
                                               business_name=business_name)
             except Exception as _e:
                 print(f"[build_content_from_toc] 2.1 실패: {_e}")
+            # 3-2) ★기존 2.1 '다음 순서'에 금융구조도(도형 작도) 추가 (구조도 페이지 2개)
+            try:
+                from modules.finance_diagram import (extract_finance_diagram_data,
+                                                     build_finance_diagram_slide)
+                _fin = extract_finance_diagram_data(full_text or "")
+                build_finance_diagram_slide(
+                    prs, _fin, business_name=business_name,
+                    section_label=(f"{num}  {title}" if title else num))
+            except Exception as _e:
+                print(f"[build_content_from_toc] 금융구조도(작도) 실패: {_e}")
 
         # 4) ★소제목마다: 그 소제목에 배치한 원본 페이지를 '적은 순서 그대로' 내용 슬라이드로.
         #    build_page_auto(재분류로 1.1/구조도 중복·순서 엉킴)는 쓰지 않음.
@@ -1669,22 +1723,43 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
             stext = (sub.get("text") or "").strip()
             sub_label = f"{gi + 1}.{si + 1} {stext}" if stext else ""
 
-            # ── 이 소제목의 지정 페이지들을 각각 개별 구조화(LLM) ──
-            structured = []      # [(page, struct-or-None), ...]  순서 그대로
+            # ── 이 소제목의 지정 페이지 모으기 ──
+            _pages_of_sub = []
             for pnum in (sub.get("pages") or []):
                 try:
                     page = by_page.get(int(pnum))
                 except (TypeError, ValueError):
                     page = None
-                if not page:
-                    continue
+                if page:
+                    _pages_of_sub.append(page)
+            if not _pages_of_sub:
+                continue
+
+            # ★요약본: 이 소제목에 배정된 페이지들을 **하나로 묶어 한 번에 요약**한다.
+            #   사용자가 소제목마다 페이지를 골라놨으므로, 소제목 경계를 넘어 합치지 않는다
+            #   → 목차 소제목은 사용자가 정한 그대로 유지되고 장수만 준다.
+            structured = []      # [(page, struct-or-None), ...]  순서 그대로
+            if compact_mode() and len(_pages_of_sub) > 1:
+                merged = dict(_pages_of_sub[0])
+                merged["raw_text"] = "\n\n".join(
+                    (p.get("raw_text") or p.get("body_text") or "") for p in _pages_of_sub)
+                merged["images"] = [im for p in _pages_of_sub for im in (p.get("images") or [])]
+                merged["tables"] = [t for p in _pages_of_sub for t in (p.get("tables") or [])]
+                _pages_iter = [merged]
+                print(f"[build_content_from_toc] 요약: '{stext}' 페이지 "
+                      f"{[p.get('page_num') for p in _pages_of_sub]} → 1장으로 묶음")
+            else:
+                _pages_iter = _pages_of_sub
+
+            for page in _pages_iter:
                 struct = page.get("_struct")
                 if not isinstance(struct, dict):
                     try:
                         from modules.llm_structure import structure_page
                         struct = structure_page(
                             page.get("raw_text") or (page.get("body_text") or ""),
-                            int(page.get("page_num") or 0))
+                            int(page.get("page_num") or 0),
+                            summary=compact_mode())
                     except Exception as _sx:
                         print(f"[build_content_from_toc] structure_page 실패: {_sx}")
                         struct = None
@@ -1693,9 +1768,12 @@ def build_content_from_toc(prs, toc_groups, parsed_pages, business_name="",
                 continue
 
             # ── ★섹션2(금융개요) 다중 페이지: '표 안의 표'로 병합(대출개요 grid를 금융조건 표 행에 중첩) ──
+            #   ★요약본에서는 하지 않는다. 중첩표가 부모 표의 아래 행(채권보전·상환재원·
+            #     담보 소재지)을 덮어 글자가 겹쳐 읽을 수 없게 되는 사고가 있었다.
+            #     사용자 지시(2026-08-07): "표 안에 표 안 해도 된다" → 각각 별도 표로 편다.
             _merged_done = False
             _valid = [(p, s) for p, s in structured if isinstance(s, dict)]
-            if gi == 1 and len(_valid) >= 2:
+            if gi == 1 and len(_valid) >= 2 and not compact_mode():
                 try:
                     from modules.llm_structure import _merge_section2_financing
                     from modules.frame_builders import build_structured_slide

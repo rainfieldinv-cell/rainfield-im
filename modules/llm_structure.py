@@ -11,14 +11,38 @@ PDF 한 페이지의 원문 텍스트를 LLM(Claude)이 읽어, 가로 A4 제안
 claude_api.call_claude()를 그대로 재사용(캐시·재시도·비용로깅·숫자환각검증 내장).
 """
 
+import os
 import re
 
 from modules.claude_api import call_claude, verify_numbers_in_pdf
 
-PROMPT_VERSION = "structure_v6"   # v6: 표 안의 표(구분 라벨=grid title) 일반화
+# ★★프롬프트 문구를 고치면 이 버전 문자열을 반드시 함께 올릴 것.
+#   캐시 키가 (slide_num, 원문, prompt_version) 로만 만들어져 프롬프트 '내용'은 키에 안 들어간다.
+#   버전을 안 올리면 프롬프트를 고쳐도 캐시가 옛 결과를 그대로 돌려줘 아무것도 안 바뀐다.
+PROMPT_VERSION = "structure_v8"   # v8: 표 3개·16행 상한 + 중첩표/다단헤더 금지(1장 강제)
+                                  # v7: 원본 1페이지=슬라이드 1장(꽉 차면 소폭 압축)
+                                  # v6: 표 안의 표(구분 라벨=grid title) 일반화
 
-# 레인필드 표준 4섹션 (고정). 섹션라벨은 항상 이 이름으로 표기.
+# 레인필드 표준 4섹션. 섹션라벨은 이 이름으로 표기.
 SECTION_NAMES = {1: "사모사채 개요", 2: "금융개요", 3: "본건 사업 개요", 4: "Appendix"}
+
+# 원본이 사모사채·유동화 건이 아닐 때 쓰는 섹션1 이름(담보대출·브릿지 등 일반 대출 건).
+#   '사모사채 개요'를 그대로 쓰면 사모사채가 전혀 없는 딜에 그 단어가 목차·섹션라벨·
+#   소제목에 박혀 사실과 달라진다.
+SECTION1_NAME_LOAN = "거래 개요"
+SECTION1_SUBTITLE_LOAN = "본 건 거래 개요"
+
+# 사모사채/유동화 건 판정 키워드 (frame_builders._SASAE_KEYS 와 동일 기준)
+_SASAE_KEYS = ("사모사채", "유동화", "수익증권", "자산유동화", "ABCP", "ABL")
+
+
+def _is_sasae_deal(pages) -> bool:
+    """문서 전체 원문에 사모사채·유동화 언급이 있으면 True."""
+    for p in pages or []:
+        raw = p.get("raw_text") or ""
+        if any(k in raw for k in _SASAE_KEYS):
+            return True
+    return False
 
 SYSTEM_PROMPT = """당신은 부동산 금융 IM(PDF)을 가로 A4 제안서 PPT로 재구성하는 전문 애널리스트입니다.
 주어진 PDF '한 페이지'의 원문 텍스트를 읽고, 슬라이드 1장의 구조화된 내용을 순수 JSON으로만 출력하세요.
@@ -47,9 +71,21 @@ SYSTEM_PROMPT = """당신은 부동산 금융 IM(PDF)을 가로 A4 제안서 PPT
   "source": "출처 문구. 예 '국토부 실거래가, KB부동산'. 없으면 \\"\\"."
 }
 
-[가장 중요 — 표는 "요약"이 아니라 "원문 그대로 재현"]
-★원문 페이지의 표는 빠짐없이 그대로 재현하세요. 요약하거나, 일부(형광펜·강조 부분)만 표로 만들지 마세요.
-  원문에 표가 있으면 그 표의 모든 행·모든 열을 tables에 그대로 옮깁니다.
+[가장 중요 — 원본 1페이지 = 슬라이드 딱 1장]
+★★이 페이지의 결과물은 **반드시 슬라이드 1장**에 들어가야 합니다. 여러 장으로 나뉘면 실패입니다.
+  (원본 12페이지짜리 IM 이면 본문도 12장이어야 합니다. 한 페이지가 2~4장으로 불어나면 안 됩니다.)
+★내용은 **빠짐없이 다 담되**, 한 장에 안 들어갈 만큼 꽉 찬 페이지면 **조금 요약**해서 맞추세요.
+  - 긴 서술은 짧게 다듬기(뜻과 숫자는 유지)
+  - 성격이 같은 세부 행은 묶기(예: 같은 지번 여러 호실 → 한 행에 묶고 합계 유지)
+  - 중복 설명·수식어 삭제
+  ★단 아래는 절대 빼지 마세요: 금액·금리·수수료·만기·LTV·감정평가액·상환재원·담보·
+    총매출/총사업비/사업이익·세대수·면적·확보율·공정률·분양가·주요 일정, 그리고 모든 합계 행.
+★표 규모 기준: 이 페이지 **표 최대 2개**, **모든 표의 행 수 합계 11행 이내**(헤더 포함), 최대 8열.
+  (11행이 슬라이드 1장의 물리적 한계다. 넘으면 다음 장으로 밀려 원본 1페이지가 2장이 된다.)
+  넘칠 것 같으면 위 방법으로 압축하세요. 숫자를 바꾸거나 지어내지는 마세요.
+★표 안의 표(중첩표)는 만들지 마세요 — 별도 표로 펴서 쓰세요(한 장에 안 들어가는 주원인).
+★2단(다단) 헤더 금지. 헤더는 한 줄로, 'A - B' 처럼 합쳐 쓰세요.
+★한 칸에 100자를 넘기지 마세요.
 ★본문을 bullets로 "요약"하지 마세요. 요약은 오직 intro(1~2문장)에만. 표로 표현되는 내용은 전부 tables로.
   bullets는 표도 아니고 도입문도 아닌 진짜 설명문/주석만(거의 비어 있어야 정상).
 
@@ -68,9 +104,9 @@ SYSTEM_PROMPT = """당신은 부동산 금융 IM(PDF)을 가로 A4 제안서 PPT
 4. ★병합/반복: 원문에서 세로로 같은 값이 연속 반복되면(예 '공동주택'이 여러 행) **첫 행에만 값을 쓰고 그 아래 반복 칸은 빈 문자열("")** 로 두세요(시스템이 세로 병합). 가로도 동일 — 합계 라벨은 첫 칸만, 나머지 빈칸.
 5. 원문에 없는 숫자·사실을 만들지 마세요(환각 절대 금지). 있는 내용을 그대로 옮기기만.
 6. 페이지 번호('3 / 26', '- 5 -'), 회사 로고, 반복 머리말/꼬리말은 버리세요.
-7. 표가 매우 커도 행을 생략하지 말고 전부 넣으세요(슬라이드 분할은 시스템이 함).
-   ★★행 개수를 절대 줄이지 마세요. 원문 표가 5행이면 정확히 5행, 헤더가 2줄이면 2줄 그대로.
-     비슷한 행을 합치거나 '…' 로 생략하는 것 절대 금지. 원문에 있는 만큼 그대로.
+7. 표가 18행 이내면 원문 행을 그대로 유지하세요(임의로 줄이지 말 것).
+   ★18행을 넘을 때만 성격이 같은 행을 묶어 압축하고, 합계 행과 핵심 지표는 반드시 남기세요.
+     묶을 때 라벨에 무엇을 묶었는지 표시하세요(예 '돈암동 628 (304·101·203호)').
 8. 첨부 이미지뿐인 페이지(사업계획승인서 등)는 intro 한 줄만, tables/bullets 비움.
 9. ★표 바로 아래/옆의 각주·주석(예 '1)', '2)', '주)', '*', '(단위: 백만원)', '※ …')은
    절대 버리지 말고 그 표 다음 순서로 bullets에 그대로 넣으세요. 각주 번호와 내용을 원문 그대로.
@@ -83,10 +119,91 @@ SYSTEM_PROMPT = """당신은 부동산 금융 IM(PDF)을 가로 A4 제안서 PPT
 순수 JSON만 출력하고 그 외 텍스트·설명은 출력하지 마세요."""
 
 
+# ═══════════════════════════════════════════════════════════
+# 요약본(짧은 버전) 전용 프롬프트
+#   사용자 지시(2026-08-07): "짧은 버전은 내용을 다 넣지 말고 핵심만 넣어서 절반 페이지로.
+#   표도 원본과 100% 똑같이 안 해도 된다 — 핵심만 보고 정리하면 된다."
+#   → 원문 재현(SYSTEM_PROMPT)과 정반대 방침. 표를 핵심 행만 추려 슬라이드 1장에 담는다.
+#     (긴 버전이 24장이나 되는 이유가 원문 표를 그대로 재현하다 (1/4)(2/4)로 쪼개지는 것이라,
+#      표만 추려도 분할이 사라져 자연히 절반이 된다.)
+# ═══════════════════════════════════════════════════════════
+SUMMARY_PROMPT_VERSION = "summary_v2"   # v2: 표 합계 12행·불릿 3개로 조임(1장 강제)
+
+SUMMARY_SYSTEM_PROMPT = """당신은 부동산 금융 IM(PDF)을 **요약본 제안서 PPT**로 재구성하는 전문 애널리스트입니다.
+주어진 PDF '한 페이지'의 원문을 읽고, **슬라이드 딱 1장 분량**의 핵심만 추려 순수 JSON으로 출력하세요.
+
+[이건 '원문 재현'이 아니라 '요약'입니다]
+★표를 원문과 똑같이 재현하지 마세요. 투자 판단에 필요한 핵심 행만 골라 간결한 표로 재구성하세요.
+★슬라이드 1장에 반드시 들어가야 합니다. 표가 길어져 다음 장으로 넘어가면 실패입니다.
+
+[제안서는 항상 4개 섹션으로 구성됩니다]
+  1 = 거래 개요       : Executive Summary, 본건 거래/딜 요약, 핵심 투자포인트
+  2 = 금융개요        : 금융조건/대출조건(트랜치·금리·LTV·수수료), 투자구조도, 기초자산, 약정조건
+  3 = 본건 사업 개요  : 담보/토지 개요, 사업개요(건축·분양), 사업일정, 사업수지, 입지·시세, 차주/시행사
+  4 = Appendix        : 현장사진, 인허가 첨부, 기타 부록
+이 페이지가 어느 섹션에 속하는지 1~4 중 하나로 판단하세요.
+
+[출력 JSON 스키마]
+{
+  "section_num": 1,
+  "subtitle": "이 페이지의 소제목(번호 없이 이름만).",
+  "intro": "핵심을 요약한 1~2문장. 페이지번호·머리말·footer·출처 제외. 없으면 \\"\\".",
+  "bullets": ["표에 담기 어려운 핵심 설명 항목. 최대 4개, 각 1문장. 없으면 빈 배열."],
+  "tables": [
+    {
+      "title": "표 제목. 없으면 \\"\\".",
+      "kind": "label_value | grid",
+      "header": ["grid일 때만 열 제목. label_value면 빈 배열."],
+      "rows": [["..."], ["..."]]
+    }
+  ],
+  "source": "출처 문구. 없으면 \\"\\"."
+}
+
+[요약 규칙 — 반드시 지킬 것]
+1. **표는 이 페이지 전체에서 최대 2개**, **최대 6열**,
+   그리고 **모든 표의 행 수를 합쳐 10행 이내**(헤더 포함).
+   ★입력이 원본 여러 페이지를 이어붙인 것일 수 있습니다. 그래도 결과는 10행 이내입니다.
+     페이지가 여러 개면 각 페이지에서 가장 중요한 것만 골라 하나의 표로 통합하세요.
+   원문 표가 30행이면 핵심 10행으로 추리세요. 세부 항목은 묶거나 버립니다.
+   ★한 페이지에 주제가 여러 개면(예: 토지현황+사업일정+사업수지) 각 주제를 표 하나로
+     더 압축하거나, 덜 중요한 주제는 bullets 한 줄로 줄이세요. 표를 3개로 늘리지 마세요.
+2. **표 안의 표(중첩표) 금지.** 필요하면 별도 표로 펴거나, 핵심 값만 한 칸에 요약해 넣으세요.
+3. **2단(다단) 헤더 금지.** 헤더는 반드시 한 줄. 'A - B' 처럼 합쳐 한 칸으로 쓰세요.
+4. **긴 서술은 잘라 쓰세요.** 한 칸에 80자 넘지 않게. 법률 장문은 핵심 조건만.
+5. bullets 는 최대 3개, 각 1줄. 원문 각주·주석은 핵심이 아니면 버려도 됩니다.
+6. ★★이 페이지의 결과물은 **반드시 슬라이드 딱 1장**에 들어가야 합니다.
+   표 12행 + 불릿 3줄이 한계선이라고 생각하고, 넘칠 것 같으면 행을 더 줄이세요.
+   여러 장으로 나뉘면 요약 실패입니다.
+7. 원문에 '-'(값 없음)로 표기된 칸은 '0' 으로 바꾸지 말고 '-' 그대로 두세요.
+8. 항목을 묶어 합산할 때, 합산값이 원문 합계와 어긋나더라도 **원문 숫자를 고치지 마세요.**
+   맞추려고 세부 값을 ±조정하지 말고, 원문 값을 그대로 쓰고 합계도 원문 그대로 두세요.
+
+[절대 지킬 것 — 요약해도 이것만은]
+★★숫자·금액·비율·날짜는 **원문 그대로**. 반올림·환산·추정 금지. 원문에 없는 숫자 생성 절대 금지.
+★★아래 핵심 지표가 원문에 있으면 **반드시 표나 intro에 남기세요**:
+   대출·발행 금액 / 금리 / 수수료 / 만기·기간 / LTV / 감정평가액 / 상환재원 / 담보·채권보전 /
+   총매출·총사업비·사업이익 / 세대수·연면적·대지면적 / 토지 확보율 / 공정률 / 분양가·시세 / 주요 일정
+★고유명사(차주·시행사·시공사·신탁사·대주)는 원문 표기 그대로.
+★버린 내용이 있어도 남긴 내용은 반드시 원문과 일치해야 합니다.
+
+[기타]
+- section_num 은 1~4 정수. subtitle 에 번호(1.1 등) 붙이지 마세요.
+- label_value: 좌측 항목명 + 우측 값 2열 표. header 는 빈 배열.
+- grid: 다열 격자 표. header 에 열 제목.
+- 세로로 같은 값이 반복되면 첫 행에만 쓰고 아래는 빈 문자열("").
+- 페이지 번호·로고·반복 머리말/꼬리말은 버리세요.
+- 이미지뿐인 페이지는 intro 한 줄만, tables/bullets 비움.
+순수 JSON만 출력하고 그 외 텍스트·설명은 출력하지 마세요."""
+
+
 def structure_page(raw_text: str, page_num: int, *, use_cache: bool = True,
-                   verify_numbers: bool = True) -> dict:
+                   verify_numbers: bool = True, summary: bool = False) -> dict:
     """
     PDF 페이지 원문 → 구조화 dict. 실패 시 None.
+
+    summary=True 면 **요약본 전용 프롬프트**를 쓴다(표를 핵심 행만 추려 1장에 담음).
+    prompt_version 이 달라 캐시도 판본별로 따로 쌓인다.
 
     Returns (성공 시): {
         section_label, subtitle, intro, bullets[], tables[], source,
@@ -99,12 +216,12 @@ def structure_page(raw_text: str, page_num: int, *, use_cache: bool = True,
 
     user_prompt = f"[PDF 페이지 {page_num} 원문]\n{text}"
     res = call_claude(
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=SUMMARY_SYSTEM_PROMPT if summary else SYSTEM_PROMPT,
         user_prompt=user_prompt,
         slide_num=page_num,
         pdf_context=text,
         use_cache=use_cache,
-        prompt_version=PROMPT_VERSION,
+        prompt_version=SUMMARY_PROMPT_VERSION if summary else PROMPT_VERSION,
     )
     if not res.get("ok") or not res.get("data"):
         return None
@@ -445,7 +562,8 @@ def _consolidate_sections(pages: list, *, debug: bool = False) -> None:
               f"sec4={len(data.get('section4') or [])} fixed={len(data.get('fixed') or [])}")
 
 
-def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None) -> list:
+def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None,
+                      summary: bool = False) -> list:
     """
     각 페이지를 LLM으로 구조화하고, 레인필드 4섹션 체계에 맞춰
     섹션라벨(고정) + 소제목 번호(x.y)를 부여해 page dict에 채워 넣는다.
@@ -464,7 +582,8 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
     # ── 1패스: 각 페이지 구조화 + 섹션 분류 ──
     for idx, p in enumerate(pages):
         raw = p.get("raw_text", "") or ""
-        st = structure_page(raw, p.get("page_num", 0)) if raw.strip() else None
+        st = (structure_page(raw, p.get("page_num", 0), summary=summary)
+              if raw.strip() else None)
         p["_struct"] = st
         if st:
             sec = st.get("section_num")
@@ -528,7 +647,13 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
                 break
 
     # ── 금융조건 = 하나의 표(여러 페이지로 쪼개진 것을 다시 합침) ──
-    _merge_section2_financing(pages, debug=debug)
+    #   ★단 '원본 1페이지 = 슬라이드 1장' 방침에서는 하지 않는다.
+    #     3개 페이지의 표를 하나로 합치면 40행이 넘어 결국 (1/4)~(4/4)로 다시 쪼개져
+    #     원본 3페이지가 슬라이드 4장이 된다(장수가 불어나는 주원인).
+    if os.environ.get("RAINFIELD_ONE_PAGE_ONE_SLIDE", "1") != "1":
+        _merge_section2_financing(pages, debug=debug)
+    elif debug:
+        print("[enrich] 1페이지=1장 방침 → 섹션2 금융조건 페이지 병합 건너뜀")
 
     # ── 별첨1(본 PF 주요조건) = 기초자산처럼 통합 렌더: 참여기관(label_value) + '주요 금융조건'(중첩표) ──
     #   금융조건 grid가 별도 표로 쪼개져 한 슬라이드에 (1/2)(2/2) 겹쳐 보이던 문제 해결.
@@ -654,22 +779,32 @@ def enrich_and_number(pages: list, *, debug: bool = False, pdf_path: str = None)
         pages.sort(key=_ck)
 
     # ── 2패스: x.y 번호 부여 (묶음=한 번호 공유; 연락처/면책 고지는 번호·목차 제외) ──
+    #   ★섹션1 이름은 거래 성격에 맞춘다. 원본에 사모사채·유동화가 없으면(순수 담보대출 등)
+    #     '사모사채 개요' 대신 '거래 개요'를 쓴다 — 없는 상품을 목차·라벨에 박지 않기 위함.
+    sec_names = dict(SECTION_NAMES)
+    if not _is_sasae_deal(pages):
+        sec_names[1] = SECTION1_NAME_LOAN
+        print(f"[enrich] 원본에 사모사채·유동화 언급 없음 → 섹션1 이름 "
+              f"'{SECTION_NAMES[1]}' → '{SECTION1_NAME_LOAN}'")
+    _sec1_sub = ("본 건 사모사채 개요" if sec_names[1] == SECTION_NAMES[1]
+                 else SECTION1_SUBTITLE_LOAN)
+
     counters = {1: 0, 2: 0, 3: 0, 4: 0}
     for p in pages:
         sec = p.get("_grp_sec") or p.get("_sec_int", 4)
         st = p.get("_struct")
         name = (p.get("_invest_name")
                 or ((st.get("subtitle") if st else "") or "").strip()
-                or SECTION_NAMES[sec])
-        # ★섹션1 Executive Summary → 한글 소제목('본 건 사모사채 개요')으로 일관.
+                or sec_names[sec])
+        # ★섹션1 Executive Summary → 한글 소제목으로 일관(영어 소제목 금지).
         if "executive summary" in name.lower():
-            name = "본 건 사모사채 개요"
+            name = _sec1_sub
             if st is not None:
                 st["subtitle"] = name
         p["section_num"] = f"0{sec}"
-        p["section_name"] = SECTION_NAMES[sec]
-        p["section_title"] = f"0{sec} {SECTION_NAMES[sec]}"
-        p["section_label"] = f"0{sec} {SECTION_NAMES[sec]}"
+        p["section_name"] = sec_names[sec]
+        p["section_title"] = f"0{sec} {sec_names[sec]}"
+        p["section_label"] = f"0{sec} {sec_names[sec]}"
         if p.get("_grp_fixed") or any(kw in name for kw in ("면책", "연락처", "담당자")):
             # 면책고지·담당자 연락처 = 고정 페이지: 번호 안 매기고 목차에서 제외
             p["subtitle"] = name

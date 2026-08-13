@@ -5,6 +5,7 @@ from extractors import extract_from_pdf, extract_from_docx, detect_business_name
 from ui_components import render_stepper, render_image_gallery, render_text_preview
 
 # PPT 생성 모듈 불러오기
+import io
 import os
 import re
 from datetime import datetime
@@ -813,7 +814,10 @@ def show_step4():
     # ────────────────────────────────────────
     st.markdown("### 🚀 PPT 생성")
 
-    if st.button("📄 완성 PPT 생성하기", type="primary", use_container_width=False):
+    st.caption("소제목마다 지정한 페이지들을 묶어 요약합니다. "
+               "핵심 수치(금액·금리·만기·LTV·감정가·상환재원 등)는 그대로 유지됩니다.")
+
+    if st.button("생성", type="primary", use_container_width=False):
         try:
             with st.spinner("PPT를 생성하는 중입니다... 잠시만 기다려주세요."):
                 # ── 목차: 4단계에서 짠 사용자 목차를 최우선 사용 ──
@@ -875,6 +879,9 @@ def show_step4():
                     except Exception as _llm_e:
                         st.warning(f"⚠️ 본문 LLM 구조화 일부 실패({_llm_e}) — 기본 경로로 진행합니다.")
 
+                # ── 요약본 한 종류만 만든다 ────────────────────
+                #   (긴버전·짧은버전을 따로 냈더니 내용이 거의 같아 나눌 이유가 없었음)
+                os.environ["RAINFIELD_COMPACT"] = "1"
                 ppt_bytes = build_full_presentation(
                     business_name=st.session_state.business_name,
                     year=st.session_state.year,
@@ -890,24 +897,47 @@ def show_step4():
                     toc_groups=_toc_groups,   # ★네 목차·배치로 본문 생성
                     full_text=_full_text,     # 1.1/2.1 자동추출용 원문
                 )
+                os.environ.pop("RAINFIELD_COMPACT", None)
 
             # ★5단계 내용검수에서 쓰도록 생성 PPT 보관
             st.session_state.ppt_bytes = ppt_bytes
-            filename = make_output_filename(st.session_state.business_name)
-            st.success(f"✅ PPT 생성 완료!")
 
-            st.download_button(
-                label="⬇️ PPT 다운로드",
-                data=ppt_bytes,
-                file_name=filename,
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                use_container_width=False,
-            )
+            # ★결과를 세션에 저장한다 — 다운로드 버튼을 누르면 Streamlit 이 페이지를
+            #   다시 그리므로, 결과가 이 블록 안 지역변수면 그때 사라진다.
+            #   버튼은 아래(생성 블록 바깥)에서 세션 값으로 그린다.
+            try:
+                from pptx import Presentation as _Prs
+                _n = len(_Prs(io.BytesIO(ppt_bytes)).slides)
+            except Exception:
+                _n = 0
+            st.session_state.ppt_result = {
+                "bytes": ppt_bytes,
+                "slides": _n,
+                "filename": make_output_filename(st.session_state.business_name),
+            }
 
         except Exception as e:
+            st.session_state.pop("ppt_result", None)
             st.error(f"❌ PPT 생성 중 오류가 발생했습니다: {e}")
             import traceback
             st.code(traceback.format_exc(), language="text")
+
+    # ────────────────────────────────────────
+    # (C-2) 다운로드 — 생성 블록 '바깥'에서 세션 값으로 그린다.
+    #        그래야 한쪽을 받아도 나머지 버튼이 그대로 남는다.
+    # ────────────────────────────────────────
+    _res = st.session_state.get("ppt_result")
+    if _res:
+        st.success(f"생성 완료 — {_res['slides']}장" if _res["slides"] else "생성 완료")
+        st.download_button(
+            label="다운로드",
+            data=_res["bytes"],
+            file_name=_res["filename"],
+            mime="application/vnd.openxmlformats-officedocument."
+                 "presentationml.presentation",
+            type="primary",
+            key="dl_ppt",
+        )
 
     st.markdown("---")
 

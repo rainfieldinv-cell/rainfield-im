@@ -441,6 +441,68 @@ def _fill_group_label(group_shape, text: str):
         pass
 
 
+def _exec_summary_parts(slide):
+    """Investment Highlights(슬라이드 2) 템플릿의 구성요소를 '구조'로 찾습니다.
+
+    템플릿(레이아웃.pptx)이 교체되면 도형 name·좌표가 통째로 바뀌므로
+    이름/좌표로 찾으면 조용히 실패해 **이전 딜의 템플릿 문구가 그대로 출고**된다.
+    (2026-07-29 템플릿 교체 후 실제로 발생 — 포스코이앤씨 문구 잔존.)
+    그래서 이름 대신 아래 구조 규칙으로 찾는다:
+
+      본문 블록 = 육각형(AUTO_SHAPE) 2개 + TEXT_BOX 1개 를 가진 최상위 GROUP
+      제목 블록 = PICTURE(체크 아이콘) + TEXT_BOX 를 가진 최상위 GROUP
+      부제      = 최상위 TEXT_BOX 중 텍스트가 '내용' 인 것
+
+    각 목록은 top(세로) 순으로 정렬해 섹션 1·2·3 에 대응시킨다.
+
+    Returns
+    -------
+    dict: {"titles": [GROUP×3], "bodies": [TEXT_BOX×3],
+           "hex_out": [AUTO_SHAPE×3], "hex_in": [AUTO_SHAPE×3], "subs": [...]}
+           찾지 못한 자리는 None.
+    """
+    title_grps, body_grps, subs = [], [], []
+    for sh in slide.shapes:
+        if sh.shape_type == 6:                       # GROUP
+            try:
+                kids = list(sh.shapes)
+            except Exception:
+                continue
+            tbs  = [c for c in kids if c.shape_type == 17]
+            hexs = [c for c in kids if c.shape_type == 1]      # AUTO_SHAPE(육각형)
+            pics = [c for c in kids if c.shape_type == 13]
+            if len(hexs) >= 2 and tbs:
+                body_grps.append((sh.top or 0, sh, tbs[0], hexs))
+            elif pics and tbs:
+                title_grps.append((sh.top or 0, sh))
+        elif sh.shape_type == 17 and sh.has_text_frame:
+            if sh.text_frame.text.strip() == "내용":
+                subs.append((sh.top or 0, sh))
+
+    title_grps.sort(key=lambda x: x[0])
+    body_grps.sort(key=lambda x: x[0])
+    subs.sort(key=lambda x: x[0])
+
+    def _pad(seq, n=3):
+        return (list(seq) + [None] * n)[:n]
+
+    hex_out, hex_in = [], []
+    for _t, _g, _tb, hexs in body_grps:
+        # 바깥 육각형 = 더 넓은 쪽
+        srt = sorted(hexs, key=lambda h: -(h.width or 0))
+        hex_out.append(srt[0])
+        hex_in.append(srt[1] if len(srt) > 1 else None)
+
+    return {
+        "titles":  _pad([g for _t, g in title_grps]),
+        "bodies":  _pad([tb for _t, _g, tb, _h in body_grps]),
+        "groups":  _pad([g for _t, g, _tb, _h in body_grps]),
+        "hex_out": _pad(hex_out),
+        "hex_in":  _pad(hex_in),
+        "subs":    _pad([s for _t, s in subs]),
+    }
+
+
 def _remove_non_pdf_shapes(slide):
     """PDF 원본 구조도에 없는 shape 를 XML 에서 완전히 제거합니다.
 
@@ -556,7 +618,7 @@ def _fill_entity_tables(slide, entities: dict, tranches: list, total_loan: str):
 # 슬라이드 2 빌더: Executive Summary
 # ════════════════════════════════════════════════════════
 
-def _relayout_exec_summary(slide):
+def _relayout_exec_summary(slide, parts=None):
     """슬라이드 1 Executive Summary 동적 섹션 레이아웃 (이름 기반).
 
     - 육각형(<>) 좌우폭/left 통일 (바깥/안쪽 각각 동일값, 세로만 조절)
@@ -567,7 +629,8 @@ def _relayout_exec_summary(slide):
     좌표 단위: 인치(EMU = 인치×914400). 모든 대상은 고유 name 으로 매칭.
     """
     IN = 914400
-    by = {sh.name: sh for sh in slide.shapes}
+    if parts is None:
+        parts = _exec_summary_parts(slide)
 
     O_L, O_W = int(1.30 * IN), int(8.24 * IN)   # 바깥 육각형 좌/폭
     I_L, I_W = int(1.45 * IN), int(7.94 * IN)   # 안쪽 육각형 좌/폭
@@ -605,77 +668,77 @@ def _relayout_exec_summary(slide):
                     break
             if done:
                 break
-        # 한글은 대체로 전각(글자폭≈fontpt) → 안전계수 없이 fontpt 기준
-        cpl = max(1, int(width_in * 72.0 / fpt))
+        # 한 줄에 들어가는 '글자폭 단위'. 한글·한자는 전각(1.0), 숫자·영문·기호는 반각(0.55).
+        # 금융 문구는 숫자·%·영문이 많아 전각으로만 세면 줄 수가 크게 과대추정된다.
+        # 글상자 폭 전체를 쓰지는 못한다(꺾쇠 화살표 안쪽 + 내부 여백) → 0.93 계수.
+        cpl = max(1.0, width_in * 0.93 * 72.0 / fpt)
+
+        def _units(s):
+            u = 0.0
+            for ch in s:
+                if ('가' <= ch <= '힣' or '㄰' <= ch <= '㆏'
+                        or '一' <= ch <= '鿿'):
+                    u += 1.0
+                else:
+                    u += 0.55
+            return u
+
         lines = 0
         for p in tf.paragraphs:
             s = "".join(r.text for r in p.runs).strip()
             if s:
-                lines += (len(s) + cpl - 1) // cpl   # ceil
+                lines += max(1, int(-(-_units(s) // cpl)))   # ceil
         lines = max(1, lines)
         line_h = fpt * 1.25 / 72.0
         return lines, round(line_h, 3), round(lines * line_h, 3)
 
-    # (제목GROUP, 부제, 바깥육각형, 안쪽육각형, 본문, has_sub)
-    secs = [
-        # 섹션1 부제(TextBox 55) 삭제 → ns=None, has_sub=False (간격 압축 = 높이 넘침 방지)
-        ("그룹 1",  None,         "육각형 5",  "육각형 17", "TextBox 42", False),
-        ("그룹 2",  None,         "육각형 24", "육각형 25", "TextBox 26", False),
-        ("그룹 51", None,         "육각형 48", "육각형 49", "TextBox 50", False),
-    ]
+    # ★섹션 = (제목 GROUP, 본문블록 GROUP, 본문 TEXT_BOX) — 이름이 아니라 구조로 찾은 것.
+    secs = list(zip(parts["titles"], parts["groups"], parts["bodies"]))
 
-    # 1) 본문 빈 단락 제거 후 추정 → 꺾쇠 H, 블록 H
+    # 1) 본문 빈 단락 제거 후 추정 → 꺾쇠(본문블록) H, 블록 H
     est, hexH, blockH = [], [], []
-    for (nt, ns, nho, nhi, nb, hassub) in secs:
-        tb = by.get(nb)
+    for (_gt, _gb, tb) in secs:
         if tb is not None:
             _strip_empty_paras(tb)
         e = _est_body(tb) if tb is not None else (1, 0.2, 0.2)
         est.append(e)
         h = e[2] + 2 * MARGIN
         hexH.append(h)
-        blockH.append((SUB_BLOCK if hassub else TITLE_GAP) + h)
+        blockH.append(TITLE_GAP + h)
 
     # 2) 균등 간격 산출 (세로 중앙 분포)
+    #    하한 0.30" 이면 내용이 많을 때 3번째 섹션이 슬라이드 밖으로 밀린다 → 0.10" 까지 허용.
     content = sum(blockH)
-    gap = max(0.30, (BOT - TOP - content) / 2)
+    gap = max(0.10, (BOT - TOP - content) / 2)
+    if TOP + content + 2 * gap > BOT + 0.01:
+        print(f"[경고] build_slide_2: 하이라이트 3섹션이 한 장에 안 들어감 "
+              f"(필요 {TOP + content + 2 * gap:.2f}\" > 한계 {BOT:.2f}\") "
+              f"— 문구를 줄이거나 2페이지로 나눠야 함")
 
-    # 3) 배치
+    # 3) 배치 — 본문블록은 GROUP 통째로 옮기고 늘린다.
+    #    (그룹 안 자식 좌표를 직접 건드리면 그룹 변환 때문에 어긋난다.)
     report = []
     cur = TOP
-    for i, (nt, ns, nho, nhi, nb, hassub) in enumerate(secs):
+    for i, (gt, gb, tb) in enumerate(secs):
         ttop = cur
-        if hassub:
-            stop = ttop + TITLE_H
-            hexT = ttop + SUB_BLOCK
-        else:
-            stop = None
-            hexT = ttop + TITLE_GAP
-        if by.get(nt) is not None:
-            by[nt].top = int(ttop * IN)
-        if ns and by.get(ns) is not None:
-            by[ns].top = int(stop * IN)
-        ho, hi = by.get(nho), by.get(nhi)
-        if ho is not None and hi is not None:
-            dT = (hi.top or 0) - (ho.top or 0)
-            dH = (hi.height or 0) - (ho.height or 0)
-            before_h = round((ho.height or 0) / IN, 2)
-            ho.left, ho.width, ho.top, ho.height = O_L, O_W, int(hexT * IN), int(hexH[i] * IN)
-            hi.left, hi.width = I_L, I_W
-            hi.top, hi.height = ho.top + dT, ho.height + dH
-        b = by.get(nb)
-        if b is not None:
-            b.top = int((hexT + MARGIN) * IN)
-            b.height = int((hexH[i] - 2 * MARGIN) * IN)
+        hexT = ttop + TITLE_GAP
+        if gt is not None:
+            gt.top = int(ttop * IN)
+        before_h = None
+        if gb is not None:
+            before_h = round((gb.height or 0) / IN, 2)
+            gb.left, gb.width = O_L, O_W
+            gb.top, gb.height = int(hexT * IN), int(hexH[i] * IN)
+        if tb is not None:
             try:
-                b.text_frame.word_wrap = True
-                b.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+                tb.text_frame.word_wrap = True
+                tb.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
             except Exception:
                 pass
         report.append({
-            "sec": nt, "title_top": round(ttop, 2), "hex_top": round(hexT, 2),
+            "sec": f"섹션{i + 1}", "title_top": round(ttop, 2), "hex_top": round(hexT, 2),
             "lines": est[i][0], "body_h": est[i][2],
-            "hexH_before": before_h if ho is not None else None,
+            "hexH_before": before_h,
             "hexH_after": round(hexH[i], 2),
         })
         cur = hexT + hexH[i] + gap
@@ -837,7 +900,33 @@ def add_footer(slide, page_num, source=None, business_name=None):
         return tb
 
     # 2) 오른쪽 푸터 (사업명 | 순번) — 우측 끝 ≈ 10.50"
-    _mk(4.83, 5.67, f"{biz}  |  {page_num}", 8, PP_ALIGN.RIGHT)
+    #    ★쪽번호는 고정 숫자가 아니라 PowerPoint '슬라이드 번호' 필드로 넣는다.
+    #      고정 숫자를 쓰면 앞에 슬라이드가 빠지거나 늘 때 실제 위치와 어긋난다
+    #      (요약본에서 섹션 divider 를 빼자 4번째 장에 '6' 이 찍히던 문제).
+    #      frame_builders._add_combined_footer 와 동일한 방식.
+    _tb = _mk(4.83, 5.67, f"{biz}  |  ", 8, PP_ALIGN.RIGHT)
+    try:
+        _p = _tb.text_frame.paragraphs[0]
+        _fld = _p._p.makeelement(_qn('a:fld'), {
+            'id': '{B7E3A1C2-0000-4000-9000-000000000002}', 'type': 'slidenum'})
+        _rPr = _fld.makeelement(_qn('a:rPr'), {'lang': 'ko-KR', 'sz': '800'})
+        _sf = _rPr.makeelement(_qn('a:solidFill'), {})
+        _clr = _sf.makeelement(_qn('a:srgbClr'), {'val': '808080'})
+        _sf.append(_clr)
+        _rPr.append(_sf)
+        _lat = _rPr.makeelement(_qn('a:latin'), {'typeface': _FONT_LIGHT})
+        _ea = _rPr.makeelement(_qn('a:ea'), {'typeface': _FONT_LIGHT})
+        _rPr.append(_lat)
+        _rPr.append(_ea)
+        _fld.append(_rPr)
+        _t = _fld.makeelement(_qn('a:t'), {})
+        _t.text = str(page_num)          # 편집 전 표시용 기본값(열면 실제 번호로 갱신)
+        _fld.append(_t)
+        _p._p.append(_fld)
+    except Exception as _e:
+        # 필드 생성 실패 시 고정 숫자로 폴백
+        print(f"[add_footer] 쪽번호 필드 실패({_e}) — 고정 숫자 사용")
+        _tb.text_frame.paragraphs[0].runs[0].text = f"{biz}  |  {page_num}"
 
     # 3) 왼쪽 출처 (source 지정 시에만)
     if source:
@@ -892,46 +981,34 @@ def build_slide_2_executive_summary(prs, data: dict,
     _SEC2_BODY = _arrowify(sections[1].get("body"))
     _SEC3_BODY = _arrowify(sections[2].get("body"))
 
-    def _s(l, t, text):
-        sh = _find_shape_by_pos(slide, l, t)
-        if sh:
-            _replace_text_keep_runs(sh.text_frame, text)
-        else:
-            print(f"[경고] build_slide_2: TEXT_BOX 못 찾음 ({l:.2f}, {t:.2f})")
+    # ★도형은 name·좌표가 아니라 '구조'로 찾는다 (_exec_summary_parts 주석 참고).
+    #   템플릿이 바뀌면 좌표 매칭이 조용히 실패해 이전 딜 문구가 그대로 남는다.
+    parts = _exec_summary_parts(slide)
 
-    # 본문 박스 교체 (부제 TextBox 55 는 삭제 대상이라 채우지 않음 — 하늘색 부제 제거)
-    _s(4.49, 4.07,  _SEC1_BODY)      # TextBox 42 — 섹션1 본문
-    _s(4.91, 8.22,  _SEC2_BODY)      # TextBox 26 — 섹션2 본문
-    _s(4.50, 16.31, _SEC3_BODY)      # TextBox 50 — 섹션3 본문
+    # 본문 박스 교체 (부제 '내용' 글상자는 삭제 대상이라 채우지 않음)
+    for _i, _txt in enumerate((_SEC1_BODY, _SEC2_BODY, _SEC3_BODY)):
+        _b = parts["bodies"][_i]
+        if _b is not None:
+            _replace_text_keep_runs(_b.text_frame, _txt)
+        else:
+            print(f"[경고] build_slide_2: 섹션{_i + 1} 본문 글상자를 못 찾음 "
+                  f"— 템플릿 문구가 남을 수 있음")
 
     # GROUP 제목 = 3개 섹션 제목(내용 기반). 'Executive Summary' 단어 금지.
-    def _grp_text(grp):
-        try:
-            return " ".join(c.text_frame.text for c in grp.shapes
-                            if c.has_text_frame).strip()
-        except Exception:
-            return ""
-
-    for shape in slide.shapes:
-        if shape.shape_type != 6:   # GROUP
-            continue
-        cur  = _grp_text(shape)
-        t_cm = shape.top / 360000
-        if "Executive" in cur:            # 섹션1 제목
-            _fill_group_label(shape, _TITLES[0])
-        elif abs(t_cm - 6.39) < 0.40:       # 섹션2 제목
-            _fill_group_label(shape, _TITLES[1])
-        elif abs(t_cm - 13.95) < 0.40:    # 섹션3 제목
-            _fill_group_label(shape, _TITLES[2])
+    for _i, _ttl in enumerate(_TITLES):
+        _g = parts["titles"][_i]
+        if _g is not None:
+            _fill_group_label(_g, _ttl)
+        else:
+            print(f"[경고] build_slide_2: 섹션{_i + 1} 제목 GROUP 을 못 찾음")
 
     # ── 수정 2: 섹션 간격 압축 + 육각형 컨테이너 폭 통일 ──
-    _relayout_exec_summary(slide)
+    _relayout_exec_summary(slide, parts=parts)
 
     # ── 3개 본문 박스 모두 자동 글머리(템플릿 → 등) 제거 + 회색 통일 ──
     #   (내가 넣은 '→ ' 가 유일한 글머리가 되도록. 3섹션 글씨 = 같은 회색으로 통일)
     _BODY_GRAY = RGBColor(0x59, 0x59, 0x59)
-    for _nm in ("TextBox 42", "TextBox 26", "TextBox 50"):
-        _b = next((sh for sh in slide.shapes if sh.name == _nm), None)
+    for _b in parts["bodies"]:
         if _b is not None and _b.has_text_frame:
             clean_bullet(_b.text_frame)
             for _p in _b.text_frame.paragraphs:
@@ -939,25 +1016,12 @@ def build_slide_2_executive_summary(prs, data: dict,
                     _r.font.color.rgb = _BODY_GRAY
 
     # ── 사용자 요청: 하늘색 부제 '전부' 삭제 (제목 GROUP 3개는 모두 유지) ──
-    #   섹션1 부제(TextBox 55)도 삭제 — "밑에 하늘색 글씨 빼"
-    #   유지: 그룹 1/2/51(제목+체크마크), 본문, 육각형
-    _DEL_NAMES = ["TextBox 55", "TextBox 56", "TextBox 54"]
-
-    def _shape_text(sh):
-        if sh.has_text_frame:
-            return sh.text_frame.text.strip()
-        try:
-            return " ".join(c.text_frame.text for c in sh.shapes
-                            if c.has_text_frame).strip()
-        except Exception:
-            return ""
-
-    for nm in _DEL_NAMES:
-        for sh in list(slide.shapes):
-            if sh.name == nm:
-                print(f"[build_slide_2] 삭제: name='{sh.name}' text='{_shape_text(sh)[:24]}'")
-                sh._element.getparent().remove(sh._element)
-                break
+    #   유지: 제목 GROUP(제목+체크마크), 본문, 육각형
+    for sh in parts["subs"]:
+        if sh is None:
+            continue
+        print(f"[build_slide_2] 부제 삭제: name='{sh.name}'")
+        sh._element.getparent().remove(sh._element)
 
     # 공통 푸터 (사업명 | 순번)
     add_footer(slide, page_num, business_name=business_name or None)

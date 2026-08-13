@@ -176,8 +176,14 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
     result: List[PageData] = []
     last_section_title = ""
 
+    # ★발행사 로고·워터마크(여러 페이지 반복 이미지)는 본문에서 통째로 제외한다.
+    logo_xrefs = _find_repeated_xrefs(fitz_doc)
+
     if debug:
         print(f"\n[content_parser] PDF 총 {total}페이지 분석 시작")
+        if logo_xrefs:
+            print(f"[content_parser] 로고·워터마크로 판단해 제외할 이미지 xref: "
+                  f"{sorted(logo_xrefs)}")
         print("─" * 60)
 
     for i, pdf_page in enumerate(fitz_doc):
@@ -232,7 +238,7 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
             # ★이미지만 있는 페이지(조감도·광역입지 등): 버리면 그림이 사라진다.
             #   큰 이미지가 있으면 직전 본문 페이지(건축개요 등)에 y좌표 순으로 첨부 →
             #   build_structured_slide 의 side_box(표 옆 라벨 박스) 경로로 렌더된다.
-            recovered = _extract_page_images(fitz_doc, i)
+            recovered = _extract_page_images(fitz_doc, i, skip_xrefs=logo_xrefs)
             if recovered and result:
                 ypos = {}
                 for im in pdf_page.get_images(full=True):
@@ -268,7 +274,7 @@ def map_pdf_pages_to_slides(data: bytes, debug: bool = False) -> List[PageData]:
         # ── 페이지 이미지/원문/강조 추출 (★각각 감싸 실패해도 페이지는 살린다) ──
         pd["page_num"] = page_num
         try:
-            pd["images"] = _extract_page_images(fitz_doc, i)
+            pd["images"] = _extract_page_images(fitz_doc, i, skip_xrefs=logo_xrefs)
         except Exception:
             pd["images"] = []
         try:
@@ -447,6 +453,29 @@ def _is_heading_level(style_name: str, level: int) -> bool:
 _IMG_MIN_PX = 100 * 100   # 100×100px 미만만 아이콘·로고로 간주해 제외
 #   (200×200이면 조감도 썸네일·비교표 사진이 통째로 걸러지던 문제 → 100×100로 완화)
 
+# ★발행사 로고·워터마크 제외 기준(2026-08-06)
+#   원본 IM 은 페이지마다 발행사 로고와 워터마크를 깔아둔다. 이게 크기 필터를 통과해
+#   본문 슬라이드에 '조감도'로 박히는 사고가 있었다(돈암동: 카카오페이증권 로고·워터마크가
+#   6개 슬라이드에 삽입, 슬13은 '조감도' 라벨까지 붙음).
+#   판정: 같은 xref 가 이 페이지 수 이상에서 쓰이면 = 머리말/꼬리말 장식으로 본다.
+#   (조감도·현장사진·지도는 특정 페이지에만 나오므로 안전하다.)
+_REPEAT_PAGE_MIN = 3
+
+
+def _find_repeated_xrefs(fitz_doc, min_pages: int = _REPEAT_PAGE_MIN) -> set:
+    """문서 전체에서 min_pages 이상 페이지에 등장하는 이미지 xref 집합(로고·워터마크)."""
+    from collections import Counter
+    use = Counter()
+    try:
+        for pg in fitz_doc:
+            for x in {im[0] for im in pg.get_images(full=True)}:
+                use[x] += 1
+    except Exception:
+        return set()
+    if fitz_doc.page_count < min_pages:      # 페이지가 너무 적으면 판정 불가 → 제외 안 함
+        return set()
+    return {x for x, c in use.items() if c >= min_pages}
+
 
 def _extract_red_texts(pdf_page) -> list:
     """페이지에서 '빨간색' 글자 조각을 추출(원본 강조 표시 재현용).
@@ -572,10 +601,11 @@ def _extract_filled_texts(pdf_page) -> list:
     return list(dict.fromkeys(outs))
 
 
-def _extract_page_images(fitz_doc, page_idx: int) -> list:
+def _extract_page_images(fitz_doc, page_idx: int, skip_xrefs=None) -> list:
     """
     fitz_doc의 page_idx 페이지에서 이미지를 추출합니다.
     _IMG_MIN_PX 미만 소형 이미지(아이콘·로고)는 제외합니다.
+    skip_xrefs 에 든 xref(= 여러 페이지에 반복되는 발행사 로고·워터마크)도 제외합니다.
 
     Returns
     -------
@@ -585,10 +615,11 @@ def _extract_page_images(fitz_doc, page_idx: int) -> list:
     page = fitz_doc[page_idx]
     result = []
     seen_xrefs = set()
+    skip_xrefs = skip_xrefs or set()
     for img in page.get_images(full=True):
         xref = img[0]
         smask_xref = img[1] if len(img) > 1 else 0   # 별도 투명 마스크(SMask) xref
-        if xref in seen_xrefs:
+        if xref in seen_xrefs or xref in skip_xrefs:
             continue
         seen_xrefs.add(xref)
         try:

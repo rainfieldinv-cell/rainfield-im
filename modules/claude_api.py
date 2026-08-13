@@ -25,8 +25,13 @@ from pathlib import Path
 # ─────────────────────────────────────────────
 CLAUDE_MODEL  = "claude-sonnet-4-6"
 MAX_TOKENS    = 8192   # ★큰 표(수십 행)가 잘려 뒷행·각주가 사라지는 것 방지(4096→8192)
-CACHE_DIR     = Path(".claude_cache")
-CACHE_DIR.mkdir(exist_ok=True)
+# ★캐시 위치는 '현재 작업 디렉터리'가 아니라 **이 저장소(rainfield-im) 고정**이다.
+#   전엔 Path(".claude_cache") 라 실행 위치가 바뀔 때마다 그 폴더에 빈 캐시가 새로 생겨
+#   ①진짜 캐시(250개)를 못 찾아 매번 LLM 재호출(느리고 비용 발생, 결과도 달라짐)
+#   ②엉뚱한 폴더가 지저분하게 생김 — 두 문제가 반복됐다.
+CACHE_DIR = Path(os.environ.get("RAINFIELD_CACHE_DIR")
+                 or (Path(__file__).resolve().parent.parent / ".claude_cache"))
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Claude Sonnet 4.6 가격 (USD per 1M tokens)
 _PRICE_INPUT  = 3.0
@@ -63,12 +68,19 @@ def get_client():
 # ─────────────────────────────────────────────
 # 2. 캐시 키 생성
 # ─────────────────────────────────────────────
-def make_cache_key(slide_num: int, pdf_text: str, prompt_version: str = "v1") -> str:
+def make_cache_key(slide_num: int, pdf_text: str, prompt_version: str = "v1",
+                   system_prompt: str = "") -> str:
     """
-    slide_num + pdf_text + prompt_version의 SHA256 해시를 반환합니다.
-    같은 PDF + 같은 슬라이드 + 같은 프롬프트 버전이면 항상 동일한 키.
+    slide_num + prompt_version + 시스템 프롬프트 본문 + pdf_text 의 SHA256 해시.
+    같은 PDF + 같은 슬라이드 + 같은 프롬프트면 항상 동일한 키.
+
+    ★system_prompt 를 키에 포함하는 이유:
+      예전엔 prompt_version 문자열만 키에 넣어서, 프롬프트 '내용'을 고쳐도 버전을 안 올리면
+      캐시가 옛 결과를 그대로 돌려줬다. 프롬프트를 바꿨는데 결과가 하나도 안 바뀌어
+      한참 헤맨 적이 있다(2026-08-07). 이제 본문이 바뀌면 키가 자동으로 갈린다.
     """
-    raw = f"{slide_num}|{prompt_version}|{pdf_text}"
+    sp = hashlib.sha256((system_prompt or "").encode("utf-8")).hexdigest()[:16]
+    raw = f"{slide_num}|{prompt_version}|{sp}|{pdf_text}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -106,7 +118,8 @@ def call_claude(
         "error": str | None,
     }
     """
-    cache_key  = make_cache_key(slide_num, pdf_context, prompt_version)
+    cache_key  = make_cache_key(slide_num, pdf_context, prompt_version,
+                                system_prompt=system_prompt)
     cache_file = CACHE_DIR / f"{cache_key}.json"
 
     # ── 캐시 히트 ────────────────────────────────────────────
