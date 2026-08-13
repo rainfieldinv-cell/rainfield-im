@@ -253,7 +253,10 @@ def _replace_footer_business_name(slide, business_name: str):
     """
     슬라이드 하단 푸터의 '사업명' 자리표시자를 실제 사업명으로 교체합니다.
     ★푸터는 좌·우 어디든 올 수 있으므로 '위치'가 아니라 '텍스트'(사업명/구분자 ｜|)로 찾는다.
-      페이지번호(｜ N)는 그대로 두고 '사업명' 부분만 실제 사업명으로 바꾼다.
+    ★★쪽번호는 자동 슬라이드번호 필드(a:fld slidenum)로 들어있다. text_frame.text 에는
+      그 필드의 렌더값(예: 8)이 섞여 나오므로, 절대 '전체 텍스트'를 run 에 다시 박으면 안 된다
+      (그러면 '…8' + 살아있는 필드 = '87' 처럼 쪽번호가 겹쳐 찍힘). 오직 run 텍스트 안의
+      '사업명' 문자열만 바꾸고 필드(a:fld)는 손대지 않는다.
     """
     if not business_name:
         return
@@ -263,22 +266,27 @@ def _replace_footer_business_name(slide, business_name: str):
             continue
         if (shape.top or 0) / 360000 <= FOOTER_TOP_MIN:   # 하단만
             continue
-        txt = shape.text_frame.text or ""
-        if ("사업명" not in txt) and ("｜" not in txt) and ("|" not in txt):
+        para = shape.text_frame.paragraphs[0]
+        runs = para.runs
+        joined = "".join(r.text for r in runs)
+        if ("사업명" not in joined) and ("｜" not in joined) and ("|" not in joined):
             continue
-        if "사업명" in txt:
-            new = txt.replace("사업명", business_name)
-        else:
-            sep = "｜" if "｜" in txt else "|"
-            new = business_name + txt[txt.index(sep):]   # 사업명 + '｜ N'
-        # 서식(Light 8pt 회색 우측정렬) 유지하며 텍스트만 교체
-        _p = shape.text_frame.paragraphs[0]
-        if _p.runs:
-            _p.runs[0].text = new
-            for _r in _p.runs[1:]:
-                _r.text = ""
-        else:
-            _replace_text_frame_content(shape.text_frame, new)
+        # 1) '사업명' 자리표시자가 있으면 그 run 안에서만 치환 (필드는 그대로)
+        done = False
+        for r in runs:
+            if "사업명" in r.text:
+                r.text = r.text.replace("사업명", business_name)
+                done = True
+        # 2) '사업명' 없이 'OldBiz｜' 형태면 구분자 앞부분만 업체명으로 교체 (run 단위, 필드 유지)
+        if not done:
+            for r in runs:
+                sep = "｜" if "｜" in r.text else ("|" if "|" in r.text else None)
+                if sep:
+                    r.text = business_name + r.text[r.text.index(sep):]
+                    done = True
+                    break
+        if not done and runs:
+            runs[0].text = business_name
         return
 
 
