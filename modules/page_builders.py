@@ -1311,6 +1311,18 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
             except Exception:
                 pass
 
+        # 1-2) 파란 원(2E75B6) 도형 식별 — [파란 원+사진] 세트 그룹화용
+        blue_circle_shapes = []
+        for shape in slide.shapes:
+            try:
+                if shape.fill.type != 1:
+                    continue
+                rgb = shape.fill.fore_color.rgb
+                if int(rgb[0]) == 0x2E and int(rgb[1]) == 0x75 and int(rgb[2]) == 0xB6:
+                    blue_circle_shapes.append(shape)
+            except Exception:
+                pass
+
         # 2) _DIV_INNER_OVALS 순서(Slot1→2→3)로 재정렬
         if len(green_oval_shapes) == len(_DIV_INNER_OVALS):
             ordered_shapes = []
@@ -1323,6 +1335,7 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
                 remaining.remove(best)
             green_oval_shapes = ordered_shapes
 
+        pairs = []   # [(파란 원 도형|None, 사진 도형), ...] — 세트 그룹화용
         for slot_idx, img_bytes in enumerate(section_image_bytes_list):
             if not img_bytes:
                 continue
@@ -1335,10 +1348,10 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
             it = target_shape.top    / 914400 * 2.54
             iw = target_shape.width  / 914400 * 2.54
             ih = target_shape.height / 914400 * 2.54
+            # 연두 oval 중심(EMU) — 짝이 되는 파란 원 매칭용(제거 전 계산)
+            ocx = (target_shape.left or 0) + (target_shape.width or 0) // 2
+            ocy = (target_shape.top or 0) + (target_shape.height or 0) // 2
             # 3) 연두색 oval의 z-순서(앞뒤) 위치 기억 후 제거
-            #   ★[파란 테두리+연두 oval]이 한 세트로 겹쳐 있고, 세트별 앞뒤 순서가
-            #     디자인의 핵심(작은 원=맨 앞 … 큰 원=맨 뒤)이다. 새 사진을 그냥 add 하면
-            #     맨 앞으로 붙어 순서가 다 깨지므로, oval이 있던 바로 그 자리에 다시 꽂는다.
             oval_el = target_shape.element
             sp_tree = oval_el.getparent()
             z_index = list(sp_tree).index(oval_el)
@@ -1358,6 +1371,29 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
                 sp_tree.insert(z_index, pic_el)
             except Exception as exc:
                 print(f"[경고] 섹션 원형 이미지 삽입 실패 slot={slot_idx}: {exc}")
+                continue
+
+            # 이 사진과 짝이 되는 파란 원 찾기(중심 최근접) → 세트로 묶을 준비
+            paired_blue = None
+            if blue_circle_shapes:
+                paired_blue = min(blue_circle_shapes, key=lambda s:
+                    ((s.left or 0) + (s.width or 0) // 2 - ocx) ** 2
+                    + ((s.top or 0) + (s.height or 0) // 2 - ocy) ** 2)
+                blue_circle_shapes.remove(paired_blue)
+            pairs.append((paired_blue, pic))
+
+        # 5) 세트별 그룹화 — [파란 원(뒤) + 사진(앞)]을 한 그룹으로.
+        #    z-정렬: 젤 큰 원=맨 뒤 … 젤 작은 원=맨 앞 (크기 내림차순으로 묶으면
+        #    먼저 묶은 큰 세트가 뒤, 나중 묶은 작은 세트가 앞이 된다)
+        try:
+            def _blue_w(pr):
+                return (pr[0].width or 0) if pr[0] is not None else 0
+            for paired_blue, pic in sorted(pairs, key=_blue_w, reverse=True):
+                members = [m for m in (paired_blue, pic) if m is not None]
+                if len(members) >= 2:
+                    slide.shapes.add_group_shape(members)
+        except Exception as exc:
+            print(f"[경고] 섹션 세트 그룹화 실패: {exc}")
 
     _replace_footer_business_name(slide, business_name)
     return slide
