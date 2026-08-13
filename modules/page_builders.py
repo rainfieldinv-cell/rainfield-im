@@ -1290,17 +1290,27 @@ def build_section_divider_slide(prs, section_number: str = "", section_title: st
             it = target_shape.top    / 914400 * 2.54
             iw = target_shape.width  / 914400 * 2.54
             ih = target_shape.height / 914400 * 2.54
-            # 3) 연두색 oval 도형 제거
-            target_shape.element.getparent().remove(target_shape.element)
+            # 3) 연두색 oval의 z-순서(앞뒤) 위치 기억 후 제거
+            #   ★[파란 테두리+연두 oval]이 한 세트로 겹쳐 있고, 세트별 앞뒤 순서가
+            #     디자인의 핵심(작은 원=맨 앞 … 큰 원=맨 뒤)이다. 새 사진을 그냥 add 하면
+            #     맨 앞으로 붙어 순서가 다 깨지므로, oval이 있던 바로 그 자리에 다시 꽂는다.
+            oval_el = target_shape.element
+            sp_tree = oval_el.getparent()
+            z_index = list(sp_tree).index(oval_el)
+            sp_tree.remove(oval_el)
 
-            # 4) 같은 좌표에 원형 사진 삽입
+            # 4) 같은 좌표에 원형 사진 삽입 후, oval이 있던 z-순서 자리로 되돌림
             try:
                 circ_png = make_circular_image_png(img_bytes, output_size=512,
                                                     border_color_rgb=(255, 255, 255),
                                                     border_width_px=8)
-                add_image(slide, circ_png,
-                          left_cm=il, top_cm=it,
-                          width_cm=iw, height_cm=ih)
+                pic = add_image(slide, circ_png,
+                                left_cm=il, top_cm=it,
+                                width_cm=iw, height_cm=ih)
+                # add_image는 맨 뒤(=맨 앞 z-order)에 붙이므로, 원래 oval 자리로 이동
+                pic_el = pic._element
+                sp_tree.remove(pic_el)
+                sp_tree.insert(z_index, pic_el)
             except Exception as exc:
                 print(f"[경고] 섹션 원형 이미지 삽입 실패 slot={slot_idx}: {exc}")
 
